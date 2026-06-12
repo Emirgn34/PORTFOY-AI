@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  /* PortföyAI koyu finans teması */
+  --color-navy-950: #060a16;
+  --color-navy-900: #0a1024;
+  --color-navy-850: #0e1530;
+  --color-navy-800: #131c3a;
+  --color-navy-700: #1d2a52;
+  --color-navy-600: #2a3a6e;
+
+  --color-gain: #22c55e;
+  --color-loss: #ef4444;
+  --color-accent: #6366f1;
+  --color-accent-soft: #818cf8;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-navy-950 text-slate-200 antialiased;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+/* İnce, koyu temaya uygun scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1d2a52;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a3a6e;
+}

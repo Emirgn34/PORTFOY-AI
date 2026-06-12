@@ -1,0 +1,7 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# Canlı veri sunucusunun çalışma anında ürettiği dosyalar
+server/data/
