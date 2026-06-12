@@ -1,12 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Search, SearchX, Radio } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, SearchX, Radio, X } from 'lucide-react';
 import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
 import useLocalStorage from '../hooks/useLocalStorage.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
-import { fetchLiveNews, mapLiveArticleToNews } from '../services/liveData.js';
+import { fetchLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
+import { detectCatalyst } from '../utils/newsSignals.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
+
+/** Haber kapsamı: hangi hisselerin haberleri gösterilsin? */
+const SCOPE_OPTIONS = [
+  { value: 'all', label: 'Tüm Hisseler' },
+  { value: 'portfolio', label: 'Portföyümdeki Hisseler' },
+  { value: 'watchlist', label: 'İzleme Listemdeki Hisseler' },
+  { value: 'bist', label: 'BIST Haberleri' },
+  { value: 'us', label: 'ABD Haberleri' },
+];
 
 const SENTIMENT_OPTIONS = [
   { value: 'all', label: 'Tüm Duygular' },
@@ -29,6 +39,7 @@ const selectClass =
   'rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-accent';
 
 export default function NewsPage() {
+  const [scope, setScope] = useState('all');
   const [tickerFilter, setTickerFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [sentimentFilter, setSentimentFilter] = useState('all');
@@ -37,6 +48,12 @@ export default function NewsPage() {
   const [selectedNews, setSelectedNews] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [liveNews, setLiveNews] = useState([]);
+
+  // Hisse arama önerisi (haber filtresi için)
+  const [tickerQuery, setTickerQuery] = useState('');
+  const [tickerSuggestions, setTickerSuggestions] = useState([]);
+  const [showTickerSugg, setShowTickerSugg] = useState(false);
+  const skipTickerSearchRef = useRef(false);
 
   // Canlı haberler portföy + izleme listesindeki tüm hisseler için çekilir
   const [portfolioStocks] = useLocalStorage('portfoyai_stocks', SEED_STOCKS);
@@ -63,17 +80,89 @@ export default function NewsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Canlı + mock haberler tek akışta birleştirilir
-  const allNews = useMemo(() => [...liveNews, ...MOCK_NEWS], [liveNews]);
-
-  const tickers = useMemo(
-    () => [...new Set(allNews.map((n) => n.ticker))].sort(),
-    [allNews]
+  // Kapsam filtreleri için yardımcı kümeler
+  const portfolioTickers = useMemo(
+    () => new Set(portfolioStocks.map((s) => s.ticker)),
+    [portfolioStocks]
   );
+  const watchlistTickers = useMemo(
+    () => new Set(watchlistItems.map((s) => s.ticker)),
+    [watchlistItems]
+  );
+  const marketByTicker = useMemo(() => {
+    const map = new Map();
+    for (const s of [...portfolioStocks, ...watchlistItems]) {
+      map.set(s.ticker, s.market === 'BIST' ? 'BIST' : 'ABD');
+    }
+    return map;
+  }, [portfolioStocks, watchlistItems]);
+
+  // Canlı + mock haberler tek akışta birleştirilir; pazar ve katalizör işlenir
+  const allNews = useMemo(
+    () =>
+      [...liveNews, ...MOCK_NEWS].map((n) => ({
+        ...n,
+        market: n.market ?? marketByTicker.get(n.ticker) ?? null,
+        isCatalyst: detectCatalyst(n),
+      })),
+    [liveNews, marketByTicker]
+  );
+
+  // Hisse kodu yazdıkça canlı sembol önerisi (300ms debounce)
+  useEffect(() => {
+    if (skipTickerSearchRef.current) {
+      skipTickerSearchRef.current = false;
+      return undefined;
+    }
+    const q = tickerQuery.trim();
+    if (q.length < 1) {
+      setTickerSuggestions([]);
+      setShowTickerSugg(false);
+      setTickerFilter('all');
+      return undefined;
+    }
+    const timer = setTimeout(async () => {
+      const results = await searchSymbols(q);
+      if (results) {
+        setTickerSuggestions(results.slice(0, 8));
+        setShowTickerSugg(results.length > 0);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [tickerQuery]);
+
+  /** Öneriden hisse seçimi: filtre uygulanır, o hissenin haberleri hemen çekilir. */
+  async function handlePickTicker(item) {
+    skipTickerSearchRef.current = true;
+    setTickerQuery(item.ticker);
+    setTickerFilter(item.ticker);
+    setShowTickerSugg(false);
+
+    const articles = await fetchLiveNews([{ ticker: item.ticker, market: item.market }]);
+    if (!articles) return;
+    const companyMap = new Map([[item.ticker, item.name]]);
+    const mapped = articles.map((a) => mapLiveArticleToNews(a, companyMap));
+    setLiveNews((prev) => {
+      const known = new Set(prev.map((n) => n.id));
+      return [...mapped.filter((n) => !known.has(n.id)), ...prev];
+    });
+  }
+
+  function clearTickerFilter() {
+    skipTickerSearchRef.current = true;
+    setTickerQuery('');
+    setTickerFilter('all');
+    setTickerSuggestions([]);
+    setShowTickerSugg(false);
+  }
 
   const filteredNews = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return allNews.filter((news) => {
+      if (scope === 'portfolio' && !portfolioTickers.has(news.ticker)) return false;
+      if (scope === 'watchlist' && !watchlistTickers.has(news.ticker)) return false;
+      if (scope === 'bist' && news.market !== 'BIST') return false;
+      if (scope === 'us' && news.market !== 'ABD') return false;
       if (tickerFilter !== 'all' && news.ticker !== tickerFilter) return false;
       if (typeFilter !== 'all' && news.type !== typeFilter) return false;
       if (sentimentFilter !== 'all' && news.sentiment !== sentimentFilter) return false;
@@ -89,7 +178,17 @@ export default function NewsPage() {
       }
       return true;
     }).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [allNews, tickerFilter, typeFilter, sentimentFilter, minReliability, searchQuery]);
+  }, [
+    allNews,
+    scope,
+    portfolioTickers,
+    watchlistTickers,
+    tickerFilter,
+    typeFilter,
+    sentimentFilter,
+    minReliability,
+    searchQuery,
+  ]);
 
   // Filtrelenmiş haberler 3 eşit parçaya bölünür: en yeniler 1. sekmede
   const newsPages = useMemo(() => {
@@ -107,28 +206,83 @@ export default function NewsPage() {
     <div className="space-y-5">
       {/* Filtre alanı */}
       <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="relative lg:col-span-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          {/* Kapsam: hangi hisselerin haberleri? */}
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            className={selectClass}
+          >
+            {SCOPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+
+          {/* Hisse arama: yazdıkça öneri çıkar, seçince o hissenin haberleri gelir */}
+          <div className="relative">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={tickerQuery}
+              onChange={(e) => setTickerQuery(e.target.value)}
+              onFocus={() => tickerSuggestions.length > 0 && setShowTickerSugg(true)}
+              onBlur={() => setTimeout(() => setShowTickerSugg(false), 150)}
+              placeholder="Hisse ara (örn: MP)..."
+              className={`${selectClass} w-full pl-9 pr-8`}
+              autoComplete="off"
+            />
+            {tickerFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={clearTickerFilter}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-white"
+                aria-label="Hisse filtresini temizle"
+              >
+                <X size={13} />
+              </button>
+            )}
+            {showTickerSugg && (
+              <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-navy-600 bg-navy-850 shadow-2xl">
+                {tickerSuggestions.map((item) => (
+                  <li key={item.symbol}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handlePickTicker(item);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-navy-700/60"
+                    >
+                      <span className="text-sm font-bold text-white">{item.ticker}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
+                        {item.name}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                          item.market === 'BIST'
+                            ? 'bg-accent/15 text-accent-soft'
+                            : 'bg-cyan-400/15 text-cyan-300'
+                        }`}
+                      >
+                        {item.market}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Serbest metin araması */}
+          <div className="relative">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Haber ara..."
-              className={`${selectClass} w-full pl-9`}
+              placeholder="Haber metni ara..."
+              className={`${selectClass} w-full`}
             />
           </div>
-
-          <select
-            value={tickerFilter}
-            onChange={(e) => setTickerFilter(e.target.value)}
-            className={selectClass}
-          >
-            <option value="all">Tüm Hisseler</option>
-            {tickers.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
 
           <select
             value={typeFilter}

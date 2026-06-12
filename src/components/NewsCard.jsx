@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, MoveRight, ShieldCheck } from 'lucide-react';
+import { TrendingUp, TrendingDown, MoveRight, ShieldCheck, Zap } from 'lucide-react';
 import { getReliabilityColors } from '../utils/scoreColors.js';
 
 function SentimentIcon({ sentiment }) {
@@ -47,10 +47,15 @@ export default function NewsCard({ news, onClick }) {
     new Date(news.date)
   );
 
+  // Potansiyel pozitif katalizör haberleri çok hafif turuncu şeritle vurgulanır
+  const borderClass = news.isCatalyst
+    ? 'border-orange-400/35 hover:border-orange-400/60 hover:shadow-orange-400/5'
+    : 'border-navy-700/60 hover:border-accent/40 hover:shadow-accent/5';
+
   return (
     <article
       onClick={() => onClick(news)}
-      className="group flex cursor-pointer flex-col rounded-xl border border-navy-700/60 bg-navy-900 p-4 transition-all duration-200 hover:-translate-y-1 hover:border-accent/40 hover:shadow-lg hover:shadow-accent/5"
+      className={`group flex cursor-pointer flex-col rounded-xl border bg-navy-900 p-4 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${borderClass}`}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="rounded-md bg-navy-700/70 px-2 py-0.5 text-xs font-bold text-white">
@@ -59,6 +64,15 @@ export default function NewsCard({ news, onClick }) {
         {news.isLive && (
           <span className="rounded bg-gain/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-gain">
             CANLI
+          </span>
+        )}
+        {news.isCatalyst && (
+          <span
+            className="flex items-center gap-0.5 rounded bg-orange-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300"
+            title="Gelecekte fiyatı olumlu etkileyebilecek katalizör içerebilir"
+          >
+            <Zap size={9} />
+            Katalizör
           </span>
         )}
         <span className="truncate text-xs text-slate-500">{news.company}</span>
