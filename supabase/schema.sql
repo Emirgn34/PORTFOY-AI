@@ -30,11 +30,15 @@ create table if not exists news (
   id text primary key,
   symbol text not null,
   title text not null,
+  title_tr text, -- yabancı haberlerin Türkçe çevirisi (toplayıcı doldurur)
   publisher text,
   link text,
   published_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+-- Var olan kuruluma sütunu ekle (tablo zaten oluşturulmuşsa)
+alter table news add column if not exists title_tr text;
 
 create index if not exists news_symbol_published_idx
   on news (symbol, published_at desc);

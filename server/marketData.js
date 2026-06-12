@@ -119,3 +119,39 @@ export const SECTOR_TR = {
 
 /** Döviz kuru sembolleri (TRY karşılıkları). */
 export const FX_SYMBOLS = ['USDTRY=X', 'EURTRY=X'];
+
+/**
+ * Metni Türkçe'ye çevirir (ücretsiz Google Translate ucu, anahtarsız).
+ * Başarısız olursa null döner; arayan orijinal metinle devam eder.
+ */
+export async function translateToTurkish(text) {
+  if (!text) return null;
+  try {
+    const url =
+      'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=tr&dt=t&q=' +
+      encodeURIComponent(text);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const translated = (data?.[0] ?? [])
+      .map((seg) => seg?.[0] ?? '')
+      .join('')
+      .trim();
+    return translated && translated !== text ? translated : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Yabancı (BIST dışı) haberlerin başlıklarına Türkçe çeviri ekler (titleTr).
+ * Yalnızca verilen makaleler işlenir — çağıran taraf sadece YENİ makaleleri
+ * göndermelidir ki çeviri ucu gereksiz yere zorlanmasın.
+ */
+export async function addTurkishTitles(articles, symbol) {
+  if (symbol.endsWith('.IS')) return articles; // BIST haberleri zaten Türkçe
+  for (const article of articles) {
+    article.titleTr = await translateToTurkish(article.title);
+  }
+  return articles;
+}

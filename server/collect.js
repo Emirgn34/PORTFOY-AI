@@ -13,7 +13,7 @@
  * Lokal test: SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node server/collect.js
  */
 import YahooFinance from 'yahoo-finance2';
-import { mapQuote, fetchNewsForSymbolRaw, FX_SYMBOLS } from './marketData.js';
+import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -103,24 +103,37 @@ async function collectNews(symbols) {
     try {
       const articles = await fetchNewsForSymbolRaw(yahooFinance, symbol);
       if (articles.length === 0) continue;
+
+      // Yalnızca veritabanında olmayan makaleler işlenir (çeviri maliyeti için)
+      const existing = await sb(
+        `news?symbol=eq.${encodeURIComponent(symbol)}&select=id`
+      );
+      const known = new Set(existing.map((r) => r.id));
+      const fresh = await addTurkishTitles(
+        articles.filter((a) => !known.has(a.id)),
+        symbol
+      );
+      if (fresh.length === 0) continue;
+
       await sb('news', {
         method: 'POST',
-        body: articles.map((a) => ({
+        body: fresh.map((a) => ({
           id: a.id,
           symbol: a.symbol,
           title: a.title,
+          title_tr: a.titleTr ?? null,
           publisher: a.publisher,
           link: a.link,
           published_at: a.publishedAt,
         })),
         prefer: 'resolution=ignore-duplicates', // eski haberler korunur, yeniler eklenir
       });
-      total += articles.length;
+      total += fresh.length;
     } catch (err) {
       console.error(`[news] ${symbol}: ${err.message}`);
     }
   }
-  console.log(`Haber: ${symbols.length} sembol tarandı, ${total} makale işlendi.`);
+  console.log(`Haber: ${symbols.length} sembol tarandı, ${total} yeni makale eklendi.`);
 }
 
 const symbols = await getTrackedSymbols();

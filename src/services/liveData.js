@@ -139,6 +139,7 @@ export async function fetchLiveNews(stocks) {
     id: r.id,
     symbol: r.symbol,
     title: r.title,
+    titleTr: r.title_tr,
     publisher: r.publisher,
     link: r.link,
     publishedAt: r.published_at,
@@ -185,13 +186,17 @@ export function estimatePublisherReliability(publisher = '') {
  */
 export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
   const ticker = fromYahooSymbol(article.symbol);
+  const isTranslated = Boolean(article.titleTr);
   return {
     id: `live-${article.id}`,
     ticker,
     company: companyByTicker.get(ticker) ?? ticker,
-    title: article.title,
+    title: article.titleTr ?? article.title,
+    originalTitle: isTranslated ? article.title : null,
+    market: article.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
     summary: `${article.publisher} kaynağından canlı haber. Detay için habere tıklayın.`,
     content:
+      (isTranslated ? `Orijinal başlık: "${article.title}"\n\n` : '') +
       'Bu haber canlı kaynaktan otomatik çekildi. AI analiz motoru bağlandığında ' +
       'özet, duygu analizi ve güvenilirlik gerekçesi otomatik üretilecektir.',
     type: 'Genel Haber',

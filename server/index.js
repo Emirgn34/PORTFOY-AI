@@ -23,6 +23,7 @@ import YahooFinance from 'yahoo-finance2';
 import {
   mapQuote,
   fetchNewsForSymbolRaw,
+  addTurkishTitles,
   mapExchangeToMarket,
   SECTOR_TR,
   FX_SYMBOLS,
@@ -110,8 +111,12 @@ async function fetchNewsForSymbol(symbol, { force = false } = {}) {
     const fresh = await fetchNewsForSymbolRaw(yahooFinance, symbol);
     const existing = newsStore[symbol] ?? [];
     const known = new Set(existing.map((a) => a.id));
-    // Yeni haberler öne eklenir; eskiler silinmez (en fazla 200 kayıt tutulur)
-    newsStore[symbol] = [...fresh.filter((a) => !known.has(a.id)), ...existing].slice(0, 200);
+    // Yalnızca yeni makaleler çevrilir; eskiler silinmez (en fazla 200 kayıt)
+    const freshNew = await addTurkishTitles(
+      fresh.filter((a) => !known.has(a.id)),
+      symbol
+    );
+    newsStore[symbol] = [...freshNew, ...existing].slice(0, 200);
     newsFetchedAt.set(symbol, now);
     writeJson(NEWS_FILE, newsStore);
   } catch (err) {
