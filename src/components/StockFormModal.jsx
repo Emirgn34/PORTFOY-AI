@@ -26,7 +26,16 @@ const PERIOD_FIELDS = [
   ['threeMonthChangePercent', '3 Aylık %'],
 ];
 
-const EMPTY_TRANCHE = { quantity: '', price: '' };
+// mode 'quantity': value = adet; mode 'amount': value = yatırılan tutar (adet = tutar / fiyat)
+const EMPTY_TRANCHE = { mode: 'quantity', value: '', price: '' };
+
+/** Tek bir kademenin adet karşılığı (geçersizse null). */
+function getTrancheQuantity(tranche) {
+  const value = Number(tranche.value);
+  const price = Number(tranche.price);
+  if (!(value > 0) || !(price > 0)) return null;
+  return tranche.mode === 'amount' ? value / price : value;
+}
 
 function validate(form, entryMode, amount) {
   const errors = {};
@@ -79,11 +88,10 @@ function summarizeTranches(tranches) {
   let totalQty = 0;
   let totalCost = 0;
   for (const t of tranches) {
-    const qty = Number(t.quantity);
-    const price = Number(t.price);
-    if (qty > 0 && price > 0) {
+    const qty = getTrancheQuantity(t);
+    if (qty != null) {
       totalQty += qty;
-      totalCost += qty * price;
+      totalCost += qty * Number(t.price);
     }
   }
   if (totalQty <= 0) return null;
@@ -415,42 +423,75 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
                   adet). Toplam adet ve ağırlıklı ortalama maliyet hesaplanıp forma aktarılır.
                 </p>
 
-                {tranches.map((tranche, index) => (
-                  // eslint-disable-next-line react/no-array-index-key
-                  <div key={index} className="flex items-center gap-2">
-                    <span className="w-5 shrink-0 text-center text-[10px] font-semibold text-slate-600">
-                      {index + 1}.
-                    </span>
-                    <input
-                      className={`${inputClass} flex-1`}
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={tranche.quantity}
-                      onChange={(e) => setTrancheField(index, 'quantity', e.target.value)}
-                      placeholder="Adet (örn: 5)"
-                    />
-                    <span className="text-xs text-slate-600">×</span>
-                    <input
-                      className={`${inputClass} flex-1`}
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={tranche.price}
-                      onChange={(e) => setTrancheField(index, 'price', e.target.value)}
-                      placeholder="Fiyat (örn: 215)"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setTranches((rows) => rows.filter((_, i) => i !== index))}
-                      disabled={tranches.length <= 1}
-                      className="shrink-0 rounded p-1.5 text-slate-500 transition-colors hover:bg-navy-700 hover:text-loss disabled:opacity-30"
-                      aria-label="Kademeyi sil"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))}
+                {tranches.map((tranche, index) => {
+                  const rowQty = getTrancheQuantity(tranche);
+                  return (
+                    // eslint-disable-next-line react/no-array-index-key
+                    <div key={index}>
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 shrink-0 text-center text-[10px] font-semibold text-slate-600">
+                          {index + 1}.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTrancheField(
+                              index,
+                              'mode',
+                              tranche.mode === 'quantity' ? 'amount' : 'quantity'
+                            )
+                          }
+                          className="flex w-16 shrink-0 items-center justify-center gap-1 rounded-lg border border-navy-700 px-1.5 py-2 text-[10px] font-medium text-slate-400 transition-colors hover:border-accent/50 hover:text-accent-soft"
+                          title={
+                            tranche.mode === 'quantity'
+                              ? 'Bu kademede adet yerine yatırılan tutarı girmek için tıklayın'
+                              : 'Bu kademede tutar yerine adet girmek için tıklayın'
+                          }
+                        >
+                          <ArrowLeftRight size={10} />
+                          {tranche.mode === 'quantity' ? 'Adet' : 'Tutar'}
+                        </button>
+                        <input
+                          className={`${inputClass} flex-1`}
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={tranche.value}
+                          onChange={(e) => setTrancheField(index, 'value', e.target.value)}
+                          placeholder={
+                            tranche.mode === 'amount'
+                              ? `Tutar (örn: 1000 ${form.currency})`
+                              : 'Adet (örn: 5)'
+                          }
+                        />
+                        <span className="text-xs text-slate-600">×</span>
+                        <input
+                          className={`${inputClass} flex-1`}
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={tranche.price}
+                          onChange={(e) => setTrancheField(index, 'price', e.target.value)}
+                          placeholder="Fiyat (örn: 215)"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setTranches((rows) => rows.filter((_, i) => i !== index))}
+                          disabled={tranches.length <= 1}
+                          className="shrink-0 rounded p-1.5 text-slate-500 transition-colors hover:bg-navy-700 hover:text-loss disabled:opacity-30"
+                          aria-label="Kademeyi sil"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      {tranche.mode === 'amount' && rowQty != null && (
+                        <p className="ml-24 mt-0.5 text-[10px] text-gain">
+                          ≈ {Number(rowQty.toFixed(6)).toLocaleString('tr-TR', { maximumFractionDigits: 6 })} adet
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
 
                 <div className="flex items-center justify-between pt-1">
                   <button
