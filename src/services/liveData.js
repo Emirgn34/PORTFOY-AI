@@ -1,9 +1,54 @@
 /**
- * Canlı veri servis katmanı.
- * Lokal veri sunucusuna (server/index.js, port 8787) Vite proxy'si
- * üzerinden bağlanır. Sunucu kapalıysa fonksiyonlar null döner ve
- * uygulama mock/manuel verilerle çalışmaya devam eder.
+ * Canlı veri servis katmanı — iki kademeli:
+ *   1. Lokal veri sunucusu (server/index.js, port 8787, Vite proxy'siyle /api)
+ *   2. O yoksa Supabase bulut tabloları (GitHub Actions toplayıcısı doldurur)
+ * İkisi de yoksa fonksiyonlar null döner ve uygulama mock/manuel verilerle
+ * çalışmaya devam eder.
+ *
+ * Supabase erişimi için ortam değişkenleri (Vercel'de tanımlanır):
+ *   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
  */
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const HAS_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+/** Supabase REST okuma (anon anahtar; RLS yalnızca okumaya izin verir). */
+async function sbGet(pathAndQuery) {
+  if (!HAS_SUPABASE) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** PostgREST in.(...) filtresi için sembol listesi hazırlar. */
+function sbInFilter(symbols) {
+  return `in.(${symbols.map((s) => `"${s}"`).join(',')})`;
+}
+
+/**
+ * Yeni sembolleri bulut izleme listesine kaydeder (toplayıcı sonraki turda
+ * veri çekmeye başlar). Hata olursa sessizce geçilir.
+ */
+function sbRegisterSymbols(symbols) {
+  if (!HAS_SUPABASE || symbols.length === 0) return;
+  fetch(`${SUPABASE_URL}/rest/v1/tracked_symbols`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=ignore-duplicates',
+    },
+    body: JSON.stringify(symbols.map((symbol) => ({ symbol }))),
+  }).catch(() => {});
+}
 
 /** Uygulamadaki hisse kaydını Yahoo Finance sembolüne çevirir. */
 export function toYahooSymbol(stock) {
@@ -32,12 +77,32 @@ async function getJson(url) {
  */
 export async function fetchLiveQuotes(stocks) {
   if (!stocks?.length) return null;
-  const symbols = [...new Set(stocks.map(toYahooSymbol))].join(',');
-  const data = await getJson(`/api/quotes?symbols=${encodeURIComponent(symbols)}`);
-  if (!data?.quotes) return null;
+  const symbols = [...new Set(stocks.map(toYahooSymbol))];
 
+  // 1. kademe: lokal veri sunucusu
+  const data = await getJson(`/api/quotes?symbols=${encodeURIComponent(symbols.join(','))}`);
+  let quotes = data?.quotes ?? null;
+
+  // 2. kademe: Supabase bulut tabloları
+  if (!quotes) {
+    sbRegisterSymbols(symbols); // yeni semboller sonraki toplayıcı turunda izlemeye girer
+    const rows = await sbGet(`quotes?symbol=${sbInFilter(symbols)}&select=*`);
+    if (rows?.length) {
+      quotes = rows.map((r) => ({
+        symbol: r.symbol,
+        shortName: r.short_name,
+        currency: r.currency,
+        price: r.price,
+        changePercent: r.change_percent,
+        marketState: r.market_state,
+        fetchedAt: Date.parse(r.updated_at),
+      }));
+    }
+  }
+
+  if (!quotes) return null;
   const byTicker = new Map();
-  for (const q of data.quotes) {
+  for (const q of quotes) {
     byTicker.set(fromYahooSymbol(q.symbol), q);
   }
   return byTicker;
@@ -46,7 +111,13 @@ export async function fetchLiveQuotes(stocks) {
 /** Güncel USD/TRY ve EUR/TRY kurları. Dönüş: { USD, EUR } veya null. */
 export async function fetchLiveFx() {
   const data = await getJson('/api/fx');
-  return data?.rates?.USD ? data.rates : null;
+  if (data?.rates?.USD) return data.rates;
+
+  const rows = await sbGet('fx_rates?select=*');
+  if (!rows?.length) return null;
+  const rates = {};
+  for (const r of rows) rates[r.code] = r.rate;
+  return rates.USD ? rates : null;
 }
 
 /**
@@ -55,9 +126,23 @@ export async function fetchLiveFx() {
  */
 export async function fetchLiveNews(stocks) {
   if (!stocks?.length) return null;
-  const symbols = [...new Set(stocks.map(toYahooSymbol))].join(',');
-  const data = await getJson(`/api/news?symbols=${encodeURIComponent(symbols)}`);
-  return data?.articles ?? null;
+  const symbols = [...new Set(stocks.map(toYahooSymbol))];
+
+  const data = await getJson(`/api/news?symbols=${encodeURIComponent(symbols.join(','))}`);
+  if (data?.articles) return data.articles;
+
+  const rows = await sbGet(
+    `news?symbol=${sbInFilter(symbols)}&select=*&order=published_at.desc.nullslast&limit=150`
+  );
+  if (!rows?.length) return null;
+  return rows.map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    title: r.title,
+    publisher: r.publisher,
+    link: r.link,
+    publishedAt: r.published_at,
+  }));
 }
 
 /**

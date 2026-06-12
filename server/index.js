@@ -20,6 +20,13 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import YahooFinance from 'yahoo-finance2';
+import {
+  mapQuote,
+  fetchNewsForSymbolRaw,
+  mapExchangeToMarket,
+  SECTOR_TR,
+  FX_SYMBOLS,
+} from './marketData.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -31,7 +38,6 @@ const NEWS_FILE = path.join(DATA_DIR, 'news-store.json');
 const PORT = process.env.PORT || 8787;
 const QUOTE_TTL_MS = 5 * 60 * 1000;
 const NEWS_TTL_MS = 15 * 60 * 1000;
-const FX_SYMBOLS = ['USDTRY=X', 'EURTRY=X'];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -64,20 +70,6 @@ function trackSymbols(symbols) {
 
 const quoteCache = new Map(); // symbol -> { data, fetchedAt }
 
-function mapQuote(q) {
-  return {
-    symbol: q.symbol,
-    shortName: q.shortName ?? q.longName ?? q.symbol,
-    currency: q.currency ?? null,
-    price: q.regularMarketPrice ?? null,
-    changePercent: q.regularMarketChangePercent ?? null,
-    previousClose: q.regularMarketPreviousClose ?? null,
-    marketState: q.marketState ?? null,
-    exchange: q.fullExchangeName ?? q.exchange ?? null,
-    marketTime: q.regularMarketTime ?? null,
-  };
-}
-
 async function fetchQuotes(symbols, { force = false } = {}) {
   const now = Date.now();
   const stale = symbols.filter((s) => {
@@ -109,87 +101,13 @@ async function fetchQuotes(symbols, { force = false } = {}) {
 const newsStore = readJson(NEWS_FILE, {});
 const newsFetchedAt = new Map(); // symbol -> ts
 
-function mapArticle(item, symbol) {
-  return {
-    id: item.uuid,
-    symbol,
-    title: item.title,
-    publisher: item.publisher ?? 'Bilinmeyen Kaynak',
-    link: item.link,
-    publishedAt: item.providerPublishTime
-      ? new Date(item.providerPublishTime).toISOString()
-      : null,
-    type: item.type ?? 'STORY',
-  };
-}
-
-/**
- * ABD hisseleri: Yahoo arama sonucu, relatedTickers sembolü içeriyorsa alınır
- * (aksi halde genel piyasa haberi karışıyor).
- */
-async function fetchUsNews(symbol) {
-  const result = await yahooFinance.search(symbol, { newsCount: 12, quotesCount: 0 });
-  return (result.news ?? [])
-    .filter((n) => Array.isArray(n.relatedTickers) && n.relatedTickers.includes(symbol))
-    .map((n) => mapArticle(n, symbol));
-}
-
-/** Google News RSS'inden basit alan çıkarımı (ek bağımlılık gerektirmez). */
-function parseRssItems(xml) {
-  const items = [];
-  const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/g) ?? [];
-  for (const block of itemBlocks) {
-    const pick = (tag) => {
-      const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
-      return m
-        ? m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&amp;/g, '&').trim()
-        : null;
-    };
-    items.push({
-      title: pick('title'),
-      link: pick('link'),
-      pubDate: pick('pubDate'),
-      source: pick('source'),
-    });
-  }
-  return items;
-}
-
-/**
- * BIST hisseleri: Yahoo'nun BIST haber kapsamı zayıf olduğu için Türkçe
- * haberler Google News RSS üzerinden çekilir (ücretsiz, anahtarsız).
- */
-async function fetchBistNews(symbol) {
-  const base = symbol.replace(/\.IS$/, '');
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
-    `${base} hisse`
-  )}&hl=tr&gl=TR&ceid=TR:tr`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`RSS ${response.status}`);
-  const xml = await response.text();
-  return parseRssItems(xml)
-    .filter((i) => i.title && i.link)
-    .slice(0, 12)
-    .map((i) => ({
-      id: i.link,
-      symbol,
-      title: i.title.replace(/ - [^-]+$/, ''), // Google başlık sonuna kaynağı ekler
-      publisher: i.source ?? 'Google News',
-      link: i.link,
-      publishedAt: i.pubDate ? new Date(i.pubDate).toISOString() : null,
-      type: 'STORY',
-    }));
-}
-
 async function fetchNewsForSymbol(symbol, { force = false } = {}) {
   const now = Date.now();
   const last = newsFetchedAt.get(symbol) ?? 0;
   if (!force && now - last < NEWS_TTL_MS) return newsStore[symbol] ?? [];
 
   try {
-    const fresh = symbol.endsWith('.IS')
-      ? await fetchBistNews(symbol)
-      : await fetchUsNews(symbol);
+    const fresh = await fetchNewsForSymbolRaw(yahooFinance, symbol);
     const existing = newsStore[symbol] ?? [];
     const known = new Set(existing.map((a) => a.id));
     // Yeni haberler öne eklenir; eskiler silinmez (en fazla 200 kayıt tutulur)
@@ -246,28 +164,6 @@ app.get('/api/news', async (req, res) => {
 });
 
 // ---- Sembol arama + profil (form otomatik doldurma) -------------------------
-
-/** Yahoo borsa kodundan uygulama pazar adına eşleme. */
-function mapExchangeToMarket(symbol, exchDisp = '') {
-  if (symbol.endsWith('.IS')) return 'BIST';
-  if (/nasdaq/i.test(exchDisp)) return 'NASDAQ';
-  if (/nyse/i.test(exchDisp)) return 'NYSE';
-  return exchDisp || 'Diğer';
-}
-
-const SECTOR_TR = {
-  Technology: 'Teknoloji',
-  'Financial Services': 'Finans',
-  Healthcare: 'Sağlık',
-  Energy: 'Enerji',
-  'Consumer Cyclical': 'Tüketim (Döngüsel)',
-  'Consumer Defensive': 'Tüketim (Temel)',
-  Industrials: 'Sanayi',
-  'Communication Services': 'İletişim',
-  'Basic Materials': 'Hammadde',
-  'Real Estate': 'Gayrimenkul',
-  Utilities: 'Altyapı / Enerji Dağıtım',
-};
 
 /**
  * Hisse kodu/isim araması: "MP" yazınca MPWR gibi eşleşmeleri döndürür.
