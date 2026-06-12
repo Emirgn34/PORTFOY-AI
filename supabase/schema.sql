@@ -46,6 +46,13 @@ alter table quotes enable row level security;
 alter table fx_rates enable row level security;
 alter table news enable row level security;
 
+-- (drop+create: dosya tekrar çalıştırıldığında hata vermez)
+drop policy if exists "herkes okur" on tracked_symbols;
+drop policy if exists "herkes okur" on quotes;
+drop policy if exists "herkes okur" on fx_rates;
+drop policy if exists "herkes okur" on news;
+drop policy if exists "anon sembol ekler" on tracked_symbols;
+
 create policy "herkes okur" on tracked_symbols for select using (true);
 create policy "herkes okur" on quotes for select using (true);
 create policy "herkes okur" on fx_rates for select using (true);
