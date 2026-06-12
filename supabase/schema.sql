@@ -53,3 +53,9 @@ create policy "herkes okur" on news for select using (true);
 
 -- Uygulama yeni hisse eklendiğinde sembolü izlemeye alabilsin
 create policy "anon sembol ekler" on tracked_symbols for insert with check (true);
+
+-- Yeni Supabase projelerinde PostgREST erişimi için açık yetkiler gerekir
+grant usage on schema public to anon, authenticated, service_role;
+grant select on tracked_symbols, quotes, fx_rates, news to anon, authenticated;
+grant insert on tracked_symbols to anon, authenticated;
+grant all on tracked_symbols, quotes, fx_rates, news to service_role;
