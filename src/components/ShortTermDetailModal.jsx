@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   Info,
+  ExternalLink,
 } from 'lucide-react';
 import ShortTermScoreBreakdown from './ShortTermScoreBreakdown.jsx';
 import {
@@ -147,6 +148,11 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                 const newsReliability = getReliabilityColor(news.reliability);
                 const newsSentiment = getSentimentIcon(news.sentiment);
                 const NewsIcon = newsSentiment.Icon;
+                const hasLink = news.link && news.link !== '#';
+                const TitleTag = hasLink ? 'a' : 'span';
+                const titleProps = hasLink
+                  ? { href: news.link, target: '_blank', rel: 'noopener noreferrer' }
+                  : {};
                 return (
                   <li key={news.title} className={boxClass}>
                     <div className="flex items-start justify-between gap-3">
@@ -155,7 +161,13 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                           <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${newsSentiment.bg} ${newsSentiment.text}`}>
                             <NewsIcon size={12} />
                           </span>
-                          {news.title}
+                          <TitleTag
+                            {...titleProps}
+                            className={hasLink ? 'transition-colors hover:text-accent-soft hover:underline' : ''}
+                          >
+                            {news.title}
+                            {hasLink && <ExternalLink size={11} className="ml-1 inline align-baseline text-slate-500" />}
+                          </TitleTag>
                         </p>
                         <p className="mt-1 text-xs leading-relaxed text-slate-400">{news.summary}</p>
                         <p className="mt-1.5 text-[11px] text-slate-500">

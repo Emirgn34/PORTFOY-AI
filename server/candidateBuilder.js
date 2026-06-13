@@ -12,6 +12,7 @@
  * üretilir (mock ile aynı sözleşme).
  */
 import { mapExchangeToMarket, SECTOR_TR } from './marketData.js';
+import { fetchDailyHistory, analyzeTechnicals } from './technicalAnalysis.js';
 
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 const round = (n) => Math.round(n);
@@ -57,6 +58,7 @@ function buildNewsAggregate(newsRows, referenceMs) {
       summary: r.ai_summary_tr || `${r.publisher ?? 'Kaynak'} haberi.`,
       source: r.publisher ?? 'Bilinmeyen Kaynak',
       date: r.published_at,
+      link: r.link ?? null,
       sentiment: ['positive', 'negative', 'neutral'].includes(r.sentiment) ? r.sentiment : 'neutral',
       reliability: Number.isFinite(r.reliability) ? r.reliability : estimatePublisherReliability(r.publisher),
     }))
@@ -82,11 +84,12 @@ function buildNewsAggregate(newsRows, referenceMs) {
     newsCatalystScore = clamp(sentBase + relAdj + freshAdj);
   }
 
-  const relatedNews = rows.slice(0, 4).map((r) => ({
+  const relatedNews = rows.slice(0, 5).map((r) => ({
     title: r.title,
     summary: r.summary,
     source: r.source,
     date: r.date,
+    link: r.link,
     sentiment: r.sentiment,
     reliability: r.reliability,
     verificationStatus: r.reliability >= 8 ? 'Teyitli' : r.reliability >= 5 ? 'Kısmen Teyitli' : 'Teyitsiz',
@@ -124,8 +127,8 @@ function buildNewsAggregate(newsRows, referenceMs) {
   };
 }
 
-/** quote + quoteSummary'den teknik/risk/likidite/temel metrikleri türetir. */
-function buildMarketMetrics(quote, summary) {
+/** quote + quoteSummary + (varsa) geçmiş grafik analizinden metrikleri türetir. */
+function buildMarketMetrics(quote, summary, tech) {
   const price = quote.regularMarketPrice ?? null;
   const ma50 = quote.fiftyDayAverage ?? null;
   const ma200 = quote.twoHundredDayAverage ?? null;
@@ -141,10 +144,24 @@ function buildMarketMetrics(quote, summary) {
   const stats = summary?.defaultKeyStatistics ?? {};
   const beta = detail.beta ?? stats.beta ?? 1;
 
-  // --- Teknik momentum ---
-  const technicalMomentumScore = round(
-    clamp(50 + pctAbove(price, ma50) * 2 + pctAbove(price, ma200) * 1 + chg * 1.5)
-  );
+  // --- Teknik momentum: varsa gerçek göstergeler (RSI, MACD, momentum, analog edge) ---
+  let technicalMomentumScore;
+  if (tech) {
+    let t = 50;
+    t += clamp((tech.pctVsSma50 ?? 0) * 1.4, -15, 15);
+    t += clamp((tech.pctVsSma200 ?? 0) * 0.7, -10, 10);
+    t += tech.macdPositive ? 7 : -7;
+    t += clamp(((tech.rsi ?? 50) - 50) * 0.4, -8, 10);
+    if ((tech.rsi ?? 50) > 80) t -= 8; // aşırı alım bölgesi
+    t += clamp((tech.ret20 ?? 0) * 0.5, -10, 12);
+    // Geçmiş benzer grafik kurulumunun 20 günlük ortalama getirisi (analog edge)
+    if (tech.analogShort) t += clamp(tech.analogShort.avg * 0.8, -10, 12);
+    technicalMomentumScore = round(clamp(t));
+  } else {
+    technicalMomentumScore = round(
+      clamp(50 + pctAbove(price, ma50) * 2 + pctAbove(price, ma200) * 1 + chg * 1.5)
+    );
+  }
 
   // --- Hacim teyidi ---
   const volRatio = vol && avgVol ? vol / avgVol : 1;
@@ -161,17 +178,22 @@ function buildMarketMetrics(quote, summary) {
     : 45;
   const liquidityLevel = liquidityScore >= 70 ? 'Yüksek' : liquidityScore >= 40 ? 'Orta' : 'Düşük';
 
-  // --- Risk / volatilite ---
-  const rangePct = price && high52 && low52 ? ((high52 - low52) / price) * 100 : 50;
-  const volScore = clamp((beta - 0.5) * 40 + (rangePct - 30) * 0.8);
+  // --- Risk / volatilite: varsa gerçek yıllık volatilite, yoksa beta+52h aralığı ---
+  let volScore;
+  if (tech?.annVol != null) {
+    volScore = clamp((tech.annVol - 15) * 2.2); // %15→0, %30→33, %45→66, %60→100
+  } else {
+    const rangePct = price && high52 && low52 ? ((high52 - low52) / price) * 100 : 50;
+    volScore = clamp((beta - 0.5) * 40 + (rangePct - 30) * 0.8);
+  }
   const volatilitySignal = volScore >= 66 ? 'Yüksek Volatilite' : volScore >= 40 ? 'Orta Volatilite' : 'Düşük Volatilite';
   const riskIndex = volScore * 0.6 + (100 - liquidityScore) * 0.4;
   const riskLevel = riskIndex >= 60 ? 'Yüksek' : riskIndex >= 38 ? 'Orta' : 'Düşük';
   const riskAdjustedScore = round(clamp(100 - riskIndex));
 
-  // --- Sektör/piyasa uyumu (trend bazlı) ---
-  const aboveMa200 = price && ma200 ? price > ma200 : false;
-  const goldenCross = ma50 && ma200 ? ma50 > ma200 : false;
+  // --- Sektör/piyasa uyumu (trend bazlı; varsa gerçek SMA ilişkilerinden) ---
+  const aboveMa200 = tech?.pctVsSma200 != null ? tech.pctVsSma200 > 0 : price && ma200 ? price > ma200 : false;
+  const goldenCross = tech?.goldenCross != null ? tech.goldenCross : ma50 && ma200 ? ma50 > ma200 : false;
   const sectorMarketFitScore = round(clamp(58 + (aboveMa200 ? 12 : -12) + (goldenCross ? 6 : -6), 30, 88));
 
   // --- Temel analiz (uzun vade) ---
@@ -222,7 +244,28 @@ function buildMarketMetrics(quote, summary) {
     fundamentalHealthScore, valuationScore, growthScore, dividendScore,
     peRatio: pe ? Number(pe.toFixed(1)) : null,
     dividendYield: dy != null ? Number((dy * 100).toFixed(1)) : null,
+    // Teknik göstergeler (varsa) — gerekçe metninde kullanılır
+    hasTech: Boolean(tech),
+    rsi: tech?.rsi ?? null,
+    macdPositive: tech?.macdPositive ?? null,
+    ret20: tech?.ret20 ?? null,
+    ret60: tech?.ret60 ?? null,
+    annVol: tech?.annVol ?? null,
+    pctFrom52High: tech?.pctFrom52High ?? null,
+    analogShort: tech?.analogShort ?? null,
+    analogLong: tech?.analogLong ?? null,
   };
+}
+
+/** Analog sonucunu okunaklı bir cümleye çevirir. */
+function analogSentence(analog) {
+  if (!analog) return '';
+  const yon = analog.avg > 0 ? 'yükseliş' : analog.avg < 0 ? 'düşüş' : 'yatay seyir';
+  return (
+    `Geçmişte grafik bugünküne benzer göründüğü ${analog.count} örnekte, sonraki ` +
+    `${analog.fwdDays} günde fiyat ortalama %${analog.avg} (${yon}, kazanç oranı %${analog.win}, ` +
+    `medyan %${analog.median}) hareket etmiş.`
+  );
 }
 
 function momentumLabel(score, horizon) {
@@ -238,9 +281,16 @@ function momentumLabel(score, horizon) {
 }
 
 /** Bir sembol için kısa + uzun vade aday nesnelerini üretir. */
-function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs) {
+function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech) {
   const news = buildNewsAggregate(newsRows, referenceMs);
-  const m = buildMarketMetrics(quote, summary);
+  const m = buildMarketMetrics(quote, summary, tech);
+
+  const techNote = m.hasTech
+    ? `Teknik göstergeler: RSI ${m.rsi}, MACD ${m.macdPositive ? 'pozitif' : 'negatif'}, ` +
+      `son 20 günde %${m.ret20 ?? '—'}, yıllık volatilite %${m.annVol}. `
+    : '';
+  const analogShortNote = analogSentence(m.analogShort);
+  const analogLongNote = analogSentence(m.analogLong);
 
   const market = mapExchangeToMarket(symbol, quote.fullExchangeName ?? quote.exchange ?? '');
   const ticker = symbol.replace(/\.IS$/, '');
@@ -293,13 +343,14 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs) {
     estimatedHorizon: m.technicalMomentumScore >= 70 ? '1-3 hafta' : '2-6 hafta',
     reasonShort:
       `Teknik momentum ${shortMomentum.toLowerCase()}, ${m.volumeSignal.toLowerCase()}; ` +
-      `ortalama haber güvenilirliği ${news.averageNewsReliability}/10.`,
+      `ortalama haber güvenilirliği ${news.averageNewsReliability}/10.` +
+      (m.analogShort ? ` Geçmiş benzer kurulum 20g: %${m.analogShort.avg} (kazanç %${m.analogShort.win}).` : ''),
     reasonDetailed:
       `Bu aday gerçek piyasa verisinden türetildi. Teknik momentum skoru ${m.technicalMomentumScore}/100 ` +
       `(${shortMomentum}); hacim teyidi ${m.volumeConfirmationScore}/100 (${m.volumeSignal}). ` +
       `${news.newsCount} haber tarandı, ortalama güvenilirlik ${news.averageNewsReliability}/10, ` +
       `haber katalizör skoru ${news.newsCatalystScore}/100. Likidite ${m.liquidityLevel.toLowerCase()} ` +
-      `(${m.liquidityScore}/100), risk seviyesi ${m.riskLevel}. ` +
+      `(${m.liquidityScore}/100), risk seviyesi ${m.riskLevel}. ${techNote}${analogShortNote} ` +
       `Skor ve sıra bu bileşenlerin vadeye uygun ağırlıklı toplamından hesaplanır.`,
     scoreBreakdown: {
       newsCatalystScore: news.newsCatalystScore,
@@ -337,7 +388,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs) {
       `(marj, özsermaye kârlılığı, borç ve likidite oranları); değerleme ${m.valuationScore}/100 ` +
       `(F/K ${m.peRatio ?? '—'} ve PD/DD esaslı, ucuz = yüksek); büyüme görünümü ${m.growthScore}/100; ` +
       `temettü/nakit akışı ${m.dividendScore}/100 (verim %${m.dividendYield ?? '—'}). ` +
-      `Likidite ${m.liquidityLevel.toLowerCase()}, risk ${m.riskLevel}. Skor uzun vade ağırlıklarıyla hesaplanır.`,
+      `Likidite ${m.liquidityLevel.toLowerCase()}, risk ${m.riskLevel}. ${analogLongNote} Skor uzun vade ağırlıklarıyla hesaplanır.`,
     scoreBreakdown: {
       fundamentalHealthScore: m.fundamentalHealthScore,
       valuationScore: m.valuationScore,
@@ -391,9 +442,18 @@ export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol 
       newsRows = [];
     }
 
+    // Geçmiş grafik (RSI/MACD/momentum/volatilite + analog); başarısızsa fiyat-temelli metriklere düşülür
+    let tech = null;
+    try {
+      const history = await fetchDailyHistory(yahooFinance, symbol);
+      tech = analyzeTechnicals(history);
+    } catch {
+      tech = null;
+    }
+
     try {
       const { shortCandidate, longCandidate, market } = buildCandidatePair(
-        symbol, quote, summary, newsRows, referenceMs
+        symbol, quote, summary, newsRows, referenceMs, tech
       );
       rows.push({ symbol, horizon: 'short', market, data: shortCandidate });
       rows.push({ symbol, horizon: 'long', market, data: longCandidate });
