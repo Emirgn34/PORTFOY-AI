@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Plus, PieChart as PieChartIcon, BarChart3, RefreshCw, WifiOff } from 'lucide-react';
+import { Plus, PieChart as PieChartIcon, BarChart3, RefreshCw, WifiOff, Loader2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useSyncedState from '../hooks/useSyncedState.js';
 import useLivePrices from '../hooks/useLivePrices.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import PortfolioSummaryCards from '../components/PortfolioSummaryCards.jsx';
@@ -33,7 +33,28 @@ function ChartTooltip({ active, payload }) {
 }
 
 export default function PortfolioPage() {
-  const [stocks, setStocks] = useLocalStorage(STORAGE_KEY, SEED_STOCKS);
+  // Portföy artık kullanıcı hesabına bağlı (Supabase, çok cihaz senkron, RLS
+  // izole); giriş yoksa localStorage'a düşer. Veri kullanıcının kendi satırından
+  // gelene kadar içerik mount edilmez ki canlı fiyatlar doğru sembollerle çeksin.
+  const [stocks, setStocks, { loading }] = useSyncedState({
+    table: 'portfolios',
+    column: 'stocks',
+    localKey: STORAGE_KEY,
+    seed: SEED_STOCKS,
+  });
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 size={26} className="animate-spin text-accent-soft" />
+      </div>
+    );
+  }
+
+  return <PortfolioContent stocks={stocks} setStocks={setStocks} />;
+}
+
+function PortfolioContent({ stocks, setStocks }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStock, setEditingStock] = useState(null);
   const [period, setPeriod] = useState('day');
