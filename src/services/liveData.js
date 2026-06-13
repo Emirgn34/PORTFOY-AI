@@ -9,16 +9,28 @@
  *   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
  */
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const HAS_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+import { supabase, HAS_SUPABASE, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabaseClient.js';
 
-/** Supabase REST okuma (anon anahtar; RLS yalnızca okumaya izin verir). */
+/**
+ * Supabase REST istekleri için başlıklar. RLS artık yalnızca giriş yapmış
+ * kullanıcıya okuma izni verir; bu yüzden Authorization olarak kullanıcının
+ * erişim token'ı gönderilir (yoksa anon — o durumda kilitli tablolar boş döner).
+ */
+async function sbHeaders(extra = {}) {
+  let token = SUPABASE_ANON_KEY;
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) token = data.session.access_token;
+  }
+  return { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}`, ...extra };
+}
+
+/** Supabase REST okuma (giriş yapan kullanıcının kimliğiyle; RLS korumalı). */
 async function sbGet(pathAndQuery) {
   if (!HAS_SUPABASE) return null;
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      headers: await sbHeaders(),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -36,18 +48,20 @@ function sbInFilter(symbols) {
  * Yeni sembolleri bulut izleme listesine kaydeder (toplayıcı sonraki turda
  * veri çekmeye başlar). Hata olursa sessizce geçilir.
  */
-function sbRegisterSymbols(symbols) {
+async function sbRegisterSymbols(symbols) {
   if (!HAS_SUPABASE || symbols.length === 0) return;
-  fetch(`${SUPABASE_URL}/rest/v1/tracked_symbols`, {
-    method: 'POST',
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: 'resolution=ignore-duplicates',
-    },
-    body: JSON.stringify(symbols.map((symbol) => ({ symbol }))),
-  }).catch(() => {});
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/tracked_symbols`, {
+      method: 'POST',
+      headers: await sbHeaders({
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=ignore-duplicates',
+      }),
+      body: JSON.stringify(symbols.map((symbol) => ({ symbol }))),
+    });
+  } catch {
+    // sembol kaydı kritik değil — sessizce geçilir
+  }
 }
 
 /** Uygulamadaki hisse kaydını Yahoo Finance sembolüne çevirir. */
