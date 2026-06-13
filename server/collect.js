@@ -154,6 +154,44 @@ async function collectNews(symbols) {
   console.log(`Haber: ${symbols.length} sembol tarandı, ${total} yeni makale eklendi.`);
 }
 
+/**
+ * Henüz AI analizi yapılmamış (sentiment NULL) eski haberleri kademeli olarak
+ * analiz eder. Her turda sınırlı sayıda işlenir; birkaç tur içinde tüm arşiv
+ * AI'ya kavuşur. Maliyet turu başına sabit kalır (self-healing backfill).
+ */
+async function backfillNewsAnalysis(limit = 50) {
+  if (!isAiEnabled()) return;
+  const rows = await sb(
+    `news?sentiment=is.null&select=id,symbol,title,title_tr,publisher&order=published_at.desc.nullslast&limit=${limit}`
+  );
+  if (!rows?.length) return;
+
+  const analysis = await analyzeArticles(
+    rows.map((r) => ({
+      id: r.id,
+      title: r.title_tr || r.title,
+      publisher: r.publisher,
+      market: r.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
+    }))
+  );
+
+  let updated = 0;
+  for (const r of rows) {
+    const ai = analysis.get(r.id);
+    if (!ai) continue;
+    try {
+      await sb(`news?id=eq.${encodeURIComponent(r.id)}`, {
+        method: 'PATCH',
+        body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
+      });
+      updated++;
+    } catch (err) {
+      console.error(`[backfill] ${r.id}: ${err.message}`);
+    }
+  }
+  console.log(`Backfill: ${updated}/${rows.length} eski haber AI ile güncellendi.`);
+}
+
 /** Bir sembolün son haberlerini Supabase'den okur (aday üretici için). */
 async function getNewsForSymbol(symbol) {
   return sb(
@@ -189,6 +227,12 @@ console.log(`AI haber analizi: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI (
 console.log(`${symbols.length} sembol izleniyor: ${symbols.join(', ')}`);
 await collectQuotes(symbols);
 await collectNews(symbols);
+// Eski AI'sız haberleri kademeli doldur (izole; hata olsa da akış sürer)
+try {
+  await backfillNewsAnalysis();
+} catch (err) {
+  console.error(`[backfill] adım atlandı: ${err.message}`);
+}
 // Aday üretimi izole edilir: candidates tablosu henüz yoksa (kullanıcı SQL'i
 // çalıştırmadıysa) ya da bir hata olursa fiyat/haber yazımı yine de korunur.
 try {
