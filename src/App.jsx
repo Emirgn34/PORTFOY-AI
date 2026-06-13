@@ -7,6 +7,7 @@ import NewsPage from './pages/NewsPage.jsx';
 import OpportunitiesPage from './pages/OpportunitiesPage.jsx';
 import AnalysisPage from './pages/AnalysisPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
+import AdminPage from './pages/AdminPage.jsx';
 import { useAuth } from './contexts/AuthContext.jsx';
 
 /** Oturum çözümlenirken gösterilen tam ekran yükleme durumu. */
@@ -19,7 +20,7 @@ function FullScreenLoader() {
 }
 
 export default function App() {
-  const { configured, loading, isAuthenticated } = useAuth();
+  const { configured, loading, isAuthenticated, isAdmin } = useAuth();
 
   // Oturum durumu okunana kadar bekle (yanlışlıkla login ekranı çakmasın)
   if (loading) return <FullScreenLoader />;
@@ -39,6 +40,11 @@ export default function App() {
         {/* Eski rota geriye dönük uyumluluk için yönlendirilir */}
         <Route path="/short-term" element={<Navigate to="/opportunities" replace />} />
         <Route path="/analysis" element={<AnalysisPage />} />
+        {/* Admin paneli yalnızca yöneticiye; değilse portföye yönlendirilir */}
+        <Route
+          path="/admin"
+          element={isAdmin ? <AdminPage /> : <Navigate to="/portfolio" replace />}
+        />
         <Route path="*" element={<Navigate to="/portfolio" replace />} />
       </Route>
     </Routes>
