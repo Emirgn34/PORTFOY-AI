@@ -40,6 +40,11 @@ create table if not exists news (
 -- Var olan kuruluma sütunu ekle (tablo zaten oluşturulmuşsa)
 alter table news add column if not exists title_tr text;
 
+-- AI analiz alanları (Haiku 4.5 doldurur; toplayıcıda ANTHROPIC_API_KEY varsa)
+alter table news add column if not exists sentiment text;       -- positive | negative | neutral
+alter table news add column if not exists reliability smallint; -- 1-10
+alter table news add column if not exists ai_summary_tr text;   -- tek cümlelik Türkçe özet
+
 create index if not exists news_symbol_published_idx
   on news (symbol, published_at desc);
 

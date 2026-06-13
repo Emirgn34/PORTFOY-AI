@@ -143,6 +143,9 @@ export async function fetchLiveNews(stocks) {
     publisher: r.publisher,
     link: r.link,
     publishedAt: r.published_at,
+    sentiment: r.sentiment ?? null,
+    reliability: r.reliability ?? null,
+    aiSummaryTr: r.ai_summary_tr ?? null,
   }));
 }
 
@@ -187,6 +190,7 @@ export function estimatePublisherReliability(publisher = '') {
 export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
   const ticker = fromYahooSymbol(article.symbol);
   const isTranslated = Boolean(article.titleTr);
+  const hasAi = Boolean(article.sentiment); // AI analizi çalıştıysa duygu dolu olur
   return {
     id: `live-${article.id}`,
     ticker,
@@ -194,20 +198,26 @@ export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
     title: article.titleTr ?? article.title,
     originalTitle: isTranslated ? article.title : null,
     market: article.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
-    summary: `${article.publisher} kaynağından canlı haber. Detay için habere tıklayın.`,
+    summary:
+      article.aiSummaryTr ??
+      `${article.publisher} kaynağından canlı haber. Detay için habere tıklayın.`,
     content:
       (isTranslated ? `Orijinal başlık: "${article.title}"\n\n` : '') +
-      'Bu haber canlı kaynaktan otomatik çekildi. AI analiz motoru bağlandığında ' +
-      'özet, duygu analizi ve güvenilirlik gerekçesi otomatik üretilecektir.',
+      (article.aiSummaryTr
+        ? `AI özeti: ${article.aiSummaryTr}\n\nTam metin için habere tıklayın.`
+        : 'Bu haber canlı kaynaktan otomatik çekildi. AI analiz motoru bağlandığında ' +
+          'özet, duygu analizi ve güvenilirlik gerekçesi otomatik üretilecektir.'),
     type: 'Genel Haber',
     date: article.publishedAt ?? new Date().toISOString(),
     source: article.publisher,
-    sentiment: 'neutral',
-    reliability: estimatePublisherReliability(article.publisher),
-    reliabilityReason:
-      'Güvenilirlik puanı şimdilik kaynak/yayıncı bazlı tahmindir; AI analizi henüz uygulanmadı.',
-    sentimentExplanation:
-      'Duygu analizi henüz uygulanmadı; AI motoru bağlanana kadar nötr varsayılır.',
+    sentiment: article.sentiment ?? 'neutral',
+    reliability: article.reliability ?? estimatePublisherReliability(article.publisher),
+    reliabilityReason: hasAi
+      ? 'Güvenilirlik, kaynağın itibarı ve başlığın tonuna göre AI (Haiku 4.5) tarafından değerlendirildi.'
+      : 'Güvenilirlik puanı şimdilik kaynak/yayıncı bazlı tahmindir; AI analizi henüz uygulanmadı.',
+    sentimentExplanation: hasAi
+      ? 'Duygu, haberin ilgili hisse açısından tonuna göre AI (Haiku 4.5) tarafından belirlendi.'
+      : 'Duygu analizi henüz uygulanmadı; AI motoru bağlanana kadar nötr varsayılır.',
     confirmedSources: [article.publisher],
     isLive: true,
     link: article.link,

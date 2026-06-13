@@ -14,6 +14,7 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
+import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -115,17 +116,33 @@ async function collectNews(symbols) {
       );
       if (fresh.length === 0) continue;
 
+      // Yeni makalelere AI duygu/güvenilirlik/özet analizi (anahtar yoksa boş döner)
+      const market = symbol.endsWith('.IS') ? 'BIST' : 'ABD';
+      const analysis = await analyzeArticles(
+        fresh.map((a) => ({ id: a.id, title: a.title, publisher: a.publisher, market }))
+      );
+
       await sb('news', {
         method: 'POST',
-        body: fresh.map((a) => ({
-          id: a.id,
-          symbol: a.symbol,
-          title: a.title,
-          title_tr: a.titleTr ?? null,
-          publisher: a.publisher,
-          link: a.link,
-          published_at: a.publishedAt,
-        })),
+        body: fresh.map((a) => {
+          const ai = analysis.get(a.id);
+          return {
+            id: a.id,
+            symbol: a.symbol,
+            title: a.title,
+            title_tr: a.titleTr ?? null,
+            publisher: a.publisher,
+            link: a.link,
+            published_at: a.publishedAt,
+            // AI alanları yalnızca analiz çalıştıysa eklenir (kolonlar yoksa/anahtar
+            // yoksa atlanır → ekleme her durumda çalışır)
+            ...(ai && {
+              sentiment: ai.sentiment,
+              reliability: ai.reliability,
+              ai_summary_tr: ai.summaryTr,
+            }),
+          };
+        }),
         prefer: 'resolution=ignore-duplicates', // eski haberler korunur, yeniler eklenir
       });
       total += fresh.length;
@@ -137,6 +154,7 @@ async function collectNews(symbols) {
 }
 
 const symbols = await getTrackedSymbols();
+console.log(`AI haber analizi: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI (ANTHROPIC_API_KEY yok)'}`);
 console.log(`${symbols.length} sembol izleniyor: ${symbols.join(', ')}`);
 await collectQuotes(symbols);
 await collectNews(symbols);

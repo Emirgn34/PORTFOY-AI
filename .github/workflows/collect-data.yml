@@ -2,6 +2,7 @@
 # 20 dakikada bir fiyat + kur + haberleri Supabase'e yazar (PC kapalıyken de çalışır).
 # Gerekli secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   ANTHROPIC_API_KEY (opsiyonel — AI haber analizi için; yoksa analiz atlanır)
 name: Veri Toplayici
 
 on:
@@ -14,18 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
-      # Tüm projeyi değil, yalnızca toplayıcının ihtiyacı olan paketi kur (hız + dakika tasarrufu)
+      # Tüm projeyi değil, yalnızca toplayıcının ihtiyacı olan paketleri kur (hız + dakika tasarrufu)
       - name: Bağımlılık kur
-        run: npm install yahoo-finance2 --no-save --no-audit --no-fund
+        run: npm install yahoo-finance2 @anthropic-ai/sdk --no-save --no-audit --no-fund
 
       - name: Veri topla ve Supabase'e yaz
         run: node server/collect.js
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
