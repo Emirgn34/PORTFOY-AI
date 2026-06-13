@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
-import { Plus, ArrowDownWideNarrow, Hand, Eye, Target, TrendingUp, RefreshCw, WifiOff } from 'lucide-react';
+import { Plus, ArrowDownWideNarrow, Hand, Eye, Target, TrendingUp, RefreshCw, WifiOff, Loader2 } from 'lucide-react';
 import useLocalStorage from '../hooks/useLocalStorage.js';
+import useSyncedState from '../hooks/useSyncedState.js';
 import useLivePrices from '../hooks/useLivePrices.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
@@ -30,11 +31,45 @@ function SummaryChip({ icon: Icon, label, value, valueClass = 'text-white' }) {
 }
 
 export default function WatchlistPage() {
-  const [items, setItems] = useLocalStorage('portfoyai_watchlist', SEED_WATCHLIST);
-  // 'auto' → günlük değişime göre; 'manual' → kullanıcının sürüklediği sıra
+  // İzleme listesi ve "portföye taşı" hedefi artık hesaba bağlı (Supabase, çok
+  // cihaz senkron, RLS izole); giriş yoksa localStorage'a düşer. İçerik yalnızca
+  // veri yüklenince mount edilir (canlı fiyatlar doğru sembollerle çeksin).
+  const [items, setItems, watchState] = useSyncedState({
+    table: 'watchlists',
+    column: 'items',
+    localKey: 'portfoyai_watchlist',
+    seed: SEED_WATCHLIST,
+  });
+  // Portföye taşıma aynı bulut portföyüne yazsın diye (PortfolioPage ile tutarlı)
+  const [, setPortfolioStocks, portfolioState] = useSyncedState({
+    table: 'portfolios',
+    column: 'stocks',
+    localKey: 'portfoyai_stocks',
+    seed: SEED_STOCKS,
+  });
+  // Sıralama modu cihaza özel bir görünüm tercihi — lokal kalır
   const [sortMode, setSortMode] = useLocalStorage('portfoyai_watchlist_sort', 'auto');
-  const [portfolioStocks, setPortfolioStocks] = useLocalStorage('portfoyai_stocks', SEED_STOCKS);
 
+  if (watchState.loading || portfolioState.loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 size={26} className="animate-spin text-accent-soft" />
+      </div>
+    );
+  }
+
+  return (
+    <WatchlistContent
+      items={items}
+      setItems={setItems}
+      setPortfolioStocks={setPortfolioStocks}
+      sortMode={sortMode}
+      setSortMode={setSortMode}
+    />
+  );
+}
+
+function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSortMode }) {
   const live = useLivePrices(items, setItems, { autoRefreshMs: 5 * 60 * 1000 });
 
   const [activeTab, setActiveTab] = useState('all');

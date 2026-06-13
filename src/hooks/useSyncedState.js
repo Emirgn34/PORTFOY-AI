@@ -19,7 +19,7 @@ import { useAuth } from '../contexts/AuthContext.jsx';
  * fiyat çekme gibi yan etkileri başlatmamalı — bu yüzden içerik bileşeni
  * yalnızca loading=false olunca mount edilmelidir.
  */
-export default function useSyncedState({ table, column, localKey, seed }) {
+export default function useSyncedState({ table, column, localKey, seed, readOnly = false }) {
   const { configured, isAuthenticated, user } = useAuth();
   const cloud = Boolean(configured && isAuthenticated && supabase && user);
 
@@ -53,11 +53,15 @@ export default function useSyncedState({ table, column, localKey, seed }) {
         if (data && data[column] != null) {
           apply(data[column]);
         } else {
-          // İlk giriş: kullanıcının cloud satırını seed ile oluştur
+          // İlk giriş: kullanıcının cloud satırını seed ile oluştur.
+          // readOnly tüketici sayfalar (analiz/haber/fırsatlar) satır yazmaz —
+          // satırı yalnızca portföy/izleme sayfaları (sahibi düzenleyen) oluşturur.
           apply(seed);
-          await supabase
-            .from(table)
-            .upsert({ user_id: user.id, [column]: seed, updated_at: new Date().toISOString() });
+          if (!readOnly) {
+            await supabase
+              .from(table)
+              .upsert({ user_id: user.id, [column]: seed, updated_at: new Date().toISOString() });
+          }
         }
       } else {
         userIdRef.current = null;

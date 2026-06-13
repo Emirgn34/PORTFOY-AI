@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio } from 'lucide-react';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import {
   MOCK_SHORT_TERM_CANDIDATES,
@@ -44,7 +44,13 @@ function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/15 text-acc
 }
 
 export default function OpportunitiesPage() {
-  const [portfolioStocks] = useLocalStorage('portfoyai_stocks', SEED_STOCKS);
+  const [portfolioStocks] = useSyncedState({
+    table: 'portfolios',
+    column: 'stocks',
+    localKey: 'portfoyai_stocks',
+    seed: SEED_STOCKS,
+    readOnly: true,
+  });
   const [horizon, setHorizon] = useState('short');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedCandidate, setSelectedCandidate] = useState(null);

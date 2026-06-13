@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Gauge, Sparkles, FlaskConical, Inbox } from 'lucide-react';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { MOCK_PORTFOLIO_ANALYSIS, getStockAnalysis } from '../data/mockAnalysis.js';
 import AnalysisCard from '../components/AnalysisCard.jsx';
@@ -40,7 +40,13 @@ function PortfolioScoreRing({ score }) {
 }
 
 export default function AnalysisPage() {
-  const [stocks] = useLocalStorage('portfoyai_stocks', SEED_STOCKS);
+  const [stocks] = useSyncedState({
+    table: 'portfolios',
+    column: 'stocks',
+    localKey: 'portfoyai_stocks',
+    seed: SEED_STOCKS,
+    readOnly: true,
+  });
   const analysis = MOCK_PORTFOLIO_ANALYSIS;
 
   // Her hissenin TRY bazlı portföy ağırlığı

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, SearchX, Radio, X } from 'lucide-react';
 import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { fetchLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
@@ -55,11 +55,27 @@ export default function NewsPage() {
   const [showTickerSugg, setShowTickerSugg] = useState(false);
   const skipTickerSearchRef = useRef(false);
 
-  // Canlı haberler portföy + izleme listesindeki tüm hisseler için çekilir
-  const [portfolioStocks] = useLocalStorage('portfoyai_stocks', SEED_STOCKS);
-  const [watchlistItems] = useLocalStorage('portfoyai_watchlist', SEED_WATCHLIST);
+  // Canlı haberler portföy + izleme listesindeki tüm hisseler için çekilir.
+  // Veriler hesaba bağlı buluttan okunur (read-only); yüklenene kadar haber
+  // çekme beklenir ki kullanıcının GERÇEK sembolleri için haber gelsin.
+  const [portfolioStocks, , portfolioState] = useSyncedState({
+    table: 'portfolios',
+    column: 'stocks',
+    localKey: 'portfoyai_stocks',
+    seed: SEED_STOCKS,
+    readOnly: true,
+  });
+  const [watchlistItems, , watchState] = useSyncedState({
+    table: 'watchlists',
+    column: 'items',
+    localKey: 'portfoyai_watchlist',
+    seed: SEED_WATCHLIST,
+    readOnly: true,
+  });
+  const stocksLoading = portfolioState.loading || watchState.loading;
 
   useEffect(() => {
+    if (stocksLoading) return undefined; // kullanıcının gerçek sembolleri yüklensin
     let cancelled = false;
     const allStocks = [...portfolioStocks, ...watchlistItems];
     const companyByTicker = new Map(allStocks.map((s) => [s.ticker, s.company]));
@@ -76,9 +92,9 @@ export default function NewsPage() {
       cancelled = true;
       clearInterval(timer);
     };
-    // Stok listeleri sayfa açıkken değişmez varsayılır; ilk yükleme + interval yeterli.
+    // Stok listeleri yüklendikten sonra sayfa açıkken değişmez varsayılır.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [stocksLoading]);
 
   // Kapsam filtreleri için yardımcı kümeler
   const portfolioTickers = useMemo(
