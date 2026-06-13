@@ -70,3 +70,10 @@ export async function getAccessToken() {
   const session = await getSession();
   return session?.access_token ?? null;
 }
+
+/** Giriş yapan kullanıcının kendi parolasını değiştirir. Dönüş: { error }. */
+export async function updatePassword(newPassword) {
+  if (!supabase) return { error: new Error('Kimlik servisi yapılandırılmamış.') };
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  return { error };
+}

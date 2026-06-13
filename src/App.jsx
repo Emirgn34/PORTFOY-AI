@@ -8,6 +8,7 @@ import OpportunitiesPage from './pages/OpportunitiesPage.jsx';
 import AnalysisPage from './pages/AnalysisPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
+import AccountPage from './pages/AccountPage.jsx';
 import { useAuth } from './contexts/AuthContext.jsx';
 
 /** Oturum çözümlenirken gösterilen tam ekran yükleme durumu. */
@@ -40,6 +41,8 @@ export default function App() {
         {/* Eski rota geriye dönük uyumluluk için yönlendirilir */}
         <Route path="/short-term" element={<Navigate to="/opportunities" replace />} />
         <Route path="/analysis" element={<AnalysisPage />} />
+        {/* Hesabım — her giriş yapan kullanıcı kendi ayarlarına erişir */}
+        <Route path="/account" element={<AccountPage />} />
         {/* Admin paneli yalnızca yöneticiye; değilse portföye yönlendirilir */}
         <Route
           path="/admin"

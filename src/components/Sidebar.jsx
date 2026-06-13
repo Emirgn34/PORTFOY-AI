@@ -71,7 +71,12 @@ export default function Sidebar({ isOpen, onClose }) {
         <div className="border-t border-navy-700/60 px-5 py-4">
           {configured && isAuthenticated && (
             <div className="mb-3 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 overflow-hidden">
+              <NavLink
+                to="/account"
+                onClick={onClose}
+                title="Hesabım"
+                className="flex items-center gap-2 overflow-hidden rounded-md p-1 transition-colors hover:bg-navy-800"
+              >
                 <span
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-semibold ${
                     isAdmin ? 'bg-accent/20 text-accent-soft' : 'bg-navy-800 text-slate-300'
@@ -83,7 +88,7 @@ export default function Sidebar({ isOpen, onClose }) {
                   <p className="truncate text-xs font-medium text-slate-200">{username}</p>
                   <p className="text-[10px] text-slate-500">{isAdmin ? 'Yönetici' : 'Kullanıcı'}</p>
                 </div>
-              </div>
+              </NavLink>
               <button
                 type="button"
                 onClick={() => signOut()}
