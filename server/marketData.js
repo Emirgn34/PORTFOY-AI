@@ -33,14 +33,51 @@ export function mapArticle(item, symbol) {
 }
 
 /**
- * ABD hisseleri: Yahoo arama sonucu, relatedTickers sembolü içeriyorsa alınır
- * (aksi halde genel piyasa haberi karışıyor).
+ * Başlığa göre tekilleştirir (aynı haber iki kaynaktan farklı id'yle gelebilir).
+ * Noktalama ve büyük/küçük harf normalleştirilir; ilk görülen kayıt tutulur.
+ */
+export function dedupeByTitle(articles) {
+  const seen = new Set();
+  const out = [];
+  for (const a of articles) {
+    const key = (a.title ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9ğüşıöç]+/gi, ' ')
+      .trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+  }
+  return out;
+}
+
+/**
+ * Yahoo arama haberleri: relatedTickers sembolü içerenler yüksek alâkalıdır.
+ * (Tek başına az makale döndürür; Google News ile birlikte kullanılır.)
+ */
+async function fetchUsNewsFromYahoo(yahooFinance, symbol) {
+  try {
+    const result = await yahooFinance.search(symbol, { newsCount: 20, quotesCount: 0 });
+    return (result.news ?? [])
+      .filter((n) => Array.isArray(n.relatedTickers) && n.relatedTickers.includes(symbol))
+      .map((n) => mapArticle(n, symbol));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * ABD hisseleri: Yahoo (yüksek alâka) + Google News (geniş kapsam) birleştirilir,
+ * başlık bazında teklenir. Tek kaynağa göre çok daha fazla haber döndürür.
  */
 export async function fetchUsNews(yahooFinance, symbol) {
-  const result = await yahooFinance.search(symbol, { newsCount: 12, quotesCount: 0 });
-  return (result.news ?? [])
-    .filter((n) => Array.isArray(n.relatedTickers) && n.relatedTickers.includes(symbol))
-    .map((n) => mapArticle(n, symbol));
+  const [yahoo, google] = await Promise.all([
+    fetchUsNewsFromYahoo(yahooFinance, symbol),
+    fetchGoogleNews(`${symbol} stock`, symbol, { hl: 'en-US', gl: 'US', ceid: 'US:en' }).catch(
+      () => []
+    ),
+  ]);
+  return dedupeByTitle([...yahoo, ...google]);
 }
 
 /** Google News RSS'inden basit alan çıkarımı (ek bağımlılık gerektirmez). */
@@ -65,20 +102,19 @@ export function parseRssItems(xml) {
 }
 
 /**
- * BIST hisseleri: Yahoo'nun BIST haber kapsamı zayıf olduğu için Türkçe
- * haberler Google News RSS üzerinden çekilir (ücretsiz, anahtarsız).
+ * Google News RSS arama sonucunu uygulama makale şemasına çevirir
+ * (ücretsiz, anahtarsız). ABD ve BIST haberlerinde ortak kullanılır.
  */
-export async function fetchBistNews(symbol) {
-  const base = symbol.replace(/\.IS$/, '');
+export async function fetchGoogleNews(query, symbol, { hl = 'en-US', gl = 'US', ceid = 'US:en' } = {}) {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
-    `${base} hisse`
-  )}&hl=tr&gl=TR&ceid=TR:tr`;
+    query
+  )}&hl=${hl}&gl=${gl}&ceid=${ceid}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`RSS ${response.status}`);
   const xml = await response.text();
   return parseRssItems(xml)
     .filter((i) => i.title && i.link)
-    .slice(0, 12)
+    .slice(0, 15)
     .map((i) => ({
       id: i.link,
       symbol,
@@ -88,6 +124,15 @@ export async function fetchBistNews(symbol) {
       publishedAt: i.pubDate ? new Date(i.pubDate).toISOString() : null,
       type: 'STORY',
     }));
+}
+
+/**
+ * BIST hisseleri: Yahoo'nun BIST haber kapsamı zayıf olduğu için Türkçe
+ * haberler Google News RSS üzerinden çekilir (ücretsiz, anahtarsız).
+ */
+export async function fetchBistNews(symbol) {
+  const base = symbol.replace(/\.IS$/, '');
+  return fetchGoogleNews(`${base} hisse`, symbol, { hl: 'tr', gl: 'TR', ceid: 'TR:tr' });
 }
 
 /** Sembole göre doğru haber kaynağını seçer. */
