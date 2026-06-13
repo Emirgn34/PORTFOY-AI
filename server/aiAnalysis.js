@@ -25,8 +25,19 @@ export function isAiEnabled() {
 const SYSTEM_PROMPT =
   'Sen bir finansal haber analistisin. Sana hisse senedi haber başlıkları ' +
   'verilecek; her biri için ilgili hisse açısından şunları üret:\n' +
-  '- sentiment: haberin hisse için tonu — "positive" (olumlu/katalizör), ' +
-  '"negative" (olumsuz/risk) veya "neutral" (nötr/belirsiz).\n' +
+  '- sentiment: haberin o hisse için OLASI FİYAT ETKİSİ yönündeki tonu.\n' +
+  '  * "positive": olumlu ima — büyüme, yeni anlaşma/sözleşme, beklenti üstü ' +
+  'bilanço, hedef fiyat artışı, olumlu analist görüşü, ucuz değerleme fırsatı, ' +
+  'talep artışı, ürün/pazar genişlemesi vb.\n' +
+  '  * "negative": olumsuz ima — düşüş, dava/soruşturma, zayıf bilanço, hedef ' +
+  'fiyat indirimi, regülasyon baskısı, maliyet/marj baskısı, rekabet tehdidi, ' +
+  'talep zayıflığı vb.\n' +
+  '  * "neutral": SADECE haber gerçekten iki yönlü/dengeliyse VEYA o hisseyle ' +
+  'doğrudan ilgili değilse (genel piyasa yorumu, hisseden yalnızca örnek olarak ' +
+  'bahseden listeler).\n' +
+  '  ÖNEMLİ: Çoğu şirkete özgü haberin bir yönü vardır. Emin olamadığında "neutral"e ' +
+  'KAÇMA; başlığın baskın tonuna göre pozitif veya negatif seç. "neutral" yalnızca ' +
+  'son çare olmalı.\n' +
   '- reliability: 1-10 arası güvenilirlik. Kaynağın itibarını (Reuters/Bloomberg/' +
   'KAP yüksek; tıklama tuzağı/spekülatif bloglar düşük) ve başlığın abartılı/' +
   'sansasyonel olup olmadığını birlikte değerlendir.\n' +
