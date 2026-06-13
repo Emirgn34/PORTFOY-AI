@@ -32,8 +32,8 @@ export default function Sidebar({ isOpen, onClose }) {
         }`}
       >
         <div className="flex h-16 items-center justify-between border-b border-navy-700/60 px-5">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="PortföyAI logosu" className="h-9 w-9 rounded-full object-contain" />
+          <div className="flex items-center gap-4">
+            <img src="/logo.png" alt="PortföyAI logosu" className="h-12 w-12 object-contain" />
             <span className="text-lg font-bold tracking-tight text-white">
               Portföy<span className="text-accent-soft">AI</span>
             </span>
