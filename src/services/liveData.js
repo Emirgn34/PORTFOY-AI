@@ -150,6 +150,19 @@ export async function fetchLiveNews(stocks) {
 }
 
 /**
+ * Fırsat adaylarını bulut tablosundan getirir (toplayıcı üretir).
+ * Dönüş: aday nesnesi dizisi (mock şemasıyla birebir) veya veri yoksa null.
+ * Veri yoksa çağıran taraf mock listeye düşer.
+ */
+export async function fetchLiveCandidates(horizon) {
+  const rows = await sbGet(
+    `candidates?horizon=eq.${encodeURIComponent(horizon)}&select=data&order=updated_at.desc`
+  );
+  if (!rows?.length) return null;
+  return rows.map((r) => r.data).filter(Boolean);
+}
+
+/**
  * Hisse kodu/isim araması (form otomatik tamamlama).
  * Dönüş: [{ symbol, ticker, name, market }] veya sunucu kapalıysa null.
  */

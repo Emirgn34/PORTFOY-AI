@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio } from 'lucide-react';
 import useLocalStorage from '../hooks/useLocalStorage.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../data/mockShortTermCandidates.js';
 import { MOCK_LONG_TERM_CANDIDATES } from '../data/mockLongTermCandidates.js';
 import { scoreAndRankCandidates, HORIZON_CONFIGS } from '../utils/opportunityScoring.js';
+import { fetchLiveCandidates } from '../services/liveData.js';
 import ShortTermFilters, { DEFAULT_FILTERS } from '../components/ShortTermFilters.jsx';
 import ShortTermCandidateCard from '../components/ShortTermCandidateCard.jsx';
 import ShortTermDetailModal from '../components/ShortTermDetailModal.jsx';
@@ -48,15 +49,41 @@ export default function OpportunitiesPage() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
 
+  // Canlı adaylar bulut tablosundan çekilir; yoksa mock listeye düşülür.
+  const [liveShort, setLiveShort] = useState(null);
+  const [liveLong, setLiveLong] = useState(null);
+  const [liveLoadedAt, setLiveLoadedAt] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const [s, l] = await Promise.all([
+        fetchLiveCandidates('short'),
+        fetchLiveCandidates('long'),
+      ]);
+      if (cancelled) return;
+      if (s?.length) setLiveShort(s);
+      if (l?.length) setLiveLong(l);
+      if (s?.length || l?.length) setLiveLoadedAt(new Date().toISOString());
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isLive = Boolean(liveShort || liveLong);
+  // Canlı veride katalizör tazeliği "şu an"a göre; mock'ta sabit LAST_UPDATED'a göre ölçülür.
+  const referenceDate = liveLoadedAt ?? LAST_UPDATED;
+
   // Skor ve sıra her zaman vadeye uygun ağırlık setiyle breakdown'dan türetilir.
-  // LAST_UPDATED referans alınır: katalizör tazeliği bu ana göre ölçülür.
   const rankedShort = useMemo(
-    () => scoreAndRankCandidates(MOCK_SHORT_TERM_CANDIDATES, 'short', LAST_UPDATED),
-    []
+    () => scoreAndRankCandidates(liveShort ?? MOCK_SHORT_TERM_CANDIDATES, 'short', referenceDate),
+    [liveShort, referenceDate]
   );
   const rankedLong = useMemo(
-    () => scoreAndRankCandidates(MOCK_LONG_TERM_CANDIDATES, 'long', LAST_UPDATED),
-    []
+    () => scoreAndRankCandidates(liveLong ?? MOCK_LONG_TERM_CANDIDATES, 'long', referenceDate),
+    [liveLong, referenceDate]
   );
 
   const rankedCandidates = horizon === 'short' ? rankedShort : rankedLong;
@@ -128,7 +155,7 @@ export default function OpportunitiesPage() {
   const lastUpdatedText = new Intl.DateTimeFormat('tr-TR', {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(new Date(LAST_UPDATED));
+  }).format(new Date(referenceDate));
 
   return (
     <div className="space-y-5">
@@ -155,10 +182,17 @@ export default function OpportunitiesPage() {
           {HORIZON_DESCRIPTIONS[horizon]}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <p className="flex items-center gap-1.5 text-xs text-slate-500">
-            <Clock size={12} />
-            Veriler {lastUpdatedText} itibarıyla — örnek (mock) veri
-          </p>
+          {isLive ? (
+            <p className="flex items-center gap-1.5 text-xs text-gain">
+              <Radio size={12} />
+              Canlı veri — {lastUpdatedText} itibarıyla otomatik üretildi (gerçek fiyat, temel ve haber verisi)
+            </p>
+          ) : (
+            <p className="flex items-center gap-1.5 text-xs text-slate-500">
+              <Clock size={12} />
+              Veriler {lastUpdatedText} itibarıyla — örnek (mock) veri
+            </p>
+          )}
           <p className="text-xs text-slate-500">
             Bu ekran yatırım tavsiyesi değildir. Sadece veri odaklı izleme ve araştırma amacıyla
             tasarlanmıştır.

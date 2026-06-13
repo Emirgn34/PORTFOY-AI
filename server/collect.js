@@ -15,6 +15,7 @@
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
 import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
+import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -153,9 +154,46 @@ async function collectNews(symbols) {
   console.log(`Haber: ${symbols.length} sembol tarandı, ${total} yeni makale eklendi.`);
 }
 
+/** Bir sembolün son haberlerini Supabase'den okur (aday üretici için). */
+async function getNewsForSymbol(symbol) {
+  return sb(
+    `news?symbol=eq.${encodeURIComponent(symbol)}&select=title,title_tr,publisher,link,published_at,sentiment,reliability,ai_summary_tr&order=published_at.desc.nullslast&limit=30`
+  );
+}
+
+/** Küratörlü evren + izlenen semboller için fırsat adaylarını üretip yazar. */
+async function collectCandidates(trackedSymbols) {
+  const universe = [...new Set([...CANDIDATE_UNIVERSE, ...trackedSymbols])];
+  console.log(`Aday üreticisi: ${universe.length} sembol taranıyor...`);
+  const rows = await buildCandidates(universe, { yahooFinance, getNewsForSymbol });
+  if (rows.length === 0) {
+    console.log('Aday üretilemedi.');
+    return;
+  }
+  await sb('candidates', {
+    method: 'POST',
+    body: rows.map((r) => ({
+      symbol: r.symbol,
+      horizon: r.horizon,
+      market: r.market,
+      data: r.data,
+      updated_at: new Date().toISOString(),
+    })),
+    prefer: 'resolution=merge-duplicates', // sembol+vade başına tek satır güncellenir
+  });
+  console.log(`Aday: ${rows.length / 2} sembol için kısa+uzun vade adayı yazıldı.`);
+}
+
 const symbols = await getTrackedSymbols();
 console.log(`AI haber analizi: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI (ANTHROPIC_API_KEY yok)'}`);
 console.log(`${symbols.length} sembol izleniyor: ${symbols.join(', ')}`);
 await collectQuotes(symbols);
 await collectNews(symbols);
+// Aday üretimi izole edilir: candidates tablosu henüz yoksa (kullanıcı SQL'i
+// çalıştırmadıysa) ya da bir hata olursa fiyat/haber yazımı yine de korunur.
+try {
+  await collectCandidates(symbols);
+} catch (err) {
+  console.error(`[candidates] adım atlandı: ${err.message}`);
+}
 console.log('Toplama tamamlandı.');
