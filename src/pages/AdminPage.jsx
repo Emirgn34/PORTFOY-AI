@@ -63,7 +63,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div data-tour="admin-panel" className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-xl font-bold tracking-tight text-white">Kullanıcı Yönetimi</h1>
         <p className="mt-1 text-sm text-slate-500">

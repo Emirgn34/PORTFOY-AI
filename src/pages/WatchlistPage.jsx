@@ -300,6 +300,7 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
           )}
           <button
             type="button"
+            data-tour="watchlist-add"
             onClick={() => {
               setEditingItem(null);
               setFormOpen(true);
@@ -332,7 +333,7 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
       )}
 
       {/* Sekmeler + sıralama modu */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div data-tour="watchlist-list" className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex overflow-hidden rounded-lg border border-navy-700">
           {HORIZON_TABS.map((tab) => (
             <button

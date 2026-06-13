@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, PieChart as PieChartIcon, BarChart3, RefreshCw, WifiOff, Loader2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import useSyncedState from '../hooks/useSyncedState.js';
@@ -59,7 +59,25 @@ function PortfolioContent({ stocks, setStocks }) {
   const [editingStock, setEditingStock] = useState(null);
   const [period, setPeriod] = useState('day');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+  const [tourAdvanced, setTourAdvanced] = useState(false);
   const live = useLivePrices(stocks, setStocks, { autoRefreshMs: 5 * 60 * 1000 });
+
+  // Site eğitimi (tur) "Hisse Ekle" formunu açıp kapatabilsin
+  useEffect(() => {
+    const handler = (e) => {
+      const action = e.detail;
+      if (action === 'openModal' || action === 'openModalAdvanced') {
+        setEditingStock(null);
+        setModalOpen(true);
+        setTourAdvanced(action === 'openModalAdvanced');
+      } else {
+        setModalOpen(false);
+        setTourAdvanced(false);
+      }
+    };
+    window.addEventListener('tour:action', handler);
+    return () => window.removeEventListener('tour:action', handler);
+  }, []);
 
   const summary = useMemo(() => getPortfolioSummary(stocks), [stocks]);
 
@@ -113,7 +131,9 @@ function PortfolioContent({ stocks, setStocks }) {
 
   return (
     <div className="space-y-6">
-      <PortfolioSummaryCards summary={summary} />
+      <div data-tour="portfolio-summary">
+        <PortfolioSummaryCards summary={summary} />
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
@@ -123,6 +143,7 @@ function PortfolioContent({ stocks, setStocks }) {
           {/* Canlı fiyat güncelleme (lokal veri sunucusu) */}
           {live.isOffline ? (
             <span
+              data-tour="live-price"
               className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs text-slate-500"
               title="Canlı veri sunucusu kapalı. Başlatmak için: npm run server"
             >
@@ -132,6 +153,7 @@ function PortfolioContent({ stocks, setStocks }) {
           ) : (
             <button
               type="button"
+              data-tour="live-price"
               onClick={live.refresh}
               disabled={live.loading}
               className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-white disabled:opacity-50"
@@ -166,6 +188,7 @@ function PortfolioContent({ stocks, setStocks }) {
           </div>
           <button
             type="button"
+            data-tour="add-stock"
             onClick={openAddModal}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft"
           >
@@ -175,14 +198,16 @@ function PortfolioContent({ stocks, setStocks }) {
         </div>
       </div>
 
-      <PortfolioTable
-        stocks={sortedStocks}
-        onEdit={openEditModal}
-        onDelete={handleDelete}
-        sortConfig={sortConfig}
-        onSort={handleSort}
-        period={period}
-      />
+      <div data-tour="portfolio-table">
+        <PortfolioTable
+          stocks={sortedStocks}
+          onEdit={openEditModal}
+          onDelete={handleDelete}
+          sortConfig={sortConfig}
+          onSort={handleSort}
+          period={period}
+        />
+      </div>
       <p className="-mt-4 text-[11px] text-slate-600">
         Kolon başlıklarına tıklayarak sıralayabilirsiniz; "Toplam Maliyet" en çok para yatırılan
         sıralamasını verir. Dönemsel değişim yüzdeleri şimdilik elle girilir, ileride fiyat
@@ -275,6 +300,7 @@ function PortfolioContent({ stocks, setStocks }) {
         stock={editingStock}
         onSave={handleSave}
         onClose={() => setModalOpen(false)}
+        tourOpenAdvanced={tourAdvanced}
       />
     </div>
   );

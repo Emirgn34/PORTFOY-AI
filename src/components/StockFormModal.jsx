@@ -98,7 +98,7 @@ function summarizeTranches(tranches) {
   return { totalQty, totalCost, avgPrice: totalCost / totalQty };
 }
 
-export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
+export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpenAdvanced = false }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
 
@@ -160,6 +160,11 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.ticker, isOpen]);
+
+  // Site eğitimi (tur) kademeli alım adımında gelişmiş bölümü otomatik açar
+  useEffect(() => {
+    if (isOpen && tourOpenAdvanced) setAdvancedOpen(true);
+  }, [isOpen, tourOpenAdvanced]);
 
   if (!isOpen) return null;
 
@@ -263,7 +268,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
         <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Hisse Kodu *" error={errors.ticker}>
-              <div className="relative">
+              <div className="relative" data-tour="stock-search">
                 <input
                   className={inputClass}
                   value={form.ticker}
@@ -333,6 +338,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
           </Field>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <div data-tour="amount-converter">
             <Field
               label={entryMode === 'amount' ? 'Yatırılan Tutar *' : 'Adet *'}
               error={errors.quantity}
@@ -381,6 +387,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
                 />
               )}
             </Field>
+            </div>
             <Field label="Ort. Alış Fiyatı *" error={errors.avgPrice}>
               <input
                 className={inputClass}
@@ -406,7 +413,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose }) {
           </div>
 
           {/* Gelişmiş: kademeli alım hesaplayıcı */}
-          <div className="rounded-lg border border-navy-700/60 bg-navy-850/50">
+          <div data-tour="tranche-calculator" className="rounded-lg border border-navy-700/60 bg-navy-850/50">
             <button
               type="button"
               onClick={() => setAdvancedOpen((o) => !o)}

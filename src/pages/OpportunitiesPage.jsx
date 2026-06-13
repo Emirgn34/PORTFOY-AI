@@ -168,7 +168,7 @@ export default function OpportunitiesPage() {
       {/* Başlık + vade sekmeleri */}
       <div>
         <h2 className="text-lg font-bold text-white">Fırsatlar</h2>
-        <div className="mt-3 flex overflow-hidden rounded-lg border border-navy-700 sm:inline-flex">
+        <div data-tour="opp-tabs" className="mt-3 flex overflow-hidden rounded-lg border border-navy-700 sm:inline-flex">
           {HORIZON_TABS.map((tab) => (
             <button
               key={tab.value}

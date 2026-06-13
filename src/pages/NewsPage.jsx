@@ -221,7 +221,7 @@ export default function NewsPage() {
   return (
     <div className="space-y-5">
       {/* Filtre alanı */}
-      <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-4">
+      <div data-tour="news-filters" className="rounded-xl border border-navy-700/60 bg-navy-900 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {/* Kapsam: hangi hisselerin haberleri? */}
           <select

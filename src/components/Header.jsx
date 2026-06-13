@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
-import { Menu, Database } from 'lucide-react';
+import { Menu, Database, Lightbulb } from 'lucide-react';
+import { useTour } from '../tour/TourProvider.jsx';
 
 const PAGE_TITLES = {
   '/portfolio': 'Portföyüm',
@@ -11,6 +12,7 @@ const PAGE_TITLES = {
 
 export default function Header({ onMenuClick }) {
   const { pathname } = useLocation();
+  const { startTour } = useTour();
   const title = PAGE_TITLES[pathname] ?? 'PortföyAI';
 
   const today = new Intl.DateTimeFormat('tr-TR', {
@@ -36,6 +38,16 @@ export default function Header({ onMenuClick }) {
 
       <div className="flex items-center gap-3">
         <span className="hidden text-xs text-slate-500 md:block">{today}</span>
+        <button
+          type="button"
+          data-tour="help-button"
+          onClick={startTour}
+          title="Site eğitimini tekrar başlat"
+          aria-label="Site eğitimini tekrar başlat"
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-400 transition-colors hover:bg-amber-400/20"
+        >
+          <Lightbulb size={15} />
+        </button>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[11px] font-medium text-amber-400">
           <Database size={12} />
           Demo Veri

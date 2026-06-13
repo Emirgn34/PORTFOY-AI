@@ -73,7 +73,7 @@ export default function AnalysisPage() {
       </div>
 
       {/* Genel portföy skoru */}
-      <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-6">
+      <div data-tour="analysis-score" className="rounded-xl border border-navy-700/60 bg-navy-900 p-6">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="flex items-center gap-5">
             <PortfolioScoreRing score={analysis.overallScore} />
