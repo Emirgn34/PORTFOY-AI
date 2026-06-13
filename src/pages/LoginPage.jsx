@@ -3,7 +3,7 @@
  * Kullanıcı adı + parola alır; arka planda Supabase Auth ile doğrular.
  */
 import { useState } from 'react';
-import { TrendingUp, Lock, User, Loader2 } from 'lucide-react';
+import { Lock, User, Loader2 } from 'lucide-react';
 import { signIn } from '../services/auth.js';
 
 export default function LoginPage() {
@@ -29,9 +29,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-navy-950 px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/20 text-accent-soft">
-            <TrendingUp size={26} />
-          </span>
+          <img src="/logo.png" alt="PortföyAI logosu" className="mb-3 h-16 w-16 rounded-full object-contain" />
           <h1 className="text-2xl font-bold tracking-tight text-white">
             Portföy<span className="text-accent-soft">AI</span>
           </h1>

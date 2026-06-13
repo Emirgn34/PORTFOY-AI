@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Wallet, Eye, Newspaper, Activity, BrainCircuit, TrendingUp, X, Shield, LogOut } from 'lucide-react';
+import { Wallet, Eye, Newspaper, Activity, BrainCircuit, X, Shield, LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { signOut } from '../services/auth.js';
 
@@ -33,9 +33,7 @@ export default function Sidebar({ isOpen, onClose }) {
       >
         <div className="flex h-16 items-center justify-between border-b border-navy-700/60 px-5">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/20 text-accent-soft">
-              <TrendingUp size={20} />
-            </span>
+            <img src="/logo.png" alt="PortföyAI logosu" className="h-9 w-9 rounded-full object-contain" />
             <span className="text-lg font-bold tracking-tight text-white">
               Portföy<span className="text-accent-soft">AI</span>
             </span>
