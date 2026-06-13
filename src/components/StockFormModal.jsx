@@ -202,14 +202,38 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
 
   const trancheSummary = summarizeTranches(tranches);
 
+  // Üstte hâlihazırda girili mevcut pozisyon (adet/tutar + ortalama fiyat)
+  const existingQty =
+    entryMode === 'amount'
+      ? Number(amount) > 0 && Number(form.avgPrice) > 0
+        ? Number(amount) / Number(form.avgPrice)
+        : 0
+      : Number(form.quantity) > 0
+        ? Number(form.quantity)
+        : 0;
+  const existingPrice = Number(form.avgPrice) > 0 ? Number(form.avgPrice) : 0;
+  const hasExisting = existingQty > 0 && existingPrice > 0;
+
+  // Kademeler mevcut pozisyonun ÜZERİNE eklenir; ağırlıklı ortalama birleştirilir
+  const combinedPurchase = trancheSummary
+    ? (() => {
+        const baseQty = hasExisting ? existingQty : 0;
+        const baseCost = hasExisting ? existingQty * existingPrice : 0;
+        const totalQty = baseQty + trancheSummary.totalQty;
+        return { totalQty, avgPrice: (baseCost + trancheSummary.totalCost) / totalQty };
+      })()
+    : null;
+
   function applyTranches() {
-    if (!trancheSummary) return;
+    if (!combinedPurchase) return;
     setEntryMode('quantity');
     setForm((f) => ({
       ...f,
-      quantity: String(Number(trancheSummary.totalQty.toFixed(6))),
-      avgPrice: String(Number(trancheSummary.avgPrice.toFixed(4))),
+      quantity: String(Number(combinedPurchase.totalQty.toFixed(6))),
+      avgPrice: String(Number(combinedPurchase.avgPrice.toFixed(4))),
     }));
+    // Kademeler toplama dahil edildi; tekrar eklenmesin diye sıfırlanır
+    setTranches([{ ...EMPTY_TRANCHE }, { ...EMPTY_TRANCHE }]);
   }
 
   function setTrancheField(index, field, value) {
@@ -427,7 +451,8 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
               <div className="space-y-2 border-t border-navy-700/60 px-3 py-3">
                 <p className="text-[11px] leading-relaxed text-slate-500">
                   Farklı fiyatlardan yaptığınız alımları girin (örn: 215$'dan 5 adet, 290$'dan 10
-                  adet). Toplam adet ve ağırlıklı ortalama maliyet hesaplanıp forma aktarılır.
+                  adet). Kademeler, üstte girili mevcut adet ve ortalama maliyetle{' '}
+                  <span className="text-slate-400">birleştirilir</span> (ağırlıklı ortalama) ve forma aktarılır.
                 </p>
 
                 {tranches.map((tranche, index) => {
@@ -510,14 +535,20 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
                     Kademe Ekle
                   </button>
 
-                  {trancheSummary && (
+                  {combinedPurchase && (
                     <button
                       type="button"
                       onClick={applyTranches}
+                      title={
+                        hasExisting
+                          ? 'Mevcut pozisyon + kademeler birleştirilip toplam adet ve ağırlıklı ortalama forma yazılır'
+                          : 'Toplam adet ve ağırlıklı ortalama forma yazılır'
+                      }
                       className="rounded-lg bg-accent/15 px-3 py-1.5 text-[11px] font-semibold text-accent-soft transition-colors hover:bg-accent hover:text-white"
                     >
-                      Uygula: {Number(trancheSummary.totalQty.toFixed(6)).toLocaleString('tr-TR')} adet
-                      @ {trancheSummary.avgPrice.toLocaleString('tr-TR', { maximumFractionDigits: 4 })} ort.
+                      {hasExisting ? 'Mevcuda ekle: ' : 'Uygula: '}
+                      {Number(combinedPurchase.totalQty.toFixed(6)).toLocaleString('tr-TR')} adet
+                      @ {combinedPurchase.avgPrice.toLocaleString('tr-TR', { maximumFractionDigits: 4 })} ort.
                     </button>
                   )}
                 </div>
