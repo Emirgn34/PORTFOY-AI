@@ -222,22 +222,25 @@ async function collectCandidates(trackedSymbols) {
   console.log(`Aday: ${rows.length / 2} sembol için kısa+uzun vade adayı yazıldı.`);
 }
 
+// COLLECT_MODE ile iş ikiye ayrılır:
+//   'data' (varsayılan): fiyat + kur + haber + AI backfill — sık çalışır (20 dk).
+//   'candidates': yalnızca fırsat adayı üretimi — pahalı (geçmiş grafik), seyrek
+//                 çalışır (6 saat). Adaylar zaten kendi fiyatını/geçmişini çeker
+//                 ve haberleri DB'den okur; fiyat/haber işinden bağımsızdır.
+const MODE = process.env.COLLECT_MODE || 'data';
 const symbols = await getTrackedSymbols();
-console.log(`AI haber analizi: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI (ANTHROPIC_API_KEY yok)'}`);
-console.log(`${symbols.length} sembol izleniyor: ${symbols.join(', ')}`);
-await collectQuotes(symbols);
-await collectNews(symbols);
-// Eski AI'sız haberleri kademeli doldur (izole; hata olsa da akış sürer)
-try {
-  await backfillNewsAnalysis();
-} catch (err) {
-  console.error(`[backfill] adım atlandı: ${err.message}`);
-}
-// Aday üretimi izole edilir: candidates tablosu henüz yoksa (kullanıcı SQL'i
-// çalıştırmadıysa) ya da bir hata olursa fiyat/haber yazımı yine de korunur.
-try {
+console.log(`Mod: ${MODE} | AI: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI'} | ${symbols.length} sembol izleniyor`);
+
+if (MODE === 'candidates') {
   await collectCandidates(symbols);
-} catch (err) {
-  console.error(`[candidates] adım atlandı: ${err.message}`);
+} else {
+  await collectQuotes(symbols);
+  await collectNews(symbols);
+  // Eski AI'sız haberleri kademeli doldur (izole; hata olsa da akış sürer)
+  try {
+    await backfillNewsAnalysis();
+  } catch (err) {
+    console.error(`[backfill] adım atlandı: ${err.message}`);
+  }
 }
 console.log('Toplama tamamlandı.');

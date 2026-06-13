@@ -1,20 +1,20 @@
-# PortföyAI bulut veri toplayıcı (fiyat + kur + haber + AI analizi).
-# 20 dakikada bir çalışır (PC kapalıyken de). Fırsat adayları AYRI ve seyrek
-# (6 saat) koşar — bkz. collect-candidates.yml.
+# PortföyAI fırsat adayı üreticisi (kısa + uzun vade).
+# Veri toplayıcıdan AYRI ve SEYREK çalışır: her sembol için 2 yıllık geçmiş
+# grafik + quoteSummary çekildiğinden tur pahalıdır (~3-5 dk). Bu yüzden 6
+# saatte bir koşar — bkz. collect-data.yml (fiyat/kur/haber, 20 dk'da bir).
 # Gerekli secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-#   ANTHROPIC_API_KEY (opsiyonel — AI haber analizi için; yoksa analiz atlanır)
-name: Veri Toplayici
+name: Aday Ureticisi
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '0 */6 * * *' # her 6 saatte bir (00:00, 06:00, 12:00, 18:00 UTC)
   workflow_dispatch: {} # Actions sekmesinden elle de tetiklenebilir
 
 jobs:
-  collect:
+  candidates:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -26,10 +26,9 @@ jobs:
       - name: Bağımlılık kur
         run: npm install yahoo-finance2 @anthropic-ai/sdk --no-save --no-audit --no-fund
 
-      - name: Veri topla ve Supabase'e yaz
+      - name: Fırsat adaylarını üret ve Supabase'e yaz
         run: node server/collect.js
         env:
-          COLLECT_MODE: data
+          COLLECT_MODE: candidates
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
