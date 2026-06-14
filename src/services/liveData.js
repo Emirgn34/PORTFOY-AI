@@ -122,6 +122,20 @@ export async function fetchLiveQuotes(stocks) {
   return byTicker;
 }
 
+/**
+ * Hisse listesi için seçilen dönemdeki yüzde değişimleri getirir
+ * (+ USD/EUR kur değişimi). Dönüş: { SEMBOL: yüzde, 'USDTRY=X': yüzde, ... } veya null.
+ * Geçmiş verisi yalnızca canlı sunucu/Vercel fonksiyonundan gelir (havuz tablosu yok).
+ */
+export async function fetchPeriodChanges(stocks, range) {
+  if (!stocks?.length) return null;
+  const symbols = [...new Set(stocks.map(toYahooSymbol))];
+  const data = await getJson(
+    `/api/history?symbols=${encodeURIComponent(symbols.join(','))}&range=${encodeURIComponent(range)}`
+  );
+  return data?.changes ?? null;
+}
+
 /** Güncel USD/TRY ve EUR/TRY kurları. Dönüş: { USD, EUR } veya null. */
 export async function fetchLiveFx() {
   const data = await getJson('/api/fx');

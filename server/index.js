@@ -27,6 +27,7 @@ import {
   mapExchangeToMarket,
   SECTOR_TR,
   FX_SYMBOLS,
+  computePeriodChanges,
 } from './marketData.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
@@ -142,6 +143,19 @@ app.get('/api/quotes', async (req, res) => {
   if (symbols.length === 0) return res.status(400).json({ error: 'symbols parametresi gerekli' });
   trackSymbols(symbols);
   res.json({ quotes: await fetchQuotes(symbols) });
+});
+
+app.get('/api/history', async (req, res) => {
+  const symbols = parseSymbols(req);
+  if (symbols.length === 0) return res.status(400).json({ error: 'symbols parametresi gerekli' });
+  const range = String(req.query.range ?? '1mo');
+  try {
+    const changes = await computePeriodChanges(yahooFinance, symbols, range);
+    res.json({ changes, range });
+  } catch (err) {
+    console.error('[history]', err.message);
+    res.status(502).json({ error: 'Geçmiş veri alınamadı' });
+  }
 });
 
 app.get('/api/fx', async (_req, res) => {

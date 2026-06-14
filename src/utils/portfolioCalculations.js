@@ -167,6 +167,60 @@ export function getStockSortValue(stock, key, period) {
   }
 }
 
+/**
+ * "Toplam Kar/Zarar" kartının dönem seçenekleri. range anahtarları, sunucudaki
+ * PERIOD_RANGES ile birebir aynı olmalıdır.
+ */
+export const PROFIT_PERIODS = [
+  { value: 'total', label: 'Toplam', cardLabel: 'Toplam Kar/Zarar' },
+  { value: '1d', label: '1 Günlük', cardLabel: '1 Günlük Kar/Zarar' },
+  { value: '1w', label: '1 Haftalık', cardLabel: '1 Haftalık Kar/Zarar' },
+  { value: '1mo', label: '1 Aylık', cardLabel: '1 Aylık Kar/Zarar' },
+  { value: '3mo', label: '3 Aylık', cardLabel: '3 Aylık Kar/Zarar' },
+  { value: '1y', label: '1 Yıllık', cardLabel: '1 Yıllık Kar/Zarar' },
+  { value: '3y', label: '3 Yıllık', cardLabel: '3 Yıllık Kar/Zarar' },
+  { value: '5y', label: '5 Yıllık', cardLabel: '5 Yıllık Kar/Zarar' },
+];
+
+const FX_SYMBOL_FOR_CURRENCY = { USD: 'USDTRY=X', EUR: 'EURTRY=X' };
+
+/** Hisse kaydını Yahoo sembolüne çevirir (THYAO+BIST → THYAO.IS). */
+function toChangeSymbol(stock) {
+  const ticker = String(stock.ticker ?? stock.symbol ?? '').toUpperCase();
+  return stock.market === 'BIST' ? `${ticker}.IS` : ticker;
+}
+
+/**
+ * Seçilen dönem için portföyün TRY cinsinden kar/zararı. changes: sembol→yüzde
+ * (+ kur değişimleri). Her hissenin dönem başı TRY değeri, güncel değerin
+ * (hisse % × kur %) birleşik çarpanına bölünmesiyle bulunur; fark = dönem K/Z.
+ * Verisi olmayan hisseler atlanır (covered: en az bir hisse hesaba katıldı mı).
+ */
+export function getPortfolioPeriodProfit(stocks, changes) {
+  if (!changes) return { profit: 0, percent: 0, covered: false };
+  let profit = 0;
+  let baselineValue = 0;
+
+  for (const stock of stocks) {
+    const stockPct = changes[toChangeSymbol(stock)];
+    if (stockPct == null) continue;
+    const fxPct =
+      stock.currency === 'TRY' ? 0 : changes[FX_SYMBOL_FOR_CURRENCY[stock.currency]] ?? 0;
+    const currentValueTRY = toTRY(getStockMetrics(stock).currentValue, stock.currency);
+    const factor = (1 + stockPct / 100) * (1 + fxPct / 100);
+    if (!(factor > 0)) continue;
+    const baseline = currentValueTRY / factor;
+    profit += currentValueTRY - baseline;
+    baselineValue += baseline;
+  }
+
+  return {
+    profit,
+    percent: baselineValue > 0 ? (profit / baselineValue) * 100 : 0,
+    covered: baselineValue > 0,
+  };
+}
+
 /** Pazar adından varsayılan işlem para birimi (BIST→TRY, ABD borsaları→USD). */
 export function getMarketCurrency(market) {
   return market === 'BIST' ? 'TRY' : 'USD';

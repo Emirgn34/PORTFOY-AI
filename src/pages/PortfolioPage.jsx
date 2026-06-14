@@ -12,9 +12,11 @@ import {
   getSectorAllocation,
   getStockAllocation,
   getStockSortValue,
+  getPortfolioPeriodProfit,
   formatCurrency,
   PERIOD_OPTIONS,
 } from '../utils/portfolioCalculations.js';
+import { fetchPeriodChanges } from '../services/liveData.js';
 
 const STORAGE_KEY = 'portfoyai_stocks';
 const CHART_COLORS = ['#6366f1', '#22c55e', '#06b6d4', '#a855f7', '#f59e0b', '#ec4899', '#14b8a6', '#f43f5e'];
@@ -81,6 +83,45 @@ function PortfolioContent({ stocks, setStocks }) {
 
   const summary = useMemo(() => getPortfolioSummary(stocks), [stocks]);
 
+  // "Toplam Kar/Zarar" kartı için dönem seçimi (Toplam / 1G / 1H / 1A / 3A / 1Y / 3Y / 5Y)
+  const [profitPeriod, setProfitPeriod] = useState('total');
+  const [periodChanges, setPeriodChanges] = useState(null);
+  const [periodLoading, setPeriodLoading] = useState(false);
+
+  // Portföy bileşimi değişince (sembol/pazar) geçmiş veri yeniden çekilir;
+  // canlı fiyat tiklerinde gereksiz çekim olmasın diye yalnızca sembol anahtarı izlenir.
+  const symbolsKey = useMemo(
+    () => stocks.map((s) => `${s.market}:${s.ticker}`).join(','),
+    [stocks]
+  );
+
+  useEffect(() => {
+    if (profitPeriod === 'total') {
+      setPeriodChanges(null);
+      setPeriodLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setPeriodLoading(true);
+    fetchPeriodChanges(stocks, profitPeriod).then((changes) => {
+      if (cancelled) return;
+      setPeriodChanges(changes);
+      setPeriodLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profitPeriod, symbolsKey]);
+
+  // Seçilen dönemin K/Z'si (Toplam ise klasik toplam, değilse geçmişe göre)
+  const periodProfit = useMemo(() => {
+    if (profitPeriod === 'total') {
+      return { profit: summary.totalProfit, percent: summary.totalProfitPercent, covered: true };
+    }
+    return getPortfolioPeriodProfit(stocks, periodChanges);
+  }, [profitPeriod, summary, stocks, periodChanges]);
+
   const sortedStocks = useMemo(() => {
     if (!sortConfig.key) return stocks;
     const sorted = [...stocks].sort((a, b) => {
@@ -132,7 +173,15 @@ function PortfolioContent({ stocks, setStocks }) {
   return (
     <div className="space-y-6">
       <div data-tour="portfolio-summary">
-        <PortfolioSummaryCards summary={summary} />
+        <PortfolioSummaryCards
+          summary={summary}
+          profitPeriod={profitPeriod}
+          onProfitPeriodChange={setProfitPeriod}
+          profit={periodProfit.profit}
+          profitPercent={periodProfit.percent}
+          periodLoading={periodLoading}
+          periodAvailable={periodProfit.covered}
+        />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

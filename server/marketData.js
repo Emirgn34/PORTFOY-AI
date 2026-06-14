@@ -165,6 +165,66 @@ export const SECTOR_TR = {
 /** Döviz kuru sembolleri (TRY karşılıkları). */
 export const FX_SYMBOLS = ['USDTRY=X', 'EURTRY=X'];
 
+/** Dönemsel değişim pencereleri: gün sayısı + geçmiş örnekleme aralığı. */
+export const PERIOD_RANGES = {
+  '1d': { days: 1, interval: '1d' },
+  '1w': { days: 7, interval: '1d' },
+  '1mo': { days: 30, interval: '1d' },
+  '3mo': { days: 91, interval: '1d' },
+  '1y': { days: 365, interval: '1wk' },
+  '3y': { days: 365 * 3, interval: '1wk' },
+  '5y': { days: 365 * 5, interval: '1mo' },
+};
+
+const PERIOD_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Verilen semboller (+ USD/EUR kurları) için seçilen dönemdeki yüzde değişimi
+ * hesaplar: her sembolün geçmiş grafiğinden dönem başı kapanışı ile en güncel
+ * kapanış karşılaştırılır. Kur sembolleri de döndürülür; böylece dönem K/Z'sine
+ * TRY açısından döviz hareketi de katılabilir.
+ * Dönüş: { SEMBOL: yüzde, 'USDTRY=X': yüzde, 'EURTRY=X': yüzde }.
+ */
+export async function computePeriodChanges(yahooFinance, symbols, range) {
+  const cfg = PERIOD_RANGES[range];
+  if (!cfg) return {};
+  const targetMs = Date.now() - cfg.days * PERIOD_DAY_MS;
+  const period1 = new Date(Date.now() - (cfg.days * 1.3 + 10) * PERIOD_DAY_MS);
+  const wanted = [...new Set([...symbols, ...FX_SYMBOLS])];
+  const out = {};
+
+  await Promise.all(
+    wanted.map(async (symbol) => {
+      try {
+        const res = await yahooFinance.chart(symbol, { period1, interval: cfg.interval });
+        const closes = (res?.quotes ?? []).filter((q) => q.close != null);
+        if (closes.length < 2) return;
+        const latest = closes[closes.length - 1].close;
+        let baseline;
+        if (range === '1d') {
+          // "1 günlük" = son işlem gününün hareketi (hafta sonu/tatilde de doğru çalışır):
+          // en güncel kapanış ile bir önceki kapanışı karşılaştır.
+          baseline = closes[closes.length - 2].close;
+        } else {
+          // Dönem başı: hedef tarihten önceki son kapanış (yoksa en eski kapanış)
+          baseline = closes[0].close;
+          for (let i = closes.length - 1; i >= 0; i--) {
+            if (new Date(closes[i].date).getTime() <= targetMs) {
+              baseline = closes[i].close;
+              break;
+            }
+          }
+        }
+        if (baseline > 0) out[symbol] = Number(((latest / baseline - 1) * 100).toFixed(2));
+      } catch {
+        // sembol için geçmiş yoksa atlanır
+      }
+    })
+  );
+
+  return out;
+}
+
 /**
  * Metni Türkçe'ye çevirir (ücretsiz Google Translate ucu, anahtarsız).
  * Başarısız olursa null döner; arayan orijinal metinle devam eder.
