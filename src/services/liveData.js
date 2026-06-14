@@ -138,15 +138,18 @@ export async function fetchLiveFx() {
  * Sembol listesi için canlı haberleri getirir (ABD: Yahoo Finance,
  * BIST: Türkçe finans medyası / Google News).
  */
-export async function fetchLiveNews(stocks) {
+export async function fetchLiveNews(stocks, { limit = 300 } = {}) {
   if (!stocks?.length) return null;
   const symbols = [...new Set(stocks.map(toYahooSymbol))];
 
   const data = await getJson(`/api/news?symbols=${encodeURIComponent(symbols.join(','))}`);
   if (data?.articles) return data.articles;
 
+  // Tutulan/izlenen semboller toplayıcıya kaydedilir; sonraki turda haberleri birikmeye başlar
+  // (özellikle yeni eklenen portföy hisseleri için "ne olursa olsun haber gelsin" güvencesi).
+  sbRegisterSymbols(symbols);
   const rows = await sbGet(
-    `news?symbol=${sbInFilter(symbols)}&select=*&order=published_at.desc.nullslast&limit=150`
+    `news?symbol=${sbInFilter(symbols)}&select=*&order=published_at.desc.nullslast&limit=${limit}`
   );
   if (!rows?.length) return null;
   return rows.map((r) => ({

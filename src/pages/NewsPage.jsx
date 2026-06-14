@@ -81,9 +81,23 @@ export default function NewsPage() {
     const companyByTicker = new Map(allStocks.map((s) => [s.ticker, s.company]));
 
     async function load() {
-      const articles = await fetchLiveNews(allStocks);
-      if (cancelled || !articles) return;
-      setLiveNews(articles.map((a) => mapLiveArticleToNews(a, companyByTicker)));
+      // İki sorgu paralel: (1) tüm hisseler için geniş havuz, (2) yalnızca portföy
+      // hisseleri için ayrı sorgu. Böylece izleme listesi kalabalık olsa bile portföy
+      // haberleri havuz limitine takılıp elenmez — "portföy kısmında her zaman portföy
+      // haberlerini gör" güvencesi.
+      const [allArticles, portfolioArticles] = await Promise.all([
+        fetchLiveNews(allStocks, { limit: 300 }),
+        portfolioStocks.length ? fetchLiveNews(portfolioStocks, { limit: 200 }) : Promise.resolve(null),
+      ]);
+      if (cancelled) return;
+
+      // Portföy haberleri önce; id bazında tekille (aynı haber iki sorgudan gelebilir)
+      const seen = new Set();
+      const merged = [...(portfolioArticles ?? []), ...(allArticles ?? [])].filter((a) =>
+        seen.has(a.id) ? false : (seen.add(a.id), true)
+      );
+      if (!merged.length) return;
+      setLiveNews(merged.map((a) => mapLiveArticleToNews(a, companyByTicker)));
     }
 
     load();
@@ -113,10 +127,11 @@ export default function NewsPage() {
     return map;
   }, [portfolioStocks, watchlistItems]);
 
-  // Canlı + mock haberler tek akışta birleştirilir; pazar ve katalizör işlenir
+  // Canlı haber geldiyse yalnızca gerçek haberler gösterilir; hiç canlı haber
+  // yoksa örnek (mock) haberlerle dolu bir akış sunulur (boş ekran yerine).
   const allNews = useMemo(
     () =>
-      [...liveNews, ...MOCK_NEWS].map((n) => ({
+      [...liveNews, ...(liveNews.length ? [] : MOCK_NEWS)].map((n) => ({
         ...n,
         market: n.market ?? marketByTicker.get(n.ticker) ?? null,
         isCatalyst: detectCatalyst(n),
@@ -379,7 +394,9 @@ export default function NewsPage() {
           </p>
           <p className="mt-1 text-sm text-slate-500">
             {filteredNews.length === 0
-              ? 'Filtreleri değiştirmeyi deneyin.'
+              ? scope === 'portfolio' || scope === 'watchlist'
+                ? 'Bu hisseler için haberler toplanıyor olabilir; yeni eklenen semboller toplayıcının bir sonraki turunda (birkaç dakika) haber akışına girer. Filtreleri gevşetmeyi de deneyin.'
+                : 'Filtreleri değiştirmeyi deneyin.'
               : 'Daha yeni haberler için önceki sekmelere bakın.'}
           </p>
         </div>

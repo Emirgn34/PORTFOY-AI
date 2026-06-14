@@ -114,7 +114,7 @@ export async function fetchGoogleNews(query, symbol, { hl = 'en-US', gl = 'US', 
   const xml = await response.text();
   return parseRssItems(xml)
     .filter((i) => i.title && i.link)
-    .slice(0, 15)
+    .slice(0, 30)
     .map((i) => ({
       id: i.link,
       symbol,
