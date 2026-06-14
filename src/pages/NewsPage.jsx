@@ -4,7 +4,7 @@ import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
 import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
-import { fetchLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
+import { fetchLiveNews, fetchAllLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
 import { detectCatalyst } from '../utils/newsSignals.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
@@ -81,19 +81,22 @@ export default function NewsPage() {
     const companyByTicker = new Map(allStocks.map((s) => [s.ticker, s.company]));
 
     async function load() {
-      // İki sorgu paralel: (1) tüm hisseler için geniş havuz, (2) yalnızca portföy
-      // hisseleri için ayrı sorgu. Böylece izleme listesi kalabalık olsa bile portföy
-      // haberleri havuz limitine takılıp elenmez — "portföy kısmında her zaman portföy
-      // haberlerini gör" güvencesi.
-      const [allArticles, portfolioArticles] = await Promise.all([
-        fetchLiveNews(allStocks, { limit: 300 }),
+      // İki sorgu paralel: (1) TÜM hisselerin haberleri (sembol filtresiz havuz) →
+      // "Tüm Hisseler" kapsamında karışık gelir, (2) yalnızca portföy hisseleri için
+      // ayrı sorgu → havuz limitine takılsa bile portföy haberleri kesin görünür.
+      const [poolAll, portfolioArticles] = await Promise.all([
+        fetchAllLiveNews({ limit: 400 }),
         portfolioStocks.length ? fetchLiveNews(portfolioStocks, { limit: 200 }) : Promise.resolve(null),
       ]);
       if (cancelled) return;
 
+      // Havuz boşsa (ör. lokal Supabase yok) izlenen sembollere düşülür
+      const base = poolAll ?? (await fetchLiveNews(allStocks, { limit: 300 }));
+      if (cancelled) return;
+
       // Portföy haberleri önce; id bazında tekille (aynı haber iki sorgudan gelebilir)
       const seen = new Set();
-      const merged = [...(portfolioArticles ?? []), ...(allArticles ?? [])].filter((a) =>
+      const merged = [...(portfolioArticles ?? []), ...(base ?? [])].filter((a) =>
         seen.has(a.id) ? false : (seen.add(a.id), true)
       );
       if (!merged.length) return;
@@ -187,6 +190,39 @@ export default function NewsPage() {
     setShowTickerSugg(false);
   }
 
+  /** Kapsam değişince hisse alt-filtresi sıfırlanır (eski seçim listeyi boş bırakmasın). */
+  function handleScopeChange(value) {
+    setScope(value);
+    setTickerFilter('all');
+    if (tickerQuery) {
+      skipTickerSearchRef.current = true;
+      setTickerQuery('');
+    }
+  }
+
+  /** Çip ile tek bir hisse seçimi (portföy/izleme kapsamında). */
+  function pickScopeTicker(ticker) {
+    setTickerFilter(ticker);
+    if (tickerQuery) {
+      skipTickerSearchRef.current = true;
+      setTickerQuery('');
+    }
+  }
+
+  // Portföy/izleme kapsamında, içinden hisse seçilebilen çip listesi
+  const scopeTickers = useMemo(() => {
+    if (scope === 'portfolio') return portfolioStocks;
+    if (scope === 'watchlist') return watchlistItems;
+    return null;
+  }, [scope, portfolioStocks, watchlistItems]);
+
+  const chipClass = (active) =>
+    `rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+      active
+        ? 'border-accent bg-accent text-white'
+        : 'border-navy-700 bg-navy-900 text-slate-300 hover:bg-navy-800'
+    }`;
+
   const filteredNews = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return allNews.filter((news) => {
@@ -241,7 +277,7 @@ export default function NewsPage() {
           {/* Kapsam: hangi hisselerin haberleri? */}
           <select
             value={scope}
-            onChange={(e) => setScope(e.target.value)}
+            onChange={(e) => handleScopeChange(e.target.value)}
             className={selectClass}
           >
             {SCOPE_OPTIONS.map((o) => (
@@ -349,6 +385,33 @@ export default function NewsPage() {
           </select>
         </div>
       </div>
+
+      {/* Portföy/izleme kapsamında: içinden tek hisse seçilebilen çip listesi */}
+      {scopeTickers && scopeTickers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-700/60 bg-navy-900 p-3">
+          <span className="text-xs font-medium text-slate-400">
+            {scope === 'portfolio' ? 'Portföyündeki hisseler:' : 'İzleme listendeki hisseler:'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setTickerFilter('all')}
+            className={chipClass(tickerFilter === 'all')}
+          >
+            Tümü
+          </button>
+          {scopeTickers.map((s) => (
+            <button
+              key={s.ticker}
+              type="button"
+              onClick={() => pickScopeTicker(s.ticker)}
+              className={chipClass(tickerFilter === s.ticker)}
+              title={s.company ?? s.ticker}
+            >
+              {s.ticker}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Tarih sekmeleri: en yeni → en eski */}
       <div className="flex flex-wrap items-center justify-between gap-3">

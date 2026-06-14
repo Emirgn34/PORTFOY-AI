@@ -187,6 +187,30 @@ export async function fetchLiveCandidates(horizon) {
 }
 
 /**
+ * TÜM güncel haberleri (sembol filtresi olmadan) bulut havuzundan getirir.
+ * "Tüm Hisseler" kapsamı için: izlenen tüm sembollerin haberleri karışık gelir.
+ * Dönüş: makale dizisi veya veri yoksa null.
+ */
+export async function fetchAllLiveNews({ limit = 400 } = {}) {
+  const rows = await sbGet(
+    `news?select=*&order=published_at.desc.nullslast&limit=${limit}`
+  );
+  if (!rows?.length) return null;
+  return rows.map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    title: r.title,
+    titleTr: r.title_tr,
+    publisher: r.publisher,
+    link: r.link,
+    publishedAt: r.published_at,
+    sentiment: r.sentiment ?? null,
+    reliability: r.reliability ?? null,
+    aiSummaryTr: r.ai_summary_tr ?? null,
+  }));
+}
+
+/**
  * Hisse kodu/isim araması (form otomatik tamamlama).
  * Dönüş: [{ symbol, ticker, name, market }] veya sunucu kapalıysa null.
  */
