@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, Search, Loader2 } from 'lucide-react';
+import { searchSymbols, fetchSymbolProfile } from '../services/liveData.js';
 
 const MARKETS = ['BIST', 'NASDAQ', 'NYSE', 'Diğer'];
 const CURRENCIES = ['TRY', 'USD', 'EUR'];
@@ -64,18 +65,79 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
 
+  // Otomatik tamamlama durumu (portföy formuyla aynı: ara → seç → profil otomatik dolar)
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const skipNextSearchRef = useRef(false);
+
   const isEdit = Boolean(item);
 
   useEffect(() => {
     if (isOpen) {
       setForm(item ? { ...EMPTY_FORM, ...item } : EMPTY_FORM);
       setErrors({});
+      setSuggestions([]);
+      setShowSuggestions(false);
+      skipNextSearchRef.current = true; // düzenleme/açılışta arama tetiklenmesin
     }
   }, [isOpen, item]);
+
+  // Hisse kodu yazdıkça canlı arama (300ms debounce)
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    if (skipNextSearchRef.current) {
+      skipNextSearchRef.current = false;
+      return undefined;
+    }
+    const query = form.ticker.trim();
+    if (query.length < 1) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return undefined;
+    }
+
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      const results = await searchSymbols(query);
+      setSearchLoading(false);
+      if (results) {
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ticker, isOpen]);
 
   if (!isOpen) return null;
 
   const setField = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  /** Öneriden hisse seçimi: profil çekilir, form otomatik doldurulur. */
+  async function handlePickSuggestion(selected) {
+    skipNextSearchRef.current = true;
+    setShowSuggestions(false);
+    setProfileLoading(true);
+    setForm((f) => ({ ...f, ticker: selected.ticker, company: selected.name, market: selected.market }));
+
+    const profile = await fetchSymbolProfile(selected.symbol);
+    setProfileLoading(false);
+    if (!profile) return;
+
+    skipNextSearchRef.current = true;
+    setForm((f) => ({
+      ...f,
+      ticker: profile.ticker,
+      company: profile.company,
+      market: MARKETS.includes(profile.market) ? profile.market : 'Diğer',
+      currency: CURRENCIES.includes(profile.currency) ? profile.currency : f.currency,
+      currentPrice: profile.currentPrice ?? f.currentPrice,
+      dailyChangePercent: profile.dailyChangePercent ?? f.dailyChangePercent,
+      sector: profile.sector || f.sector,
+    }));
+  }
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -125,12 +187,56 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
         <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Hisse Kodu *" error={errors.ticker}>
-              <input
-                className={inputClass}
-                value={form.ticker}
-                onChange={setField('ticker')}
-                placeholder="Örn: TUPRS"
-              />
+              <div className="relative">
+                <input
+                  className={inputClass}
+                  value={form.ticker}
+                  onChange={setField('ticker')}
+                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="MP yazın, listeden seçin..."
+                  autoComplete="off"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                  {searchLoading || profileLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Search size={14} />
+                  )}
+                </span>
+
+                {/* Otomatik tamamlama listesi */}
+                {showSuggestions && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-navy-600 bg-navy-850 shadow-2xl">
+                    {suggestions.map((sugg) => (
+                      <li key={sugg.symbol}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handlePickSuggestion(sugg);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-navy-700/60"
+                        >
+                          <span className="text-sm font-bold text-white">{sugg.ticker}</span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
+                            {sugg.name}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              sugg.market === 'BIST'
+                                ? 'bg-accent/15 text-accent-soft'
+                                : 'bg-cyan-400/15 text-cyan-300'
+                            }`}
+                          >
+                            {sugg.market}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </Field>
             <Field label="Borsa / Piyasa">
               <select className={inputClass} value={form.market} onChange={setField('market')}>
@@ -146,7 +252,7 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
               className={inputClass}
               value={form.company}
               onChange={setField('company')}
-              placeholder="Örn: Tüpraş"
+              placeholder="Listeden seçince otomatik dolar"
             />
           </Field>
 
@@ -156,7 +262,7 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
                 className={inputClass}
                 value={form.sector}
                 onChange={setField('sector')}
-                placeholder="Örn: Enerji"
+                placeholder="Listeden seçince otomatik dolar"
               />
             </Field>
             <Field label="Vade Etiketi">
@@ -184,7 +290,7 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
                 step="any"
                 value={form.currentPrice}
                 onChange={setField('currentPrice')}
-                placeholder="182.50"
+                placeholder="Otomatik dolar"
               />
             </Field>
             <Field label="Günlük %" error={errors.dailyChangePercent}>
