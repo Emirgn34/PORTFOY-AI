@@ -15,7 +15,7 @@
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
 import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
-import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
+import { buildCandidates, CANDIDATE_UNIVERSE, fetchDynamicUniverse } from './candidateBuilder.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -199,10 +199,27 @@ async function getNewsForSymbol(symbol) {
   );
 }
 
-/** Küratörlü evren + izlenen semboller için fırsat adaylarını üretip yazar. */
+/** Her aday üretim turunda eklenecek dinamik (taramadan gelen) sembol tavanı. */
+const MAX_DYNAMIC_SYMBOLS = 30;
+
+/** Küratörlü + izlenen + dinamik (tarama) evren için fırsat adaylarını üretip yazar. */
 async function collectCandidates(trackedSymbols) {
-  const universe = [...new Set([...CANDIDATE_UNIVERSE, ...trackedSymbols])];
-  console.log(`Aday üreticisi: ${universe.length} sembol taranıyor...`);
+  const core = [...new Set([...CANDIDATE_UNIVERSE, ...trackedSymbols])];
+
+  // Günlük yükselenler/en aktifler: küratörlü evrene ek, tavanla sınırlı.
+  let dynamic = [];
+  try {
+    const found = await fetchDynamicUniverse(yahooFinance);
+    dynamic = found.filter((s) => !core.includes(s)).slice(0, MAX_DYNAMIC_SYMBOLS);
+  } catch (err) {
+    console.error(`[candidates] dinamik evren atlandı: ${err.message}`);
+  }
+
+  const universe = [...core, ...dynamic];
+  console.log(
+    `Aday üreticisi: ${universe.length} sembol taranıyor ` +
+      `(${core.length} küratörlü/izlenen + ${dynamic.length} dinamik tarama).`
+  );
   const rows = await buildCandidates(universe, { yahooFinance, getNewsForSymbol });
   if (rows.length === 0) {
     console.log('Aday üretilemedi.');

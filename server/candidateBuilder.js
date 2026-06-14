@@ -15,8 +15,57 @@ import { mapExchangeToMarket, SECTOR_TR } from './marketData.js';
 import { fetchDailyHistory, analyzeTechnicals } from './technicalAnalysis.js';
 
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
+const clamp01 = (n) => Math.max(0, Math.min(1, n));
 const round = (n) => Math.round(n);
 const pctAbove = (a, b) => (a && b ? (a / b - 1) * 100 : 0);
+
+/**
+ * Seans içinde geçen sürenin oranı (0–1). Hacim teyidini bununla normalize
+ * ederiz: anlık günlük hacmi 3 aylık ortalamanın TAMAMIYLA değil, seansın
+ * geçen kısmıyla kıyaslarız. Aksi halde sabah saatlerinde her hisse haksız
+ * yere "Zayıf Hacim" görünür. Piyasa kapalı/öncesi/sonrası ise hacim zaten
+ * tam seansa aittir → 1 döner. Veri eksikse güvenli tarafta 1 döner.
+ */
+function sessionElapsedFraction(quote) {
+  if (quote?.marketState && quote.marketState !== 'REGULAR') return 1;
+  const t = quote?.regularMarketTime;
+  const off = quote?.gmtOffSetMilliseconds;
+  if (t == null || off == null) return 1;
+  const ms = (t instanceof Date ? t.getTime() : new Date(t).getTime()) + off;
+  if (Number.isNaN(ms)) return 1;
+  const local = new Date(ms);
+  const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const isBist = (quote.symbol ?? '').endsWith('.IS');
+  const open = isBist ? 600 : 570; // BIST 10:00, ABD 09:30 (yerel)
+  const close = isBist ? 1080 : 960; // BIST 18:00, ABD 16:00 (yerel)
+  if (minutes >= close) return 1;
+  // Açılış öncesi/anında bile sıfıra bölmeyi önlemek için küçük bir taban.
+  return clamp((minutes - open) / (close - open), 0.05, 1);
+}
+
+/**
+ * Kısa vade için tahmini izleme penceresi. Analog analiz geleceğe dönük
+ * ~20 işlem günü (≈4 hafta) ölçtüğünden taban budur; yıllık volatilite
+ * pencereyi daraltır/genişletir (yüksek volatilite → hareket daha hızlı
+ * gelişir). Teknik veri yoksa nötr bir aralık döner.
+ */
+function estimateShortHorizon(annVol) {
+  if (annVol == null) return '2-6 hafta';
+  if (annVol >= 45) return '1-3 hafta';
+  if (annVol >= 28) return '2-4 hafta';
+  return '3-6 hafta';
+}
+
+/**
+ * Uzun vade için tahmini tez süresi. Büyüme yüksekse yeniden fiyatlama daha
+ * erken gelir; düşük büyüme + ucuz değerleme (klasik değer hissesi) daha uzun
+ * sabır gerektirir.
+ */
+function estimateLongHorizon(growthScore) {
+  if (growthScore >= 65) return '6-12 ay';
+  if (growthScore >= 45) return '1-2 yıl';
+  return '2-4 yıl';
+}
 
 /** Küratörlü ABD + BIST çekirdek evreni (takip edilen sembollerle birleştirilir). */
 export const CANDIDATE_UNIVERSE = [
@@ -28,6 +77,31 @@ export const CANDIDATE_UNIVERSE = [
   'THYAO.IS', 'ASELS.IS', 'SISE.IS', 'TUPRS.IS', 'KCHOL.IS', 'SASA.IS', 'EREGL.IS',
   'BIMAS.IS', 'FROTO.IS', 'GARAN.IS', 'AKBNK.IS', 'PGSUS.IS', 'TCELL.IS', 'ENJSA.IS',
 ];
+
+/**
+ * Yahoo Finance hazır taramalarından dinamik ABD evreni getirir
+ * (günlük yükselenler + en aktifler). Böylece "fırsatlar" sabit 40 hisseyle
+ * sınırlı kalmaz; o gün gerçekten hareketlenen hisseler de aday havuzuna girer.
+ * BIST için Yahoo hazır taraması olmadığından küratörlü BIST listesi korunur.
+ * Hata/erişim sorununda boş döner (akış küratörlü evrenle sürer).
+ */
+export async function fetchDynamicUniverse(yahooFinance, { perList = 25 } = {}) {
+  const scrIds = ['day_gainers', 'most_actives'];
+  const symbols = new Set();
+  for (const scrId of scrIds) {
+    try {
+      const res = await yahooFinance.screener({ scrIds: scrId, count: perList });
+      for (const q of res?.quotes ?? []) {
+        const s = q?.symbol;
+        // Yalnızca düz ABD hisseleri: harf/nokta (ETF/fon/türev dışı), gerçek equity
+        if (s && q.quoteType === 'EQUITY' && /^[A-Z][A-Z.]*$/.test(s)) symbols.add(s);
+      }
+    } catch (err) {
+      console.error(`[screener] ${scrId}: ${err.message}`);
+    }
+  }
+  return [...symbols];
+}
 
 /** Yayıncı adından kaba güvenilirlik tahmini (AI yoksa kullanılır). */
 function estimatePublisherReliability(publisher = '') {
@@ -71,18 +145,53 @@ function buildNewsAggregate(newsRows, referenceMs) {
   const averageNewsReliability =
     newsCount > 0 ? rows.reduce((s, r) => s + r.reliability, 0) / newsCount : 5;
 
-  // En güçlü katalizör: en yeni pozitif haber, yoksa en yeni haber
-  const catalyst = rows.find((r) => r.sentiment === 'positive') ?? rows[0] ?? null;
+  // --- Katalizör seçimi + skoru (gürültüye dayanıklı) ---
+  // Her habere tazelik ve güvenilirlik ağırlığı verilir; böylece tek bir taze ama
+  // zayıf/teyitsiz başlık, skoru tek başına yukarı çekemez.
+  const RECENT_WINDOW_DAYS = 21; // katalizör/konsensüs penceresi
+  const weighted = rows.map((r) => {
+    const ageDays = r.date ? Math.max(0, (referenceMs - new Date(r.date)) / DAY_MS) : 999;
+    const freshW = Math.pow(0.5, Math.max(0, ageDays - 2) / 7); // 2g tam etki, 7g yarı ömür
+    const relW = clamp01((r.reliability - 3) / 6); // güvenilirlik ≤3 → ~0, ≥9 → 1
+    const sent = r.sentiment === 'positive' ? 1 : r.sentiment === 'negative' ? -1 : 0;
+    return { ...r, ageDays, freshW, relW, sent };
+  });
+
+  // En güçlü katalizör: pencere içinde tazelik×güvenilirlik×ton-önceliği en yüksek olan
+  // (yalnızca "en yeni pozitif" değil). Pencerede yoksa en yeni habere düşülür.
+  const TONE_PRIORITY = { positive: 1, negative: 0.7, neutral: 0.5 };
+  const inWindow = weighted.filter((a) => a.ageDays <= RECENT_WINDOW_DAYS);
+  const catalystRank = (a) => a.freshW * a.relW * (TONE_PRIORITY[a.sentiment] ?? 0.5);
+  const catalyst =
+    [...inWindow].sort((a, b) => catalystRank(b) - catalystRank(a))[0] ?? rows[0] ?? null;
   const daysSince = catalyst?.date ? Math.max(0, (referenceMs - new Date(catalyst.date)) / DAY_MS) : null;
 
-  // Haber katalizör skoru: ton + güvenilirlik + tazelik
-  let newsCatalystScore = 35;
-  if (catalyst) {
+  // Konsensüs: güvenilirlik+tazelik ağırlıklı net ton (−1..+1). Tek başlık baskısını seyreltir.
+  const wTotal = weighted.reduce((s, a) => s + a.freshW * a.relW, 0);
+  const netSentiment =
+    wTotal > 0 ? weighted.reduce((s, a) => s + a.sent * a.freshW * a.relW, 0) / wTotal : 0;
+
+  // Kanıt güveni: yeterince yeni + güvenilir haber var mı? Yoksa skor nötre çekilir.
+  const reliableRecent = inWindow.filter((a) => a.relW >= 0.4).length;
+  const countConf = clamp01(reliableRecent / 3); // ~3 güvenilir yeni haber → tam güven
+  const relConf = clamp01((averageNewsReliability - 3) / 4); // ort. güvenilirlik 3→0, 7→1
+  const newsConfidence01 = newsCount === 0 ? 0 : clamp01(0.6 * countConf + 0.4 * relConf);
+
+  // Ham katalizör (ton+güvenilirlik+tazelik) ile konsensüsü harmanla; sonra kanıt güvenine
+  // göre nötr tabana çek. Zayıf kanıtlı sinyaller %25'lik ağırlıkta domine edemez.
+  const NEUTRAL_BASE = 45; // katalizör yoksa kısa vade için hafif olumsuz taban
+  let newsCatalystScore = NEUTRAL_BASE;
+  if (catalyst && newsCount > 0) {
     const sentBase = catalyst.sentiment === 'positive' ? 80 : catalyst.sentiment === 'negative' ? 28 : 52;
     const relAdj = (averageNewsReliability - 5) * 3;
     const freshAdj = daysSince == null ? 0 : daysSince <= 2 ? 8 : daysSince <= 7 ? 0 : -10;
-    newsCatalystScore = clamp(sentBase + relAdj + freshAdj);
+    const rawCatalyst = clamp(sentBase + relAdj + freshAdj);
+    const consensusScore = 50 + netSentiment * 30; // −1 → 20, +1 → 80
+    const blended = 0.6 * rawCatalyst + 0.4 * consensusScore;
+    newsCatalystScore = NEUTRAL_BASE + (blended - NEUTRAL_BASE) * newsConfidence01;
   }
+  newsCatalystScore = clamp(newsCatalystScore);
+  const newsConfidence = round(newsConfidence01 * 100);
 
   const relatedNews = rows.slice(0, 5).map((r) => ({
     title: r.title,
@@ -116,6 +225,7 @@ function buildNewsAggregate(newsRows, referenceMs) {
     neutralNewsCount,
     averageNewsReliability: Number(averageNewsReliability.toFixed(1)),
     newsCatalystScore: round(newsCatalystScore),
+    newsConfidence,
     newsReliabilityScore: round(clamp(averageNewsReliability * 10)),
     catalyst,
     catalystDate: catalyst?.date ?? null,
@@ -154,8 +264,11 @@ function buildMarketMetrics(quote, summary, tech) {
     t += clamp(((tech.rsi ?? 50) - 50) * 0.4, -8, 10);
     if ((tech.rsi ?? 50) > 80) t -= 8; // aşırı alım bölgesi
     t += clamp((tech.ret20 ?? 0) * 0.5, -10, 12);
-    // Geçmiş benzer grafik kurulumunun 20 günlük ortalama getirisi (analog edge)
-    if (tech.analogShort) t += clamp(tech.analogShort.avg * 0.8, -10, 12);
+    // Geçmiş benzer grafik kurulumunun 20 günlük ortalama getirisi (analog edge).
+    // Katkı, analogun güvenine göre ölçeklenir: tutarsız/zayıf örnekler momentumu az etkiler.
+    if (tech.analogShort) {
+      t += clamp(tech.analogShort.avg * 0.8 * (tech.analogShort.confidence ?? 1), -10, 12);
+    }
     technicalMomentumScore = round(clamp(t));
   } else {
     technicalMomentumScore = round(
@@ -163,8 +276,12 @@ function buildMarketMetrics(quote, summary, tech) {
     );
   }
 
-  // --- Hacim teyidi ---
-  const volRatio = vol && avgVol ? vol / avgVol : 1;
+  // --- Hacim teyidi (seans-içi normalize) ---
+  // Anlık hacmi 3 aylık ortalamanın tamamıyla değil, seansın geçen kısmıyla
+  // kıyaslarız; böylece açılış saatlerinde haksız "Zayıf Hacim" sinyali oluşmaz.
+  const elapsed = sessionElapsedFraction(quote);
+  const expectedVolSoFar = avgVol != null ? avgVol * elapsed : null;
+  const volRatio = vol && expectedVolSoFar ? vol / expectedVolSoFar : 1;
   const volumeConfirmationScore = round(clamp(55 + (volRatio - 1) * 60));
   const volumeSignal =
     volRatio >= 1.5 ? 'Güçlü Hacim Artışı'
@@ -257,14 +374,27 @@ function buildMarketMetrics(quote, summary, tech) {
   };
 }
 
-/** Analog sonucunu okunaklı bir cümleye çevirir. */
+/** Güven skorunu (0..1) sözel etikete çevirir. */
+function confidenceLabel(c) {
+  if (c == null) return null;
+  if (c >= 0.6) return 'yüksek';
+  if (c >= 0.35) return 'orta';
+  return 'düşük';
+}
+
+/** Analog sonucunu okunaklı ve dürüst bir cümleye çevirir (dağılım + güven dahil). */
 function analogSentence(analog) {
   if (!analog) return '';
   const yon = analog.avg > 0 ? 'yükseliş' : analog.avg < 0 ? 'düşüş' : 'yatay seyir';
+  const dispNote = analog.std != null ? `, ±%${analog.std} dağılım` : '';
+  const conf = confidenceLabel(analog.confidence);
+  const confNote = conf
+    ? ` Sinyal güveni: ${conf}${conf === 'düşük' ? ' — örnekler tutarsız, tek başına yön belirleyici sayılmamalı' : ''}.`
+    : '';
   return (
     `Geçmişte grafik bugünküne benzer göründüğü ${analog.count} örnekte, sonraki ` +
     `${analog.fwdDays} günde fiyat ortalama %${analog.avg} (${yon}, kazanç oranı %${analog.win}, ` +
-    `medyan %${analog.median}) hareket etmiş.`
+    `medyan %${analog.median}${dispNote}) hareket etmiş.${confNote}`
   );
 }
 
@@ -320,6 +450,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
     negativeNewsCount: news.negativeNewsCount,
     neutralNewsCount: news.neutralNewsCount,
     averageNewsReliability: news.averageNewsReliability,
+    newsConfidence: news.newsConfidence,
     volumeSignal: m.volumeSignal,
     volatilitySignal: m.volatilitySignal,
     previousRank: null,
@@ -333,14 +464,17 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
   if (m.riskLevel === 'Yüksek') shortWarnings.push('Risk seviyesi yüksek; gün içi sert hareketler görülebilir.');
   if (m.liquidityLevel === 'Düşük') shortWarnings.push('Düşük likidite alım-satım farklarını artırabilir.');
   if (news.averageNewsReliability < 4) shortWarnings.push('Ortalama haber güvenilirliği düşük; katalizör puanı kırpılır.');
+  if (news.newsConfidence < 40) shortWarnings.push('Haber kanıtı zayıf (az sayıda veya düşük güvenilirlikli kaynak); katalizör sinyali nötre çekildi.');
   if (m.volumeSignal === 'Zayıf Hacim') shortWarnings.push('Hacim teyidi zayıf; hareket potansiyeli sınırlı olabilir.');
+  if (m.analogShort?.confidence != null && m.analogShort.confidence < 0.35)
+    shortWarnings.push('Geçmiş-benzerlik (analog) sinyalinin güveni düşük; örnekler tutarsız, tek başına yön belirleyici sayılmamalı.');
 
   const shortCandidate = {
     ...base,
     id: `live-st-${ticker}`,
     technicalMomentumLabel: shortMomentum,
     sectorTrend: m.aboveMa200 ? 'Fiyat 200 günlük ortalamanın üzerinde' : 'Fiyat 200 günlük ortalamanın altında',
-    estimatedHorizon: m.technicalMomentumScore >= 70 ? '1-3 hafta' : '2-6 hafta',
+    estimatedHorizon: estimateShortHorizon(m.annVol),
     reasonShort:
       `Teknik momentum ${shortMomentum.toLowerCase()}, ${m.volumeSignal.toLowerCase()}; ` +
       `ortalama haber güvenilirliği ${news.averageNewsReliability}/10.` +
@@ -351,6 +485,8 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
       `${news.newsCount} haber tarandı, ortalama güvenilirlik ${news.averageNewsReliability}/10, ` +
       `haber katalizör skoru ${news.newsCatalystScore}/100. Likidite ${m.liquidityLevel.toLowerCase()} ` +
       `(${m.liquidityScore}/100), risk seviyesi ${m.riskLevel}. ${techNote}${analogShortNote} ` +
+      `Tahmini vade, analogun ölçtüğü ~20 işlem günü (≈4 hafta) penceresinin ` +
+      `yıllık volatiliteye (%${m.annVol ?? '—'}) göre ölçeklenmesiyle belirlenir. ` +
       `Skor ve sıra bu bileşenlerin vadeye uygun ağırlıklı toplamından hesaplanır.`,
     scoreBreakdown: {
       newsCatalystScore: news.newsCatalystScore,
@@ -379,7 +515,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
     peRatio: m.peRatio,
     technicalMomentumLabel: longMomentum,
     sectorTrend: m.goldenCross ? 'Uzun vadeli trend pozitif (50>200 GO)' : 'Uzun vadeli trend zayıf',
-    estimatedHorizon: m.valuationScore >= 60 ? '1-3 yıl' : '6-12 ay',
+    estimatedHorizon: estimateLongHorizon(m.growthScore),
     reasonShort:
       `Temel sağlamlık ${m.fundamentalHealthScore}/100, değerleme ${m.valuationScore}/100, ` +
       `büyüme ${m.growthScore}/100.`,

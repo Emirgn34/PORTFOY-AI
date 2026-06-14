@@ -46,6 +46,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
   const sentiment = getSentimentIcon(candidate.sentiment);
   const reliabilityColors = getReliabilityColor(candidate.averageNewsReliability);
   const confirmedCount = candidate.verifiedSources.filter((s) => s.isConfirmed).length;
+  const isLive = Boolean(candidate.id?.startsWith('live-'));
   const formatDate = (d) =>
     new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(d));
 
@@ -278,6 +279,20 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                 <span className="rounded-md border border-navy-700 bg-navy-800 px-2 py-0.5 text-[11px] text-slate-300">
                   {candidate.newsCount} haber tarandı
                 </span>
+                {candidate.newsConfidence != null && (
+                  <span
+                    className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+                      candidate.newsConfidence >= 60
+                        ? 'border-gain/30 bg-gain/15 text-gain'
+                        : candidate.newsConfidence >= 40
+                          ? 'border-amber-400/30 bg-amber-400/15 text-amber-400'
+                          : 'border-loss/30 bg-loss/15 text-loss'
+                    }`}
+                    title="Katalizör skorunun dayandığı haber kanıtının gücü (kaynak sayısı + güvenilirlik)"
+                  >
+                    Haber kanıt güveni: {candidate.newsConfidence}/100
+                  </span>
+                )}
               </div>
               <ul className="space-y-1.5 text-xs leading-relaxed text-slate-400">
                 {candidate.isGated && (
@@ -317,6 +332,14 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                     profili); skor temkinli olarak sınırlandırıldı.
                   </li>
                 )}
+                {candidate.newsConfidence != null && candidate.newsConfidence < 40 && (
+                  <li className="flex items-start gap-2">
+                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    Haber kanıtı zayıf (kanıt güveni {candidate.newsConfidence}/100): az sayıda veya
+                    düşük güvenilirlikli kaynak bulunduğundan katalizör puanı nötr tabana çekildi;
+                    tek bir başlığın skoru şişirmesi engellendi.
+                  </li>
+                )}
                 {!candidate.isGated &&
                   !candidate.isCapped &&
                   !candidate.isDecayed &&
@@ -329,8 +352,9 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                   )}
                 <li className="flex items-start gap-2">
                   <Info size={13} className="mt-0.5 shrink-0 text-slate-500" />
-                  Tüm veriler örnek (mock) veridir; gerçek haber tarama ve AI analiz motoru
-                  bağlandığında bu bölüm canlı veri kalitesi raporu gösterecektir.
+                  {isLive
+                    ? 'Veriler gerçek piyasa, temel ve haber kaynaklarından otomatik üretildi. Skorlar veri kalitesine göre kırpılır; yine de yatırım tavsiyesi değildir.'
+                    : 'Bu kayıt örnek (mock) veridir; canlı veri bağlandığında bu bölüm gerçek veri kalitesi raporunu gösterir.'}
                 </li>
               </ul>
             </div>

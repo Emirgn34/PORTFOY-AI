@@ -165,15 +165,22 @@ export async function fetchLiveNews(stocks) {
 
 /**
  * Fırsat adaylarını bulut tablosundan getirir (toplayıcı üretir).
- * Dönüş: aday nesnesi dizisi (mock şemasıyla birebir) veya veri yoksa null.
+ * Dönüş: { candidates, generatedAt } veya veri yoksa null.
+ *   - candidates: aday nesnesi dizisi (mock şemasıyla birebir)
+ *   - generatedAt: en güncel adayın gerçek üretilme zamanı (bayatlık göstergesi
+ *     ve katalizör tazeliği bu ana göre ölçülür — sayfa açılış anına göre değil).
  * Veri yoksa çağıran taraf mock listeye düşer.
  */
 export async function fetchLiveCandidates(horizon) {
   const rows = await sbGet(
-    `candidates?horizon=eq.${encodeURIComponent(horizon)}&select=data&order=updated_at.desc`
+    `candidates?horizon=eq.${encodeURIComponent(horizon)}&select=data,updated_at&order=updated_at.desc`
   );
   if (!rows?.length) return null;
-  return rows.map((r) => r.data).filter(Boolean);
+  const candidates = rows.map((r) => r.data).filter(Boolean);
+  if (!candidates.length) return null;
+  // order=updated_at.desc → ilk satır en güncel
+  const generatedAt = rows[0]?.updated_at ?? null;
+  return { candidates, generatedAt };
 }
 
 /**

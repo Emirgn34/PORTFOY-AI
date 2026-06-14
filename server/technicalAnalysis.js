@@ -12,6 +12,8 @@
  */
 
 const clampRange = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const clamp01 = (n) => Math.max(0, Math.min(1, n));
+const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 
 /** ~years yıllık günlük kapanış + hacim getirir. */
 export async function fetchDailyHistory(yahooFinance, symbol, years = 2) {
@@ -131,12 +133,35 @@ function analogForward(closes, rsi, sma50, fwd, warmup) {
 
   const K = Math.min(30, scored.length);
   const top = scored.slice(0, K);
-  const avg = top.reduce((a, b) => a + b.fwdRet, 0) / K;
-  const win = top.filter((t) => t.fwdRet > 0).length / K;
-  const sorted = [...top].map((t) => t.fwdRet).sort((a, b) => a - b);
+  const fwdRets = top.map((t) => t.fwdRet);
+  const avg = mean(fwdRets);
+  const winFrac = top.filter((t) => t.fwdRet > 0).length / K;
+  const sorted = [...fwdRets].sort((a, b) => a - b);
   const median = sorted[Math.floor(K / 2)];
+  const std = stdev(fwdRets);
 
-  return { fwdDays: fwd, avg: Number(avg.toFixed(1)), win: Math.round(win * 100), count: K, median: Number(median.toFixed(1)) };
+  // Güven [0..1]: sinyal/gürültü oranı + örneklerin yön birliği + eşleşme kalitesi.
+  // Üst üste binen pencereler güveni şişirebileceği için ölçü temkinli kalibre edildi;
+  // amaç, ortalamayı "tahmin" gibi sunmadan sinyalin ne kadar sağlam olduğunu göstermek.
+  const snr = std > 1e-6 ? Math.abs(avg) / std : 0;
+  const snrScore = clamp01(snr / 0.5); // |ortalama| ≈ 0.5×std olunca tam puan
+  const agreement = Math.abs(winFrac - 0.5) * 2; // 0 (50/50, tutarsız) → 1 (tek yönlü)
+  const topDistMean = mean(top.map((t) => t.dist));
+  const allDistSorted = scored.map((s) => s.dist).sort((a, b) => a - b);
+  const allDistMedian = allDistSorted[Math.floor(allDistSorted.length / 2)] || 1;
+  const distRatio = topDistMean / allDistMedian; // en yakın K, tipik mesafeye göre ne kadar yakın
+  const matchQuality = clamp01(1 - (distRatio - 0.2) / 0.6); // ≤0.2 → 1, ≥0.8 → 0
+  const confidence = clamp01(0.5 * snrScore + 0.3 * agreement + 0.2 * matchQuality);
+
+  return {
+    fwdDays: fwd,
+    avg: Number(avg.toFixed(1)),
+    win: Math.round(winFrac * 100),
+    count: K,
+    median: Number(median.toFixed(1)),
+    std: Number(std.toFixed(1)),
+    confidence: Number(confidence.toFixed(2)),
+  };
 }
 
 /**

@@ -58,7 +58,7 @@ export default function OpportunitiesPage() {
   // Canlı adaylar bulut tablosundan çekilir; yoksa mock listeye düşülür.
   const [liveShort, setLiveShort] = useState(null);
   const [liveLong, setLiveLong] = useState(null);
-  const [liveLoadedAt, setLiveLoadedAt] = useState(null);
+  const [generatedAt, setGeneratedAt] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,9 +68,11 @@ export default function OpportunitiesPage() {
         fetchLiveCandidates('long'),
       ]);
       if (cancelled) return;
-      if (s?.length) setLiveShort(s);
-      if (l?.length) setLiveLong(l);
-      if (s?.length || l?.length) setLiveLoadedAt(new Date().toISOString());
+      if (s?.candidates?.length) setLiveShort(s.candidates);
+      if (l?.candidates?.length) setLiveLong(l.candidates);
+      // En güncel adayın gerçek üretilme zamanı (bayatlık + katalizör tazeliği bununla ölçülür)
+      const times = [s?.generatedAt, l?.generatedAt].filter(Boolean).map((t) => new Date(t).getTime());
+      if (times.length) setGeneratedAt(new Date(Math.max(...times)).toISOString());
     }
     load();
     return () => {
@@ -79,8 +81,13 @@ export default function OpportunitiesPage() {
   }, []);
 
   const isLive = Boolean(liveShort || liveLong);
-  // Canlı veride katalizör tazeliği "şu an"a göre; mock'ta sabit LAST_UPDATED'a göre ölçülür.
-  const referenceDate = liveLoadedAt ?? LAST_UPDATED;
+  // Katalizör tazeliği ve "son güncelleme" canlıda gerçek üretim anına, mock'ta sabit LAST_UPDATED'a göre.
+  const referenceDate = generatedAt ?? LAST_UPDATED;
+
+  // Verinin yaşı (saat); bayatlık uyarısı için. Adaylar ~6 saatte bir üretilir.
+  const dataAgeHours = generatedAt
+    ? (Date.now() - new Date(generatedAt).getTime()) / 3_600_000
+    : null;
 
   // Skor ve sıra her zaman vadeye uygun ağırlık setiyle breakdown'dan türetilir.
   const rankedShort = useMemo(
@@ -189,9 +196,17 @@ export default function OpportunitiesPage() {
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           {isLive ? (
-            <p className="flex items-center gap-1.5 text-xs text-gain">
+            <p className={`flex items-center gap-1.5 text-xs ${dataAgeHours != null && dataAgeHours > 8 ? 'text-amber-400' : 'text-gain'}`}>
               <Radio size={12} />
-              Canlı veri — {lastUpdatedText} itibarıyla otomatik üretildi (gerçek fiyat, temel ve haber verisi)
+              Canlı veri — {lastUpdatedText} itibarıyla üretildi
+              {dataAgeHours != null && (
+                <span className="text-slate-500">
+                  ({dataAgeHours < 1
+                    ? `${Math.max(1, Math.round(dataAgeHours * 60))} dk önce`
+                    : `${Math.round(dataAgeHours)} sa önce`}
+                  {dataAgeHours > 8 ? ' · güncelleme bekleniyor' : ''})
+                </span>
+              )}
             </p>
           ) : (
             <p className="flex items-center gap-1.5 text-xs text-slate-500">
