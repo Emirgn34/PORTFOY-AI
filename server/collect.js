@@ -16,6 +16,7 @@ import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
 import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
 import { buildCandidates, CANDIDATE_UNIVERSE, fetchDynamicUniverse } from './candidateBuilder.js';
+import { scoreAndRankCandidates } from '../src/utils/opportunityScoringCore.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -236,6 +237,44 @@ async function collectCandidates(trackedSymbols) {
     prefer: 'resolution=merge-duplicates', // sembol+vade başına tek satır güncellenir
   });
   console.log(`Aday: ${rows.length / 2} sembol için kısa+uzun vade adayı yazıldı.`);
+
+  // Backtest: bu turun skorlarının anlık görüntüsünü ayrı bir tabloya EKLE (append).
+  // İleride vade dolunca bu skorların getiriyi öngörüp öngörmediği ölçülür.
+  try {
+    await snapshotScores(rows);
+  } catch (err) {
+    console.error(`[snapshot] adım atlandı: ${err.message}`);
+  }
+}
+
+/** Aday skorlarını score_snapshots tablosuna ekler (backtest track record'u). */
+async function snapshotScores(rows) {
+  const referenceMs = Date.now();
+  const byHorizon = { short: [], long: [] };
+  for (const r of rows) {
+    if (byHorizon[r.horizon]) byHorizon[r.horizon].push(r.data);
+  }
+
+  const snapshots = [];
+  for (const horizon of ['short', 'long']) {
+    const ranked = scoreAndRankCandidates(byHorizon[horizon], horizon, referenceMs);
+    for (const c of ranked) {
+      snapshots.push({
+        symbol: c.symbol,
+        horizon,
+        market: c.market ?? null,
+        score: c.shortTermScore,
+        score_label: c.scoreLabel,
+        rank: c.rank,
+        capture_price: c.currentPrice ?? null,
+        currency: c.currency ?? null,
+      });
+    }
+  }
+
+  if (snapshots.length === 0) return;
+  await sb('score_snapshots', { method: 'POST', body: snapshots });
+  console.log(`Backtest: ${snapshots.length} skor anlık görüntüsü kaydedildi.`);
 }
 
 // COLLECT_MODE ile iş ikiye ayrılır:

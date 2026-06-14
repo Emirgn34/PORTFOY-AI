@@ -1,0 +1,31 @@
+# PortföyAI backtest (ileri-test) raporu.
+# score_snapshots tablosundaki geçmiş skorları gerçek getirilerle eşleştirip
+# "yüksek skor getiriyi öngördü mü?" raporunu Actions log'una basar.
+# Elle (Run workflow) veya haftalık çalışır. Sonuç olgunlaştıkça anlam kazanır.
+# Gerekli secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+name: Backtest Raporu
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # her Pazartesi 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Bağımlılık kur
+        run: npm install yahoo-finance2 --no-save --no-audit --no-fund
+
+      - name: Backtest raporunu üret
+        run: node server/backtest.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
