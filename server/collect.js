@@ -127,6 +127,9 @@ async function collectNews(symbols) {
         method: 'POST',
         body: fresh.map((a) => {
           const ai = analysis.get(a.id);
+          // TÜM satırlar AYNI anahtar kümesine sahip olmalı; aksi halde PostgREST
+          // toplu insert'i "All object keys must match" (PGRST102) ile reddeder.
+          // AI analizi gelmeyen haberlerde alanlar null olarak gönderilir.
           return {
             id: a.id,
             symbol: a.symbol,
@@ -135,13 +138,9 @@ async function collectNews(symbols) {
             publisher: a.publisher,
             link: a.link,
             published_at: a.publishedAt,
-            // AI alanları yalnızca analiz çalıştıysa eklenir (kolonlar yoksa/anahtar
-            // yoksa atlanır → ekleme her durumda çalışır)
-            ...(ai && {
-              sentiment: ai.sentiment,
-              reliability: ai.reliability,
-              ai_summary_tr: ai.summaryTr,
-            }),
+            sentiment: ai?.sentiment ?? null,
+            reliability: ai?.reliability ?? null,
+            ai_summary_tr: ai?.summaryTr ?? null,
           };
         }),
         prefer: 'resolution=ignore-duplicates', // eski haberler korunur, yeniler eklenir

@@ -14,6 +14,9 @@ import Anthropic from '@anthropic-ai/sdk';
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = 'claude-haiku-4-5';
 const BATCH_SIZE = 15; // tek çağrıda analiz edilecek makale sayısı
+// 15 makale × (duygu + güvenilirlik + tek cümle Türkçe özet) çıktısı 2000 token'a
+// sığmıyordu → yanıt kesilip JSON bozuluyordu. Bol pay bırakıyoruz (non-streaming).
+const MAX_TOKENS = 8000;
 
 const client = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
@@ -84,11 +87,14 @@ async function analyzeBatch(batch) {
   try {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 2000,
+      max_tokens: MAX_TOKENS,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
     });
+    if (response.stop_reason === 'max_tokens') {
+      console.error(`[ai] uyarı: yanıt max_tokens'a takıldı (batch=${batch.length}); JSON kesilmiş olabilir.`);
+    }
     const text = response.content.find((b) => b.type === 'text')?.text ?? '{}';
     const parsed = JSON.parse(text);
     return Array.isArray(parsed.results) ? parsed.results : [];
