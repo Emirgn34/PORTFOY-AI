@@ -34,8 +34,8 @@ export function getSinceAddedPercent(item) {
 }
 
 const HORIZON_BADGES = {
-  long: { label: 'Uzun Vade', className: 'bg-violet-400/15 text-violet-300' },
-  short: { label: 'Kısa Vade', className: 'bg-cyan-400/15 text-cyan-300' },
+  long: { label: 'Uzun Vade', className: 'bg-accent/12 text-accent-soft' },
+  short: { label: 'Kısa Vade', className: 'bg-navy-800 text-slate-400' },
 };
 
 function Stat({ label, children }) {

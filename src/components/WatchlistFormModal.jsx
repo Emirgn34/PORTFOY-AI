@@ -226,7 +226,7 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
                             className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                               sugg.market === 'BIST'
                                 ? 'bg-accent/15 text-accent-soft'
-                                : 'bg-cyan-400/15 text-cyan-300'
+                                : 'bg-navy-800 text-slate-400'
                             }`}
                           >
                             {sugg.market}

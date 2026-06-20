@@ -1,9 +1,11 @@
-import { ArrowUp, ArrowDown, Sparkle, HelpCircle, ShieldAlert, Droplets, Gauge, BarChart3, Briefcase, Clock, HandCoins } from 'lucide-react';
+import { ArrowUp, ArrowDown, Sparkle, HelpCircle, ShieldAlert, Droplets, Gauge, BarChart3, Briefcase, Clock, HandCoins, Plus, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import {
   getScoreColor,
   getRiskColor,
   getSentimentIcon,
   getReliabilityColor,
+  getTopFactors,
+  HORIZON_CONFIGS,
 } from '../utils/opportunityScoring.js';
 import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
 
@@ -66,12 +68,21 @@ function MetricChip({ icon: Icon, label, value, valueClass = 'text-slate-300' })
   );
 }
 
-export default function ShortTermCandidateCard({ candidate, horizon = 'short', isInPortfolio, onShowDetail }) {
+export default function ShortTermCandidateCard({
+  candidate,
+  horizon = 'short',
+  isInPortfolio,
+  isInWatchlist,
+  onAddToWatchlist,
+  onShowDetail,
+}) {
   const scoreColors = getScoreColor(candidate.shortTermScore);
   const reliabilityColors = getReliabilityColor(candidate.averageNewsReliability);
   const sentiment = getSentimentIcon(candidate.sentiment);
   const SentIcon = sentiment.Icon;
   const isGainDay = candidate.dailyChangePercent >= 0;
+  // Skoru en çok taşıyan / en çok zorlayan bileşen — modal açmadan görünür gerekçe
+  const { best, worst } = getTopFactors(candidate.scoreBreakdown, HORIZON_CONFIGS[horizon].weights);
 
   return (
     <article
@@ -94,7 +105,7 @@ export default function ShortTermCandidateCard({ candidate, horizon = 'short', i
                 <SentIcon size={12} />
               </span>
               {isInPortfolio && (
-                <span className="flex items-center gap-1 rounded bg-violet-400/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-300">
+                <span className="flex items-center gap-1 rounded bg-accent/12 px-1.5 py-0.5 text-[10px] font-medium text-accent-soft">
                   <Briefcase size={10} />
                   Portföyünüzde
                 </span>
@@ -147,6 +158,22 @@ export default function ShortTermCandidateCard({ candidate, horizon = 'short', i
           <p className="line-clamp-2 text-xs leading-relaxed text-slate-400">
             {candidate.reasonShort}
           </p>
+          {(best || worst) && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+              {best && (
+                <span className="flex items-center gap-1 text-gain" title="Skoru en çok güçlendiren bileşen">
+                  <TrendingUp size={11} />
+                  {best.label}
+                </span>
+              )}
+              {worst && (
+                <span className="flex items-center gap-1 text-loss" title="Skoru en çok zayıflatan bileşen">
+                  <TrendingDown size={11} />
+                  {worst.label}
+                </span>
+              )}
+            </div>
+          )}
           <SentimentRatioBar
             positive={candidate.positiveNewsCount}
             neutral={candidate.neutralNewsCount}
@@ -186,15 +213,35 @@ export default function ShortTermCandidateCard({ candidate, horizon = 'short', i
             >
               Güvenilirlik {candidate.averageNewsReliability.toFixed(1)}/10
             </span>
-            <button
-              type="button"
-              onClick={() => onShowDetail(candidate)}
-              className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
-            >
-              <HelpCircle size={13} />
-              Neden bu sırada?
-            </button>
+            {onAddToWatchlist &&
+              (isInWatchlist ? (
+                <span
+                  className="flex items-center gap-1 rounded-lg border border-navy-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-400"
+                  title="Bu hisse takip listenizde"
+                >
+                  <Check size={12} className="text-gain" />
+                  Takipte
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onAddToWatchlist(candidate)}
+                  className="flex items-center gap-1 rounded-lg border border-navy-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-400 transition-colors hover:border-accent/40 hover:bg-accent/10 hover:text-accent-soft"
+                  title="Takip listesine ekle"
+                >
+                  <Plus size={12} />
+                  Takibe al
+                </button>
+              ))}
           </div>
+          <button
+            type="button"
+            onClick={() => onShowDetail(candidate)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+          >
+            <HelpCircle size={13} />
+            Neden bu sırada?
+          </button>
         </div>
       </div>
     </article>

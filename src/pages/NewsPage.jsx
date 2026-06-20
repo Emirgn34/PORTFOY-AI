@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, SearchX, Radio, X } from 'lucide-react';
+import { Search, SearchX, Radio, X, Flame } from 'lucide-react';
 import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
 import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { fetchLiveNews, fetchAllLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
 import { detectCatalyst } from '../utils/newsSignals.js';
+import { withNewsImportance } from '../utils/newsImportance.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
 
@@ -47,6 +48,7 @@ export default function NewsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNews, setSelectedNews] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
+  const [onlyImportant, setOnlyImportant] = useState(false);
   const [liveNews, setLiveNews] = useState([]);
 
   // Hisse arama önerisi (haber filtresi için)
@@ -132,14 +134,20 @@ export default function NewsPage() {
 
   // Canlı haber geldiyse yalnızca gerçek haberler gösterilir; hiç canlı haber
   // yoksa örnek (mock) haberlerle dolu bir akış sunulur (boş ekran yerine).
+  // Her habere bileşik "önem skoru" ve portföy/izleme ilgisi eklenir.
   const allNews = useMemo(
     () =>
-      [...liveNews, ...(liveNews.length ? [] : MOCK_NEWS)].map((n) => ({
-        ...n,
-        market: n.market ?? marketByTicker.get(n.ticker) ?? null,
-        isCatalyst: detectCatalyst(n),
-      })),
-    [liveNews, marketByTicker]
+      [...liveNews, ...(liveNews.length ? [] : MOCK_NEWS)].map((n) =>
+        withNewsImportance(
+          {
+            ...n,
+            market: n.market ?? marketByTicker.get(n.ticker) ?? null,
+            isCatalyst: detectCatalyst(n),
+          },
+          { portfolioTickers, watchlistTickers }
+        )
+      ),
+    [liveNews, marketByTicker, portfolioTickers, watchlistTickers]
   );
 
   // Hisse kodu yazdıkça canlı sembol önerisi (300ms debounce)
@@ -233,6 +241,7 @@ export default function NewsPage() {
       if (tickerFilter !== 'all' && news.ticker !== tickerFilter) return false;
       if (typeFilter !== 'all' && news.type !== typeFilter) return false;
       if (sentimentFilter !== 'all' && news.sentiment !== sentimentFilter) return false;
+      if (onlyImportant && news.importanceLevel === 'low') return false;
       if (news.reliability < minReliability) return false;
       if (
         query &&
@@ -255,7 +264,19 @@ export default function NewsPage() {
     sentimentFilter,
     minReliability,
     searchQuery,
+    onlyImportant,
   ]);
+
+  // "Bugünün öne çıkanları": filtreye uyan haberler içinde önem skoru en
+  // yüksek (düşük olmayan) ilk 3 haber. Sekmeden bağımsız, üstte sabit gösterilir.
+  const highlights = useMemo(
+    () =>
+      [...filteredNews]
+        .filter((n) => n.importanceLevel !== 'low')
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, 3),
+    [filteredNews]
+  );
 
   // Filtrelenmiş haberler 3 eşit parçaya bölünür: en yeniler 1. sekmede
   const newsPages = useMemo(() => {
@@ -328,7 +349,7 @@ export default function NewsPage() {
                         className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                           item.market === 'BIST'
                             ? 'bg-accent/15 text-accent-soft'
-                            : 'bg-cyan-400/15 text-cyan-300'
+                            : 'bg-navy-800 text-slate-400'
                         }`}
                       >
                         {item.market}
@@ -413,26 +434,60 @@ export default function NewsPage() {
         </div>
       )}
 
+      {/* Bugünün öne çıkanları: önem skoru en yüksek 3 haber */}
+      {highlights.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <Flame size={15} className="text-amber-400" />
+            <h2 className="text-sm font-semibold text-ink">Bugünün öne çıkanları</h2>
+            <span className="text-xs text-slate-500">
+              güvenilirlik, etki, katalizör ve portföy ilginize göre seçildi
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {highlights.map((news) => (
+              <NewsCard key={`hl-${news.id}`} news={news} onClick={setSelectedNews} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Tarih sekmeleri: en yeni → en eski */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex overflow-hidden rounded-lg border border-navy-700">
-          {NEWS_TABS.map((tab) => (
-            <button
-              key={tab.index}
-              type="button"
-              onClick={() => setActiveTab(tab.index)}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                activeTab === tab.index
-                  ? 'bg-accent text-white'
-                  : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200'
-              }`}
-            >
-              {tab.label}
-              <span className="ml-1.5 rounded bg-black/20 px-1.5 py-0.5 text-[10px] tabular-nums">
-                {newsPages[tab.index]?.length ?? 0}
-              </span>
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex overflow-hidden rounded-lg border border-navy-700">
+            {NEWS_TABS.map((tab) => (
+              <button
+                key={tab.index}
+                type="button"
+                onClick={() => setActiveTab(tab.index)}
+                className={`px-4 py-2 text-xs font-medium transition-colors ${
+                  activeTab === tab.index
+                    ? 'bg-accent text-white'
+                    : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200'
+                }`}
+              >
+                {tab.label}
+                <span className="ml-1.5 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] tabular-nums">
+                  {newsPages[tab.index]?.length ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setOnlyImportant((v) => !v)}
+            aria-pressed={onlyImportant}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+              onlyImportant
+                ? 'border-accent bg-accent/12 text-accent-soft'
+                : 'border-navy-700 text-slate-400 hover:bg-navy-800 hover:text-ink'
+            }`}
+            title="Düşük önemli (gürültü) haberleri gizle"
+          >
+            <Flame size={13} />
+            Yalnızca önemli
+          </button>
         </div>
         <p className="flex items-center gap-2 text-xs text-slate-500">
           {liveNews.length > 0 && (

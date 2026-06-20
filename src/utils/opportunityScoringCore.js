@@ -236,14 +236,18 @@ export function scoreAndRankCandidates(candidates, horizon = 'short', referenceD
     .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
 }
 
-/** 0-39 kırmızı, 40-59 turuncu, 60-74 amber, 75-89 yeşil, 90-100 parlak yeşil. */
+/**
+ * Skor renkleri — sakin/kurumsal palet (yeşil / amber / kırmızı; neon yok).
+ * 90+ koyu yeşil, 75+ yeşil, 60+ amber, 40+ açık amber, altı kırmızı.
+ * stroke değerleri kart sol kenarlığı ve grafiklerde kullanılır.
+ */
 export function getScoreColor(score) {
   if (score >= 90) {
     return {
-      text: 'text-emerald-300',
-      bg: 'bg-emerald-300',
-      badge: 'bg-emerald-300/15 text-emerald-300 border-emerald-300/40',
-      stroke: '#6ee7b7',
+      text: 'text-gain',
+      bg: 'bg-gain',
+      badge: 'bg-gain/15 text-gain border-gain/40',
+      stroke: '#1d6b46',
     };
   }
   if (score >= 75) {
@@ -251,7 +255,7 @@ export function getScoreColor(score) {
       text: 'text-gain',
       bg: 'bg-gain',
       badge: 'bg-gain/15 text-gain border-gain/30',
-      stroke: '#22c55e',
+      stroke: '#287a50',
     };
   }
   if (score >= 60) {
@@ -259,23 +263,41 @@ export function getScoreColor(score) {
       text: 'text-amber-400',
       bg: 'bg-amber-400',
       badge: 'bg-amber-400/15 text-amber-400 border-amber-400/30',
-      stroke: '#fbbf24',
+      stroke: '#a06a24',
     };
   }
   if (score >= 40) {
     return {
-      text: 'text-orange-400',
-      bg: 'bg-orange-400',
-      badge: 'bg-orange-400/15 text-orange-400 border-orange-400/30',
-      stroke: '#fb923c',
+      text: 'text-amber-400',
+      bg: 'bg-amber-400',
+      badge: 'bg-amber-400/15 text-amber-400 border-amber-400/30',
+      stroke: '#bd863a',
     };
   }
   return {
     text: 'text-loss',
     bg: 'bg-loss',
     badge: 'bg-loss/15 text-loss border-loss/30',
-    stroke: '#ef4444',
+    stroke: '#b54747',
   };
+}
+
+/**
+ * Skoru en çok yukarı taşıyan ve en çok aşağı çeken bileşeni döndürür
+ * (kartta modal açmadan görünür "mini gerekçe" için). Verilen ağırlık
+ * setindeki ham alt-skorlardan en yüksek (best) ve en düşük (worst) seçilir.
+ */
+export function getTopFactors(breakdown, weights) {
+  if (!breakdown || !weights?.length) return { best: null, worst: null };
+  let best = null;
+  let worst = null;
+  for (const { key, label } of weights) {
+    const value = breakdown[key];
+    if (typeof value !== 'number') continue;
+    if (!best || value > best.value) best = { label, value };
+    if (!worst || value < worst.value) worst = { label, value };
+  }
+  return { best, worst };
 }
 
 export function getScoreLabel(score) {

@@ -16,5 +16,5 @@ export function getSentimentIcon(sentiment) {
   if (sentiment === 'negative') {
     return { Icon: TrendingDown, label: 'Negatif', text: 'text-loss', bg: 'bg-loss/15' };
   }
-  return { Icon: MoveRight, label: 'Nötr', text: 'text-amber-300/80', bg: 'bg-amber-300/10' };
+  return { Icon: MoveRight, label: 'Nötr', text: 'text-slate-400', bg: 'bg-navy-800' };
 }

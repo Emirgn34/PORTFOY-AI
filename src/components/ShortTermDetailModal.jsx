@@ -297,21 +297,21 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
               <ul className="space-y-1.5 text-xs leading-relaxed text-slate-400">
                 {candidate.isGated && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Ortalama haber güvenilirliği eşik değerin ({RELIABILITY_GATE_THRESHOLD}/10)
                     altında kaldığı için haber katalizör puanı orantılı olarak kırpıldı.
                   </li>
                 )}
                 {candidate.isCapped && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Yüksek risk seviyesi nedeniyle skor {HIGH_RISK_SCORE_CAP} ile sınırlandırıldı
                     (ham skor: {candidate.rawScore}).
                   </li>
                 )}
                 {candidate.isDecayed && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Katalizör {candidate.daysSinceCatalyst} gün önce yayınlandı; tazelik çarpanı
                     ({Math.round(candidate.catalystFreshnessFactor * 100)}%) uygulanarak katalizör
                     puanı azaltıldı. Eski haberin kısa vadeli fiyat etkisi zamanla zayıflar.
@@ -319,7 +319,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                 )}
                 {candidate.isMomentumLimited && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Hareket potansiyeli (momentum + hacim bileşkesi: {candidate.movePotential}/100)
                     eşik altında kaldığı için skor kırpıldı. Momentum ve hacim teyidi olmadan
                     hissenin beklenen vade içinde yükselişi gerçekleştirmesi zorlaşır.
@@ -327,14 +327,14 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                 )}
                 {candidate.isValueTrapRisk && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Değerleme çok ucuz görünmesine rağmen büyüme görünümü zayıf (değer tuzağı
                     profili); skor temkinli olarak sınırlandırıldı.
                   </li>
                 )}
                 {candidate.newsConfidence != null && candidate.newsConfidence < 40 && (
                   <li className="flex items-start gap-2">
-                    <Info size={13} className="mt-0.5 shrink-0 text-orange-400" />
+                    <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
                     Haber kanıtı zayıf (kanıt güveni {candidate.newsConfidence}/100): az sayıda veya
                     düşük güvenilirlikli kaynak bulunduğundan katalizör puanı nötr tabana çekildi;
                     tek bir başlığın skoru şişirmesi engellendi.

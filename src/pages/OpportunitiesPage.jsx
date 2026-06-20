@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio } from 'lucide-react';
+import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio, Sparkle, ArrowUpRight, Check } from 'lucide-react';
 import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
+import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
+import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
+import { getScoreColor } from '../utils/opportunityScoring.js';
 import {
   MOCK_SHORT_TERM_CANDIDATES,
   LAST_UPDATED,
@@ -27,19 +30,64 @@ const HORIZON_DESCRIPTIONS = {
     'Temel sağlamlık, değerleme, büyüme görünümü, temettü ve sektör uyumu verilerine göre oluşturulan uzun vadeli izleme listesi.',
 };
 
-function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/15 text-accent-soft' }) {
+function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/12 text-accent' }) {
   return (
-    <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-4">
-      <div className="flex items-center gap-3">
-        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
-          <Icon size={19} />
+    <div className="rounded-xl border border-navy-700 bg-navy-900 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
+          <Icon size={16} />
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-xs text-slate-400">{label}</p>
-          <p className="truncate text-lg font-bold tabular-nums text-ink">{value}</p>
-        </div>
       </div>
+      <p className="mt-3 truncate text-xl font-semibold tabular-nums text-ink">{value}</p>
     </div>
+  );
+}
+
+/** "Öne çıkanlar" şeridi için kompakt aday kartı (en güçlü 3 aday). */
+function FeaturedCandidate({ candidate, rank, onShowDetail }) {
+  const scoreColors = getScoreColor(candidate.shortTermScore);
+  const isGainDay = candidate.dailyChangePercent >= 0;
+  return (
+    <button
+      type="button"
+      onClick={() => onShowDetail(candidate)}
+      className="flex flex-col gap-3 rounded-xl border border-navy-700 border-t-2 bg-navy-900 p-4 text-left transition-colors hover:border-navy-600 hover:bg-navy-850"
+      style={{ borderTopColor: scoreColors.stroke }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-navy-800 text-[11px] font-bold text-slate-400">
+            #{rank}
+          </span>
+          <span className="font-bold text-ink">{candidate.symbol}</span>
+        </span>
+        <span className={`text-2xl font-semibold tabular-nums leading-none ${scoreColors.text}`}>
+          {candidate.shortTermScore}
+          <span className="text-xs font-medium text-slate-500">/100</span>
+        </span>
+      </div>
+      <p className="truncate text-xs text-slate-500">{candidate.companyName}</p>
+      <p className="flex items-start gap-1.5 text-xs font-medium leading-snug text-ink">
+        <Sparkle size={12} className="mt-0.5 shrink-0 text-accent-soft" />
+        <span className="line-clamp-2">{candidate.strongestCatalystTitle}</span>
+      </p>
+      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        <span className="text-xs tabular-nums text-slate-400">
+          {formatCurrency(
+            candidate.currentPrice,
+            candidate.currency ?? getMarketCurrency(candidate.market)
+          )}{' '}
+          <span className={`font-semibold ${isGainDay ? 'text-gain' : 'text-loss'}`}>
+            {formatPercent(candidate.dailyChangePercent)}
+          </span>
+        </span>
+        <span className="flex items-center gap-0.5 text-[11px] font-medium text-accent-soft">
+          Detay
+          <ArrowUpRight size={12} />
+        </span>
+      </div>
+    </button>
   );
 }
 
@@ -51,9 +99,46 @@ export default function OpportunitiesPage() {
     seed: SEED_STOCKS,
     readOnly: true,
   });
+  // İzleme listesi yazılabilir: kullanıcı bir adayı doğrudan takibe alabilir
+  // (WatchlistPage ile aynı bulut tablosu/şema; çok cihaz senkron).
+  const [watchlistItems, setWatchlistItems] = useSyncedState({
+    table: 'watchlists',
+    column: 'items',
+    localKey: 'portfoyai_watchlist',
+    seed: SEED_WATCHLIST,
+  });
   const [horizon, setHorizon] = useState('short');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [justAddedSymbol, setJustAddedSymbol] = useState(null);
+
+  const watchlistTickers = useMemo(
+    () => new Set(watchlistItems.map((i) => i.ticker)),
+    [watchlistItems]
+  );
+
+  /** Bir adayı izleme listesi şemasına çevirip ekler (zaten varsa atlanır). */
+  function handleAddToWatchlist(candidate) {
+    if (watchlistTickers.has(candidate.symbol)) return;
+    const item = {
+      id: crypto.randomUUID(),
+      ticker: candidate.symbol,
+      company: candidate.companyName,
+      market: candidate.market,
+      sector: candidate.sector,
+      currency: candidate.currency ?? getMarketCurrency(candidate.market),
+      currentPrice: candidate.currentPrice,
+      dailyChangePercent: candidate.dailyChangePercent ?? 0,
+      targetPrice: null,
+      priceWhenAdded: candidate.currentPrice,
+      addedAt: new Date().toISOString().slice(0, 10),
+      horizon,
+      notes: `Fırsatlar listesinden eklendi (skor ${candidate.shortTermScore}/100).`,
+    };
+    setWatchlistItems((prev) => [...prev, item]);
+    setJustAddedSymbol(candidate.symbol);
+    window.setTimeout(() => setJustAddedSymbol((s) => (s === candidate.symbol ? null : s)), 2600);
+  }
 
   // Canlı adaylar bulut tablosundan çekilir; yoksa mock listeye düşülür.
   const [liveShort, setLiveShort] = useState(null);
@@ -227,7 +312,7 @@ export default function OpportunitiesPage() {
           icon={Trophy}
           label="En Yüksek Skor"
           value={`${summary.topScore}/100`}
-          iconBg="bg-emerald-300/15 text-emerald-300"
+          iconBg="bg-gain/12 text-gain"
         />
         <SummaryCard
           icon={Gauge}
@@ -238,21 +323,44 @@ export default function OpportunitiesPage() {
           icon={Flame}
           label="Güçlü Potansiyel Aday"
           value={summary.strongCount}
-          iconBg="bg-gain/15 text-gain"
+          iconBg="bg-gain/12 text-gain"
         />
         <SummaryCard
           icon={ShieldCheck}
           label="Ort. Haber Güvenilirliği"
           value={`${summary.avgReliability}/10`}
-          iconBg="bg-violet-400/15 text-violet-300"
+          iconBg="bg-accent/12 text-accent"
         />
         <SummaryCard
           icon={Newspaper}
           label="Pozitif Haber Sayısı"
           value={summary.positiveNewsTotal}
-          iconBg="bg-cyan-400/15 text-cyan-300"
+          iconBg="bg-navy-800 text-slate-400"
         />
       </div>
+
+      {/* Öne çıkanlar: skoru en yüksek 3 aday */}
+      {rankedCandidates.length >= 3 && (
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <Trophy size={15} className="text-accent" />
+            <h3 className="text-sm font-semibold text-ink">Öne çıkanlar</h3>
+            <span className="text-xs text-slate-500">
+              {HORIZON_CONFIGS[horizon].label.toLowerCase()} skoruna göre ilk 3 aday
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {rankedCandidates.slice(0, 3).map((candidate) => (
+              <FeaturedCandidate
+                key={`feat-${candidate.id}`}
+                candidate={candidate}
+                rank={candidate.rank}
+                onShowDetail={setSelectedCandidate}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Filtreler */}
       <ShortTermFilters
@@ -288,6 +396,8 @@ export default function OpportunitiesPage() {
               candidate={candidate}
               horizon={horizon}
               isInPortfolio={portfolioTickers.has(candidate.symbol)}
+              isInWatchlist={watchlistTickers.has(candidate.symbol)}
+              onAddToWatchlist={handleAddToWatchlist}
               onShowDetail={setSelectedCandidate}
             />
           ))}
@@ -299,6 +409,14 @@ export default function OpportunitiesPage() {
         horizon={horizon}
         onClose={() => setSelectedCandidate(null)}
       />
+
+      {/* Takibe alma onayı (kısa süreli bildirim) */}
+      {justAddedSymbol && (
+        <div className="shadow-pop fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-navy-700 bg-navy-900 px-4 py-2.5 text-sm text-ink">
+          <Check size={15} className="text-gain" />
+          <span className="font-medium">{justAddedSymbol}</span> takip listesine eklendi.
+        </div>
+      )}
     </div>
   );
 }
