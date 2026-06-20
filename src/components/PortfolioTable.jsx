@@ -96,7 +96,7 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
               >
                 <td className="px-4 py-3">
                   <div className="flex flex-col">
-                    <span className="font-bold text-white">{stock.ticker}</span>
+                    <span className="font-bold text-ink">{stock.ticker}</span>
                     <span className="text-[11px] text-slate-500">{stock.market}</span>
                   </div>
                 </td>
@@ -118,7 +118,7 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
                 <td className="px-4 py-3 text-right tabular-nums text-slate-300">
                   {formatCurrency(m.totalCost, stock.currency)}
                 </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                <td className="px-4 py-3 text-right font-medium tabular-nums text-ink">
                   {formatCurrency(m.currentValue, stock.currency)}
                 </td>
                 <td className={`px-4 py-3 text-right font-medium tabular-nums ${profitColor}`}>

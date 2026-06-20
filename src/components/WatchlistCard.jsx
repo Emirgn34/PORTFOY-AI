@@ -92,7 +92,7 @@ export default function WatchlistCard({
           >
             <GripVertical size={18} />
           </span>
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-navy-700/70 text-sm font-bold text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-navy-700/70 text-sm font-bold text-ink">
             {index + 1}
           </span>
           <div className="flex flex-col">
@@ -100,7 +100,7 @@ export default function WatchlistCard({
               type="button"
               onClick={() => onMoveUp(item.id)}
               disabled={!canMoveUp}
-              className="rounded p-0.5 text-slate-500 transition-colors hover:bg-navy-800 hover:text-white disabled:cursor-default disabled:opacity-30"
+              className="rounded p-0.5 text-slate-500 transition-colors hover:bg-navy-800 hover:text-ink disabled:cursor-default disabled:opacity-30"
               title="Yukarı taşı"
             >
               <ChevronUp size={14} />
@@ -109,7 +109,7 @@ export default function WatchlistCard({
               type="button"
               onClick={() => onMoveDown(item.id)}
               disabled={!canMoveDown}
-              className="rounded p-0.5 text-slate-500 transition-colors hover:bg-navy-800 hover:text-white disabled:cursor-default disabled:opacity-30"
+              className="rounded p-0.5 text-slate-500 transition-colors hover:bg-navy-800 hover:text-ink disabled:cursor-default disabled:opacity-30"
               title="Aşağı taşı"
             >
               <ChevronDown size={14} />
@@ -120,7 +120,7 @@ export default function WatchlistCard({
         {/* Kimlik */}
         <div className="min-w-0 lg:w-52 lg:shrink-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-bold text-white">{item.ticker}</span>
+            <span className="font-bold text-ink">{item.ticker}</span>
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${horizon.className}`}>
               {horizon.label}
             </span>
@@ -140,7 +140,7 @@ export default function WatchlistCard({
 
         {/* Fiyat + günlük değişim */}
         <div className="lg:w-36 lg:shrink-0">
-          <p className="text-base font-semibold tabular-nums text-white">
+          <p className="text-base font-semibold tabular-nums text-ink">
             {formatCurrency(item.currentPrice, item.currency)}
           </p>
           <p className={`text-xl font-bold tabular-nums ${dailyColor}`}>

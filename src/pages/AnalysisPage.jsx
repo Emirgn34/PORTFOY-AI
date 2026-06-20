@@ -149,7 +149,7 @@ export default function AnalysisPage() {
           <div className="flex items-center gap-5">
             <PortfolioScoreRing score={portfolio.overallScore} />
             <div>
-              <h2 className="flex items-center gap-2 text-base font-semibold text-white">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
                 <Gauge size={18} className="text-accent-soft" />
                 Genel Portföy Skoru
               </h2>

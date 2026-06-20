@@ -35,7 +35,7 @@ export default function NewsDetailModal({ news, onClose }) {
         <div className="sticky top-0 flex items-start justify-between gap-4 border-b border-navy-700/60 bg-navy-900 px-5 py-4">
           <div>
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-navy-700/70 px-2 py-0.5 text-xs font-bold text-white">
+              <span className="rounded-md bg-navy-700/70 px-2 py-0.5 text-xs font-bold text-ink">
                 {news.ticker}
               </span>
               <span className="text-xs text-slate-500">{news.company}</span>
@@ -50,7 +50,7 @@ export default function NewsDetailModal({ news, onClose }) {
                 {sentiment.label}
               </span>
             </div>
-            <h2 className="text-base font-semibold leading-snug text-white">{news.title}</h2>
+            <h2 className="text-base font-semibold leading-snug text-ink">{news.title}</h2>
             <p className="mt-1 text-xs text-slate-500">
               {news.source} • {formattedDate}
             </p>
@@ -58,7 +58,7 @@ export default function NewsDetailModal({ news, onClose }) {
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-white"
+            className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-ink"
             aria-label="Kapat"
           >
             <X size={18} />

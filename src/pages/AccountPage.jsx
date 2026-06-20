@@ -41,12 +41,12 @@ export default function AccountPage() {
   }
 
   const inputClass =
-    'w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-accent/60';
+    'w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60';
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-white">Hesabım</h1>
+        <h1 className="text-xl font-bold tracking-tight text-ink">Hesabım</h1>
         <p className="mt-1 text-sm text-slate-500">Hesap bilgilerini görüntüle ve parolanı değiştir.</p>
       </div>
 
@@ -61,7 +61,7 @@ export default function AccountPage() {
             {(username ?? '?').slice(0, 1).toUpperCase()}
           </span>
           <div>
-            <p className="text-base font-semibold text-white">{username}</p>
+            <p className="text-base font-semibold text-ink">{username}</p>
             <p className="flex items-center gap-1.5 text-xs text-slate-500">
               {isAdmin ? <Shield size={12} /> : <UserIcon size={12} />}
               {isAdmin ? 'Yönetici' : 'Kullanıcı'}
@@ -72,7 +72,7 @@ export default function AccountPage() {
 
       {/* Parola değiştirme */}
       <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-navy-700/60 bg-navy-900 p-5">
-        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
           <Lock size={16} className="text-accent-soft" />
           Parolayı Değiştir
         </div>
@@ -129,7 +129,7 @@ export default function AccountPage() {
       <button
         type="button"
         onClick={() => signOut()}
-        className="flex items-center gap-2 rounded-lg border border-navy-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-white"
+        className="flex items-center gap-2 rounded-lg border border-navy-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-ink"
       >
         <LogOut size={16} />
         Çıkış Yap

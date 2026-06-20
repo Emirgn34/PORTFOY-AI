@@ -20,7 +20,7 @@ function byDailyChangeDesc(a, b) {
   return b.dailyChangePercent - a.dailyChangePercent;
 }
 
-function SummaryChip({ icon: Icon, label, value, valueClass = 'text-white' }) {
+function SummaryChip({ icon: Icon, label, value, valueClass = 'text-ink' }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-navy-700/60 bg-navy-900 px-3 py-2">
       <Icon size={15} className="text-accent-soft" />
@@ -264,7 +264,7 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
       {/* Başlık */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-white">İzleme Listesi</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-ink">Takip Listesi</h2>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-400">
             Henüz satın almadığınız, takip etmek istediğiniz hisseler. Kartları sürükleyerek
             sırayı değiştirebilir, dilediğinizde günlük değişime göre otomatik sıralamaya
@@ -285,7 +285,7 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
               type="button"
               onClick={live.refresh}
               disabled={live.loading}
-              className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-white disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-ink disabled:opacity-50"
               title={
                 live.lastUpdated
                   ? `Son güncelleme: ${live.lastUpdated.toLocaleTimeString('tr-TR')}`
@@ -327,7 +327,7 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
             icon={Target}
             label="Hedefe ulaşan"
             value={summary.reachedCount}
-            valueClass={summary.reachedCount > 0 ? 'text-gain' : 'text-white'}
+            valueClass={summary.reachedCount > 0 ? 'text-gain' : 'text-ink'}
           />
         </div>
       )}

@@ -10,7 +10,7 @@ export function getScoreColors(score) {
       text: 'text-gain',
       bg: 'bg-gain',
       badge: 'bg-gain/15 text-gain border-gain/30',
-      stroke: '#22c55e',
+      stroke: '#287a50',
     };
   }
   if (score >= 40) {
@@ -18,14 +18,14 @@ export function getScoreColors(score) {
       text: 'text-amber-400',
       bg: 'bg-amber-400',
       badge: 'bg-amber-400/15 text-amber-400 border-amber-400/30',
-      stroke: '#fbbf24',
+      stroke: '#a06a24',
     };
   }
   return {
     text: 'text-loss',
     bg: 'bg-loss',
     badge: 'bg-loss/15 text-loss border-loss/30',
-    stroke: '#ef4444',
+    stroke: '#b54747',
   };
 }
 

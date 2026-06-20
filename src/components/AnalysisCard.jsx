@@ -44,7 +44,7 @@ export default function AnalysisCard({ stock, analysis, weightPercent }) {
         <div className="flex items-center gap-3">
           <ScoreRing score={analysis.overallScore} />
           <div>
-            <p className="font-bold text-white">{stock.ticker}</p>
+            <p className="font-bold text-ink">{stock.ticker}</p>
             <p className="text-xs text-slate-500">{stock.company}</p>
             <p className="mt-1 text-[11px] text-slate-500">
               Portföy ağırlığı:{' '}

@@ -59,7 +59,7 @@ function Field({ label, error, children }) {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-accent';
+  'w-full rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-sm text-ink placeholder-slate-600 outline-none transition-colors focus:border-accent';
 
 export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
   const [form, setForm] = useState(EMPTY_FORM);
@@ -171,13 +171,13 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-navy-700/60 px-5 py-4">
-          <h2 className="text-base font-semibold text-white">
+          <h2 className="text-base font-semibold text-ink">
             {isEdit ? 'İzlenen Hisseyi Düzenle' : 'İzleme Listesine Ekle'}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-white"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-ink"
             aria-label="Kapat"
           >
             <X size={18} />
@@ -218,7 +218,7 @@ export default function WatchlistFormModal({ isOpen, item, onSave, onClose }) {
                           }}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-navy-700/60"
                         >
-                          <span className="text-sm font-bold text-white">{sugg.ticker}</span>
+                          <span className="text-sm font-bold text-ink">{sugg.ticker}</span>
                           <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
                             {sugg.name}
                           </span>

@@ -36,7 +36,7 @@ function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/15 text-acc
         </span>
         <div className="min-w-0">
           <p className="truncate text-xs text-slate-400">{label}</p>
-          <p className="truncate text-lg font-bold tabular-nums text-white">{value}</p>
+          <p className="truncate text-lg font-bold tabular-nums text-ink">{value}</p>
         </div>
       </div>
     </div>
@@ -174,7 +174,7 @@ export default function OpportunitiesPage() {
     <div className="space-y-5">
       {/* Başlık + vade sekmeleri */}
       <div>
-        <h2 className="text-lg font-bold text-white">Fırsatlar</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-ink">Fırsatlar</h2>
         <div data-tour="opp-tabs" className="mt-3 flex overflow-hidden rounded-lg border border-navy-700 sm:inline-flex">
           {HORIZON_TABS.map((tab) => (
             <button

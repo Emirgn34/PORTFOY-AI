@@ -19,14 +19,15 @@ import {
 import { fetchPeriodChanges } from '../services/liveData.js';
 
 const STORAGE_KEY = 'portfoyai_stocks';
-const CHART_COLORS = ['#6366f1', '#22c55e', '#06b6d4', '#a855f7', '#f59e0b', '#ec4899', '#14b8a6', '#f43f5e'];
+// Sakin, finansa uygun kategorik palet (neon/AI tonları yerine yeşil–kum–nötr)
+const CHART_COLORS = ['#244c3a', '#3f7d5e', '#6aa07f', '#9ab8a3', '#a06a24', '#c79a5b', '#687069', '#b0b7ac'];
 
 function ChartTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const item = payload[0];
   return (
-    <div className="rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-xs shadow-xl">
-      <p className="font-semibold text-white">{item.name}</p>
+    <div className="shadow-pop rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-xs">
+      <p className="font-semibold text-ink">{item.name}</p>
       <p className="text-slate-400">
         {formatCurrency(item.value)} ({item.payload.percent.toFixed(1)}%)
       </p>
@@ -205,7 +206,7 @@ function PortfolioContent({ stocks, setStocks }) {
               data-tour="live-price"
               onClick={live.refresh}
               disabled={live.loading}
-              className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-white disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-navy-800 hover:text-ink disabled:opacity-50"
               title={
                 live.lastUpdated
                   ? `Son güncelleme: ${live.lastUpdated.toLocaleTimeString('tr-TR')}`
@@ -267,7 +268,7 @@ function PortfolioContent({ stocks, setStocks }) {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Sektöre göre dağılım — donut grafik */}
           <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-white">
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
               <PieChartIcon size={16} className="text-accent-soft" />
               Sektöre Göre Dağılım
             </h3>
@@ -300,7 +301,7 @@ function PortfolioContent({ stocks, setStocks }) {
                       style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
                     />
                     <span className="text-slate-300">{sector.name}</span>
-                    <span className="ml-auto font-semibold tabular-nums text-white">
+                    <span className="ml-auto font-semibold tabular-nums text-ink">
                       {sector.percent.toFixed(1)}%
                     </span>
                   </li>
@@ -311,7 +312,7 @@ function PortfolioContent({ stocks, setStocks }) {
 
           {/* Hisseye göre dağılım — progress barlar */}
           <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-white">
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
               <BarChart3 size={16} className="text-accent-soft" />
               Hisseye Göre Dağılım
             </h3>
@@ -322,7 +323,7 @@ function PortfolioContent({ stocks, setStocks }) {
                     <span className="font-medium text-slate-300">{item.name}</span>
                     <span className="tabular-nums text-slate-400">
                       {formatCurrency(item.value)} •{' '}
-                      <span className="font-semibold text-white">{item.percent.toFixed(1)}%</span>
+                      <span className="font-semibold text-ink">{item.percent.toFixed(1)}%</span>
                     </span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-navy-700/70">

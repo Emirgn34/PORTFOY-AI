@@ -81,7 +81,7 @@ function Field({ label, error, children, labelExtra = null }) {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-accent';
+  'w-full rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-sm text-ink placeholder-slate-600 outline-none transition-colors focus:border-accent';
 
 /** Kademeli alım satırlarından toplam adet + ağırlıklı ortalama maliyet. */
 function summarizeTranches(tranches) {
@@ -276,13 +276,13 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-navy-700/60 px-5 py-4">
-          <h2 className="text-base font-semibold text-white">
+          <h2 className="text-base font-semibold text-ink">
             {isEdit ? 'Hisseyi Düzenle' : 'Yeni Hisse Ekle'}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-white"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-ink"
             aria-label="Kapat"
           >
             <X size={18} />
@@ -323,7 +323,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
                           }}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-navy-700/60"
                         >
-                          <span className="text-sm font-bold text-white">{item.ticker}</span>
+                          <span className="text-sm font-bold text-ink">{item.ticker}</span>
                           <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
                             {item.name}
                           </span>
@@ -441,7 +441,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
             <button
               type="button"
               onClick={() => setAdvancedOpen((o) => !o)}
-              className="flex w-full items-center justify-between px-3 py-2.5 text-xs font-medium text-slate-300 transition-colors hover:text-white"
+              className="flex w-full items-center justify-between px-3 py-2.5 text-xs font-medium text-slate-300 transition-colors hover:text-ink"
             >
               <span>Gelişmiş — Kademeli Alım Hesaplayıcı</span>
               {advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}

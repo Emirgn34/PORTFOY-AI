@@ -68,7 +68,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
             </p>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-white">{candidate.symbol}</span>
+                <span className="font-bold text-ink">{candidate.symbol}</span>
                 <span className="text-xs text-slate-500">{candidate.companyName}</span>
                 <span className="rounded bg-navy-700/60 px-1.5 py-0.5 text-[10px] text-slate-400">
                   {candidate.market} • {candidate.sector}
@@ -104,7 +104,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-white"
+            className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-navy-800 hover:text-ink"
             aria-label="Kapat"
           >
             <X size={18} />
@@ -125,7 +125,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
           {/* 4. Neden bu hisse seçildi? */}
           <Section title="Neden Bu Hisse Seçildi?" icon={Sparkle}>
             <div className={boxClass}>
-              <p className="text-sm font-medium text-white">{candidate.strongestCatalystTitle}</p>
+              <p className="text-sm font-medium text-ink">{candidate.strongestCatalystTitle}</p>
               <p className="mt-1 text-[11px] text-slate-500">
                 Katalizör tarihi: {formatDate(candidate.catalystDate)}
               </p>
@@ -158,7 +158,7 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                   <li key={news.title} className={boxClass}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="flex items-center gap-1.5 text-sm font-medium text-white">
+                        <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
                           <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${newsSentiment.bg} ${newsSentiment.text}`}>
                             <NewsIcon size={12} />
                           </span>

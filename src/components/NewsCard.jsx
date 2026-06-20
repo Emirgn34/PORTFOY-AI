@@ -58,7 +58,7 @@ export default function NewsCard({ news, onClick }) {
       className={`group flex cursor-pointer flex-col rounded-xl border bg-navy-900 p-4 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${borderClass}`}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded-md bg-navy-700/70 px-2 py-0.5 text-xs font-bold text-white">
+        <span className="rounded-md bg-navy-700/70 px-2 py-0.5 text-xs font-bold text-ink">
           {news.ticker}
         </span>
         {news.isLive && (
@@ -85,7 +85,7 @@ export default function NewsCard({ news, onClick }) {
         </span>
       </div>
 
-      <h3 className="mb-1.5 line-clamp-2 text-sm font-semibold leading-snug text-white group-hover:text-accent-soft">
+      <h3 className="mb-1.5 line-clamp-2 text-sm font-semibold leading-snug text-ink group-hover:text-accent-soft">
         {news.title}
       </h3>
       <p className="mb-3 line-clamp-3 text-xs leading-relaxed text-slate-400">{news.summary}</p>

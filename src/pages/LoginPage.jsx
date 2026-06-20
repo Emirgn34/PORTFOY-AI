@@ -30,7 +30,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <img src="/logo.png" alt="PortföyAI logosu" className="mb-3 h-16 w-16 rounded-full object-contain" />
-          <h1 className="text-2xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">
             Portföy<span className="text-accent-soft">AI</span>
           </h1>
           <p className="mt-1 text-sm text-slate-500">Devam etmek için giriş yapın</p>
@@ -54,7 +54,7 @@ export default function LoginPage() {
                 spellCheck={false}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full rounded-lg border border-navy-700 bg-navy-950 py-2.5 pl-9 pr-3 text-sm text-white placeholder-slate-600 outline-none focus:border-accent/60"
+                className="w-full rounded-lg border border-navy-700 bg-navy-950 py-2.5 pl-9 pr-3 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
                 placeholder="kullanici"
                 required
               />
@@ -73,7 +73,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-navy-700 bg-navy-950 py-2.5 pl-9 pr-3 text-sm text-white placeholder-slate-600 outline-none focus:border-accent/60"
+                className="w-full rounded-lg border border-navy-700 bg-navy-950 py-2.5 pl-9 pr-3 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
                 placeholder="••••••••"
                 required
               />

@@ -82,14 +82,14 @@ export default function ShortTermCandidateCard({ candidate, horizon = 'short', i
         {/* Sıra + kimlik */}
         <div className="flex items-start gap-3 lg:w-60 lg:shrink-0">
           <div className="flex flex-col items-center gap-1">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-navy-700/70 text-sm font-bold text-white">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-navy-700/70 text-sm font-bold text-ink">
               #{candidate.rank}
             </span>
             <RankChange rank={candidate.rank} previousRank={candidate.previousRank} />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="font-bold text-white">{candidate.symbol}</span>
+              <span className="font-bold text-ink">{candidate.symbol}</span>
               <span className={`flex h-5 w-5 items-center justify-center rounded ${sentiment.bg} ${sentiment.text}`}>
                 <SentIcon size={12} />
               </span>
@@ -140,7 +140,7 @@ export default function ShortTermCandidateCard({ candidate, horizon = 'short', i
 
         {/* Katalizör + gerekçe */}
         <div className="min-w-0 flex-1 space-y-2">
-          <p className="flex items-start gap-1.5 text-sm font-medium leading-snug text-white">
+          <p className="flex items-start gap-1.5 text-sm font-medium leading-snug text-ink">
             <Sparkle size={14} className="mt-0.5 shrink-0 text-accent-soft" />
             <span className="line-clamp-2">{candidate.strongestCatalystTitle}</span>
           </p>

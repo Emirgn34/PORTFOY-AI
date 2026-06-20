@@ -16,13 +16,16 @@ export default function Layout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <Outlet />
+          <div className="mx-auto w-full max-w-[1400px]">
+            <Outlet />
+          </div>
         </main>
 
-        <footer className="border-t border-navy-700/60 px-6 py-4">
-          <p className="text-center text-[11px] leading-relaxed text-slate-600">
-            PortföyAI bir demo uygulamasıdır. Burada yer alan tüm veriler örnek (mock) verilerdir
-            ve hiçbir içerik yatırım tavsiyesi değildir.
+        <footer className="border-t border-navy-700 px-6 py-5">
+          <p className="mx-auto max-w-[1400px] text-center text-[11px] leading-relaxed text-slate-500">
+            PortföyAI; piyasa verilerini ve analizleri bilgilendirme amacıyla sunar. Buradaki
+            hiçbir içerik yatırım tavsiyesi niteliği taşımaz. Yatırım kararlarınızdan önce
+            verileri kendiniz değerlendirin.
           </p>
         </footer>
       </div>

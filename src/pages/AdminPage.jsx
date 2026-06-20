@@ -65,7 +65,7 @@ export default function AdminPage() {
   return (
     <div data-tour="admin-panel" className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-white">Kullanıcı Yönetimi</h1>
+        <h1 className="text-xl font-bold tracking-tight text-ink">Kullanıcı Yönetimi</h1>
         <p className="mt-1 text-sm text-slate-500">
           Yeni kullanıcı oluştur, mevcut kullanıcıları görüntüle veya kaldır. Yalnızca yöneticiler bu sayfayı görür.
         </p>
@@ -73,7 +73,7 @@ export default function AdminPage() {
 
       {/* Yeni kullanıcı formu */}
       <form onSubmit={handleCreate} className="space-y-4 rounded-2xl border border-navy-700/60 bg-navy-900 p-5">
-        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
           <UserPlus size={16} className="text-accent-soft" />
           Yeni Kullanıcı Ekle
         </div>
@@ -90,7 +90,7 @@ export default function AdminPage() {
               spellCheck={false}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-accent/60"
+              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
               placeholder="kullanici"
               required
             />
@@ -105,7 +105,7 @@ export default function AdminPage() {
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-accent/60"
+              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
               placeholder="en az 6 karakter"
               required
             />
@@ -118,7 +118,7 @@ export default function AdminPage() {
               id="new-role"
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-white outline-none focus:border-accent/60"
+              className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink outline-none focus:border-accent/60"
             >
               <option value="user">Kullanıcı</option>
               <option value="admin">Yönetici</option>
@@ -146,7 +146,7 @@ export default function AdminPage() {
       {/* Kullanıcı listesi */}
       <div className="rounded-2xl border border-navy-700/60 bg-navy-900 p-5">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Kullanıcılar</h2>
+          <h2 className="text-sm font-semibold text-ink">Kullanıcılar</h2>
           <button
             type="button"
             onClick={refresh}
@@ -182,7 +182,7 @@ export default function AdminPage() {
                       {isAdmin ? <Shield size={15} /> : <UserIcon size={15} />}
                     </span>
                     <div>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-sm font-medium text-ink">
                         {u.username}
                         {isSelf && <span className="ml-2 text-[11px] text-slate-500">(sen)</span>}
                       </p>
