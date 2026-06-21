@@ -13,6 +13,7 @@
  */
 import { mapExchangeToMarket, SECTOR_TR } from './marketData.js';
 import { fetchDailyHistory, analyzeTechnicals } from './technicalAnalysis.js';
+import { mapLimit } from './concurrency.js';
 
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
@@ -569,9 +570,11 @@ async function fetchHistoryWithRetry(yahooFinance, symbol, attempts = 3) {
  * }
  * Dönüş: [{ symbol, horizon, market, data }] (Supabase'e upsert için).
  */
-export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol, deep = true, quoteMap = null }) {
+export async function buildCandidates(
+  symbols,
+  { yahooFinance, getNewsForSymbol, deep = true, quoteMap = null, concurrency = deep ? 4 : 6 }
+) {
   const referenceMs = Date.now();
-  const rows = [];
 
   // Quote'lar: Faz 1'den geldiyse onu kullan; eksikleri toplu çek
   const quotes = quoteMap instanceof Map ? new Map(quoteMap) : new Map();
@@ -585,9 +588,10 @@ export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol,
     }
   }
 
-  for (const symbol of symbols) {
+  // Her sembol bağımsız → sınırlı eşzamanlılıkla paralel (deep: 4, light: 6).
+  const nested = await mapLimit(symbols, concurrency, async (symbol) => {
     const quote = quotes.get(symbol);
-    if (!quote || quote.regularMarketPrice == null) continue;
+    if (!quote || quote.regularMarketPrice == null) return [];
 
     let summary = null;
     try {
@@ -613,12 +617,15 @@ export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol,
       const { shortCandidate, longCandidate, market } = buildCandidatePair(
         symbol, quote, summary, newsRows, referenceMs, tech
       );
-      rows.push({ symbol, horizon: 'short', market, data: shortCandidate });
-      rows.push({ symbol, horizon: 'long', market, data: longCandidate });
+      return [
+        { symbol, horizon: 'short', market, data: shortCandidate },
+        { symbol, horizon: 'long', market, data: longCandidate },
+      ];
     } catch (err) {
       console.error(`[candidates] ${symbol}: ${err.message}`);
+      return [];
     }
-  }
+  });
 
-  return rows;
+  return nested.flat();
 }

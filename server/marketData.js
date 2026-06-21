@@ -3,6 +3,7 @@
  * Hem lokal sunucu (index.js) hem bulut toplayıcı (collect.js) tarafından
  * kullanılır — mantık tek yerde durur, iki taraf birbirinden sapamaz.
  */
+import { mapLimit } from './concurrency.js';
 
 export function mapQuote(q) {
   return {
@@ -255,8 +256,10 @@ export async function translateToTurkish(text) {
  */
 export async function addTurkishTitles(articles, symbol) {
   if (symbol.endsWith('.IS')) return articles; // BIST haberleri zaten Türkçe
-  for (const article of articles) {
+  // Çeviriler birbirinden bağımsız → sınırlı eşzamanlılıkla paralel (ilk turun
+  // en büyük yavaşlık kaynağıydı: sembol başına onlarca sıralı çeviri çağrısı).
+  await mapLimit(articles, 5, async (article) => {
     article.titleTr = await translateToTurkish(article.title);
-  }
+  });
   return articles;
 }

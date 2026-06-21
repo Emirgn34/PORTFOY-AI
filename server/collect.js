@@ -19,6 +19,7 @@ import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
 import { scoreAndRankCandidates } from '../src/utils/opportunityScoringCore.js';
 import { getUsUniverse } from './usUniverse.js';
 import { selectDeepPool } from './preScreen.js';
+import { mapLimit } from './concurrency.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -207,17 +208,18 @@ const DEEP_POOL_SIZE = 300;
 const DISPLAY_BUFFER = 45;
 
 /** Büyük sembol listesini parçalara bölerek toplu quote çeker (ham quote nesneleri). */
-async function fetchQuotesChunked(symbols, chunkSize = 200) {
+async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
+  const chunks = [];
+  for (let i = 0; i < symbols.length; i += chunkSize) chunks.push(symbols.slice(i, i + chunkSize));
   const map = new Map();
-  for (let i = 0; i < symbols.length; i += chunkSize) {
-    const chunk = symbols.slice(i, i + chunkSize);
+  await mapLimit(chunks, concurrency, async (chunk, idx) => {
     try {
       const res = await yahooFinance.quote(chunk);
       for (const q of Array.isArray(res) ? res : [res]) map.set(q.symbol, q);
     } catch (err) {
-      console.error(`[quotes] parça ${i}: ${err.message}`);
+      console.error(`[quotes] parça ${idx}: ${err.message}`);
     }
-  }
+  });
   return map;
 }
 
@@ -228,14 +230,14 @@ async function fetchQuotesChunked(symbols, chunkSize = 200) {
  */
 async function collectNewsRaw(symbols) {
   let total = 0;
-  for (const symbol of symbols) {
+  await mapLimit(symbols, 5, async (symbol) => {
     try {
       const articles = await fetchNewsForSymbolRaw(yahooFinance, symbol);
-      if (articles.length === 0) continue;
+      if (articles.length === 0) return;
       const existing = await sb(`news?symbol=eq.${encodeURIComponent(symbol)}&select=id`);
       const known = new Set((existing ?? []).map((r) => r.id));
       const fresh = articles.filter((a) => !known.has(a.id));
-      if (fresh.length === 0) continue;
+      if (fresh.length === 0) return;
       await sb('news', {
         method: 'POST',
         body: fresh.map((a) => ({
@@ -252,7 +254,7 @@ async function collectNewsRaw(symbols) {
     } catch (err) {
       console.error(`[news-raw] ${symbol}: ${err.message}`);
     }
-  }
+  });
   return total;
 }
 
@@ -264,16 +266,16 @@ async function collectNewsRaw(symbols) {
 async function enrichGatedNews(symbols) {
   if (!symbols.length) return;
   let updated = 0;
-  for (const symbol of symbols) {
+  await mapLimit(symbols, 4, async (symbol) => {
     let rows;
     try {
       rows = await sb(
         `news?symbol=eq.${encodeURIComponent(symbol)}&sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=20`
       );
     } catch {
-      continue;
+      return;
     }
-    if (!rows?.length) continue;
+    if (!rows?.length) return;
 
     // ABD haberlerinde eksik Türkçe başlıkları çevir (BIST zaten Türkçe)
     if (!symbol.endsWith('.IS')) {
@@ -304,7 +306,7 @@ async function enrichGatedNews(symbols) {
         updated++;
       } catch {}
     }
-  }
+  });
   console.log(`Gated haber AI: ${symbols.length} sembolde ${updated} makale güncellendi.`);
 }
 
