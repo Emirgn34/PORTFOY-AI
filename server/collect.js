@@ -15,8 +15,10 @@
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
 import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
-import { buildCandidates, CANDIDATE_UNIVERSE, fetchDynamicUniverse } from './candidateBuilder.js';
+import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
 import { scoreAndRankCandidates } from '../src/utils/opportunityScoringCore.js';
+import { getUsUniverse } from './usUniverse.js';
+import { selectDeepPool } from './preScreen.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -199,49 +201,207 @@ async function getNewsForSymbol(symbol) {
   );
 }
 
-/** Her aday üretim turunda eklenecek dinamik (taramadan gelen) sembol tavanı. */
-const MAX_DYNAMIC_SYMBOLS = 30;
+/** Faz 1 ön-elemesinden geçip derin analize aday olacak ABD havuzu boyutu. */
+const DEEP_POOL_SIZE = 300;
+/** Her vade için derin analiz + vitrin buffer'ı (ilk 30'u garantilemek için biraz fazlası). */
+const DISPLAY_BUFFER = 45;
 
-/** Küratörlü + izlenen + dinamik (tarama) evren için fırsat adaylarını üretip yazar. */
-async function collectCandidates(trackedSymbols) {
-  const core = [...new Set([...CANDIDATE_UNIVERSE, ...trackedSymbols])];
-
-  // Günlük yükselenler/en aktifler: küratörlü evrene ek, tavanla sınırlı.
-  let dynamic = [];
-  try {
-    const found = await fetchDynamicUniverse(yahooFinance);
-    dynamic = found.filter((s) => !core.includes(s)).slice(0, MAX_DYNAMIC_SYMBOLS);
-  } catch (err) {
-    console.error(`[candidates] dinamik evren atlandı: ${err.message}`);
+/** Büyük sembol listesini parçalara bölerek toplu quote çeker (ham quote nesneleri). */
+async function fetchQuotesChunked(symbols, chunkSize = 200) {
+  const map = new Map();
+  for (let i = 0; i < symbols.length; i += chunkSize) {
+    const chunk = symbols.slice(i, i + chunkSize);
+    try {
+      const res = await yahooFinance.quote(chunk);
+      for (const q of Array.isArray(res) ? res : [res]) map.set(q.symbol, q);
+    } catch (err) {
+      console.error(`[quotes] parça ${i}: ${err.message}`);
+    }
   }
+  return map;
+}
 
-  const universe = [...core, ...dynamic];
-  console.log(
-    `Aday üreticisi: ${universe.length} sembol taranıyor ` +
-      `(${core.length} küratörlü/izlenen + ${dynamic.length} dinamik tarama).`
-  );
-  const rows = await buildCandidates(universe, { yahooFinance, getNewsForSymbol });
-  if (rows.length === 0) {
-    console.log('Aday üretilemedi.');
+/**
+ * Sembollerin haberlerini RSS'ten çekip YALNIZCA yeni HAM makaleleri kaydeder
+ * (çeviri ve AI YOK — onlar gated sete enrichGatedNews'te uygulanır). Faz 2'de
+ * 300 sembolün haberini ucuza biriktirmek için.
+ */
+async function collectNewsRaw(symbols) {
+  let total = 0;
+  for (const symbol of symbols) {
+    try {
+      const articles = await fetchNewsForSymbolRaw(yahooFinance, symbol);
+      if (articles.length === 0) continue;
+      const existing = await sb(`news?symbol=eq.${encodeURIComponent(symbol)}&select=id`);
+      const known = new Set((existing ?? []).map((r) => r.id));
+      const fresh = articles.filter((a) => !known.has(a.id));
+      if (fresh.length === 0) continue;
+      await sb('news', {
+        method: 'POST',
+        body: fresh.map((a) => ({
+          id: a.id,
+          symbol: a.symbol,
+          title: a.title,
+          publisher: a.publisher,
+          link: a.link,
+          published_at: a.publishedAt,
+        })),
+        prefer: 'resolution=ignore-duplicates',
+      });
+      total += fresh.length;
+    } catch (err) {
+      console.error(`[news-raw] ${symbol}: ${err.message}`);
+    }
+  }
+  return total;
+}
+
+/**
+ * Gated sembollerin (vitrin adayları) AI'sız haberlerine Türkçe çeviri + AI
+ * duygu/güvenilirlik/özet ekler. Deep skor öncesi çalışır ki aday verisi
+ * AI'lı haber bileşenini içersin.
+ */
+async function enrichGatedNews(symbols) {
+  if (!symbols.length) return;
+  let updated = 0;
+  for (const symbol of symbols) {
+    let rows;
+    try {
+      rows = await sb(
+        `news?symbol=eq.${encodeURIComponent(symbol)}&sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=20`
+      );
+    } catch {
+      continue;
+    }
+    if (!rows?.length) continue;
+
+    // ABD haberlerinde eksik Türkçe başlıkları çevir (BIST zaten Türkçe)
+    if (!symbol.endsWith('.IS')) {
+      const needTr = rows.filter((r) => !r.title_tr).map((r) => ({ id: r.id, title: r.title }));
+      const withTr = await addTurkishTitles(needTr, symbol);
+      for (const a of withTr) {
+        if (!a.titleTr) continue;
+        try {
+          await sb(`news?id=eq.${encodeURIComponent(a.id)}`, { method: 'PATCH', body: { title_tr: a.titleTr } });
+        } catch {}
+        const row = rows.find((r) => r.id === a.id);
+        if (row) row.title_tr = a.titleTr;
+      }
+    }
+
+    const market = symbol.endsWith('.IS') ? 'BIST' : 'ABD';
+    const analysis = await analyzeArticles(
+      rows.map((r) => ({ id: r.id, title: r.title_tr || r.title, publisher: r.publisher, market }))
+    );
+    for (const r of rows) {
+      const ai = analysis.get(r.id);
+      if (!ai) continue;
+      try {
+        await sb(`news?id=eq.${encodeURIComponent(r.id)}`, {
+          method: 'PATCH',
+          body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
+        });
+        updated++;
+      } catch {}
+    }
+  }
+  console.log(`Gated haber AI: ${symbols.length} sembolde ${updated} makale güncellendi.`);
+}
+
+/** Aday satırlarını vadeye göre skorlayıp ilk N'in YAHOO sembollerini döndürür. */
+function topYahooSymbols(rows, horizon, n, referenceMs) {
+  const horizonRows = rows.filter((r) => r.horizon === horizon);
+  const tickerToYahoo = new Map(horizonRows.map((r) => [r.data.symbol, r.symbol]));
+  const ranked = scoreAndRankCandidates(horizonRows.map((r) => r.data), horizon, referenceMs);
+  return ranked
+    .slice(0, n)
+    .map((c) => tickerToYahoo.get(c.symbol))
+    .filter(Boolean);
+}
+
+/**
+ * 3 fazlı fırsat üretimi:
+ *   Faz 1 — tüm ABD evreni → ucuz ön-skor → en iyi 300
+ *   Faz 2 — 300 (+BIST/çekirdek) → hafif analiz (2yıl YOK) + ham haber → ön sıralama
+ *   Faz 3 — her vadede ilk ~45 → 2 yıllık ZORUNLU analiz + gated AI haber → yaz
+ */
+async function collectCandidates(trackedSymbols) {
+  const referenceMs = Date.now();
+
+  // --- FAZ 1 ---
+  const usUniverse = await getUsUniverse(sb);
+  const core = [...new Set([...CANDIDATE_UNIVERSE, ...trackedSymbols])]; // BIST + küratörlü + izlenen (her zaman analiz)
+  const quoteSymbols = [...new Set([...usUniverse, ...core])];
+  console.log(`Faz 1: ${quoteSymbols.length} sembol için toplu fiyat çekiliyor...`);
+  const quoteMap = await fetchQuotesChunked(quoteSymbols);
+
+  const usQuotes = usUniverse.map((s) => quoteMap.get(s)).filter(Boolean);
+  const pool = selectDeepPool(usQuotes, { total: DEEP_POOL_SIZE });
+  const faz2Symbols = [...new Set([...pool, ...core])];
+  console.log(`Faz 1 bitti: ${pool.length} ABD havuzu + ${core.length} çekirdek/BIST → ${faz2Symbols.length} sembol Faz 2'ye.`);
+
+  // --- FAZ 2 ---
+  const newAdded = await collectNewsRaw(faz2Symbols);
+  console.log(`Faz 2: ${newAdded} yeni ham haber eklendi. Hafif analiz yapılıyor...`);
+  const lightRows = await buildCandidates(faz2Symbols, { yahooFinance, getNewsForSymbol, deep: false, quoteMap });
+  if (lightRows.length === 0) {
+    console.log('Faz 2: aday üretilemedi.');
     return;
   }
+  const deepSet = [
+    ...new Set([
+      ...topYahooSymbols(lightRows, 'short', DISPLAY_BUFFER, referenceMs),
+      ...topYahooSymbols(lightRows, 'long', DISPLAY_BUFFER, referenceMs),
+    ]),
+  ];
+  console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analize seçildi.`);
+
+  // --- FAZ 3 ---
+  await enrichGatedNews(deepSet); // AI'lı haber, deep skor ÖNCESİ yazılır
+  const deepRows = await buildCandidates(deepSet, { yahooFinance, getNewsForSymbol, deep: true, quoteMap });
+  if (deepRows.length === 0) {
+    console.log('Faz 3: derin aday üretilemedi.');
+    return;
+  }
+
+  // "Şart koşma" doğrulaması: vitrindeki ilk 30 gerçekten 2 yıllık (deep) mı?
+  for (const horizon of ['short', 'long']) {
+    const ranked = scoreAndRankCandidates(
+      deepRows.filter((r) => r.horizon === horizon).map((r) => r.data),
+      horizon,
+      referenceMs
+    );
+    const lightInTop = ranked.slice(0, 30).filter((c) => c.analysisDepth !== 'deep').length;
+    if (lightInTop > 0) {
+      console.warn(`[uyarı] ${horizon} ilk 30'da ${lightInTop} sembolün 2 yıllık verisi çekilemedi.`);
+    }
+  }
+
+  // --- Yaz + bayat temizliği (jenerasyon) ---
+  const generation = Date.now();
   await sb('candidates', {
     method: 'POST',
-    body: rows.map((r) => ({
+    body: deepRows.map((r) => ({
       symbol: r.symbol,
       horizon: r.horizon,
       market: r.market,
       data: r.data,
+      generation,
       updated_at: new Date().toISOString(),
     })),
-    prefer: 'resolution=merge-duplicates', // sembol+vade başına tek satır güncellenir
+    prefer: 'resolution=merge-duplicates',
   });
-  console.log(`Aday: ${rows.length / 2} sembol için kısa+uzun vade adayı yazıldı.`);
-
-  // Backtest: bu turun skorlarının anlık görüntüsünü ayrı bir tabloya EKLE (append).
-  // İleride vade dolunca bu skorların getiriyi öngörüp öngörmediği ölçülür.
   try {
-    await snapshotScores(rows);
+    // Önceki turlardan kalan (veya jenerasyonsuz) satırları sil → liste bayatlamaz
+    await sb(`candidates?or=(generation.is.null,generation.lt.${generation})`, { method: 'DELETE' });
+  } catch (err) {
+    console.error(`[candidates] bayat temizliği atlandı: ${err.message}`);
+  }
+  console.log(`Aday: ${deepRows.length / 2} sembol yazıldı (jenerasyon ${generation}).`);
+
+  // Backtest skor anlık görüntüsü
+  try {
+    await snapshotScores(deepRows);
   } catch (err) {
     console.error(`[snapshot] adım atlandı: ${err.message}`);
   }

@@ -1,9 +1,10 @@
-# PortföyAI fırsat adayı üreticisi (kısa + uzun vade).
-# Veri toplayıcıdan AYRI ve SEYREK çalışır: her sembol için 2 yıllık geçmiş
-# grafik + quoteSummary çekildiğinden tur pahalıdır (~3-5 dk). Bu yüzden 6
-# saatte bir koşar — bkz. collect-data.yml (fiyat/kur/haber, 20 dk'da bir).
+# PortföyAI fırsat adayı üreticisi (kısa + uzun vade) — 3 fazlı tüm ABD taraması.
+# Veri toplayıcıdan AYRI ve SEYREK çalışır: Faz 1 tüm ABD evrenini (~6000) toplu
+# fiyatla tarar, Faz 2 en iyi 300'e hafif analiz + haber, Faz 3 vitrindeki ~90'a
+# 2 yıllık ZORUNLU analiz + AI haber yapar. Bu yüzden tur uzundur; 6 saatte bir
+# koşar — bkz. collect-data.yml (fiyat/kur/haber, 20 dk'da bir).
 # Gerekli secrets (repo Settings → Secrets and variables → Actions):
-#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (+ AI için ANTHROPIC_API_KEY opsiyonel)
 name: Aday Ureticisi
 
 on:
@@ -14,7 +15,7 @@ on:
 jobs:
   candidates:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -32,3 +33,5 @@ jobs:
           COLLECT_MODE: candidates
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Vitrin adaylarının haberlerine AI duygu/özet için (yoksa AI sessizce atlanır)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

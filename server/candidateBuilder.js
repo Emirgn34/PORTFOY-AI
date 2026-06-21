@@ -437,6 +437,9 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
     currency,
     currentPrice: m.price,
     dailyChangePercent: m.chg != null ? Number(m.chg.toFixed(2)) : 0,
+    // 'deep' = 2 yıllık geçmiş grafikten gerçek teknik/analog; 'light' = yalnızca
+    // quote alanlarından fiyat-temelli proxy. Vitrindeki ilk 30 her zaman 'deep' olmalı.
+    analysisDepth: m.hasTech ? 'deep' : 'light',
     riskLevel: m.riskLevel,
     liquidityLevel: m.liquidityLevel,
     strongestCatalystTitle: news.catalyst?.title ?? `${ticker} için güncel öne çıkan gelişme bulunamadı`,
@@ -540,26 +543,50 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
   return { shortCandidate, longCandidate, market };
 }
 
+/** 2 yıllık geçmişi retry'lı çeker (deep modda "şart koşulan" veri için). */
+async function fetchHistoryWithRetry(yahooFinance, symbol, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const history = await fetchDailyHistory(yahooFinance, symbol);
+      const tech = analyzeTechnicals(history);
+      if (tech) return tech;
+    } catch {
+      // sonraki denemeye
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1))); // backoff
+  }
+  return null;
+}
+
 /**
  * Verilen semboller için aday satırlarını üretir.
- * deps: { yahooFinance, getNewsForSymbol(symbol) -> Promise<rows> }
+ * deps: {
+ *   yahooFinance,
+ *   getNewsForSymbol(symbol) -> Promise<rows>,
+ *   deep   : true → 2 yıllık geçmiş grafik (retry'lı) çekilir; false → yalnızca
+ *            quote alanlarından fiyat-temelli proxy (hızlı, Faz 2 ön-sıralama için),
+ *   quoteMap : Faz 1'de zaten çekilmiş quote'lar (varsa tekrar çekilmez),
+ * }
  * Dönüş: [{ symbol, horizon, market, data }] (Supabase'e upsert için).
  */
-export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol }) {
+export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol, deep = true, quoteMap = null }) {
   const referenceMs = Date.now();
   const rows = [];
 
-  // Fiyatlar tek toplu çağrıda
-  let quoteMap = new Map();
-  try {
-    const quotes = await yahooFinance.quote(symbols);
-    for (const q of Array.isArray(quotes) ? quotes : [quotes]) quoteMap.set(q.symbol, q);
-  } catch (err) {
-    console.error(`[candidates] toplu fiyat hatası: ${err.message}`);
+  // Quote'lar: Faz 1'den geldiyse onu kullan; eksikleri toplu çek
+  const quotes = quoteMap instanceof Map ? new Map(quoteMap) : new Map();
+  const missing = symbols.filter((s) => !quotes.has(s));
+  if (missing.length > 0) {
+    try {
+      const fetched = await yahooFinance.quote(missing);
+      for (const q of Array.isArray(fetched) ? fetched : [fetched]) quotes.set(q.symbol, q);
+    } catch (err) {
+      console.error(`[candidates] toplu fiyat hatası: ${err.message}`);
+    }
   }
 
   for (const symbol of symbols) {
-    const quote = quoteMap.get(symbol);
+    const quote = quotes.get(symbol);
     if (!quote || quote.regularMarketPrice == null) continue;
 
     let summary = null;
@@ -578,14 +605,9 @@ export async function buildCandidates(symbols, { yahooFinance, getNewsForSymbol 
       newsRows = [];
     }
 
-    // Geçmiş grafik (RSI/MACD/momentum/volatilite + analog); başarısızsa fiyat-temelli metriklere düşülür
-    let tech = null;
-    try {
-      const history = await fetchDailyHistory(yahooFinance, symbol);
-      tech = analyzeTechnicals(history);
-    } catch {
-      tech = null;
-    }
+    // Deep: 2 yıllık geçmiş grafik (RSI/MACD/momentum/analog), retry'lı.
+    // Light: geçmiş çekilmez → tech=null → fiyat-temelli proxy metriklere düşülür.
+    const tech = deep ? await fetchHistoryWithRetry(yahooFinance, symbol) : null;
 
     try {
       const { shortCandidate, longCandidate, market } = buildCandidatePair(
