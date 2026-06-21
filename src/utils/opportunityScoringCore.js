@@ -60,6 +60,13 @@ export const VALUE_TRAP_VALUATION_MIN = 85;
 export const VALUE_TRAP_GROWTH_MAX = 40;
 export const VALUE_TRAP_SCORE_CAP = 74;
 
+/**
+ * Likidite bozulması (uzun vade): cari oran 1'in altında VE son çeyreklerde
+ * düşüyorsa, şirketin kısa vadeli borç ödeme gücü zayıflıyor demektir. Bu güçlü
+ * bir temel bozulma sinyalidir → uzun vade skoruna tavan uygulanır.
+ */
+export const LIQUIDITY_GUARD_SCORE_CAP = 68;
+
 export const HORIZON_CONFIGS = {
   short: {
     value: 'short',
@@ -71,6 +78,7 @@ export const HORIZON_CONFIGS = {
     applyCatalystDecay: true,
     applyMoveFeasibility: true,
     applyValueTrapGuard: false,
+    applyLiquidityGuard: false,
   },
   long: {
     value: 'long',
@@ -81,6 +89,8 @@ export const HORIZON_CONFIGS = {
     applyCatalystDecay: false,
     applyMoveFeasibility: false,
     applyValueTrapGuard: true,
+    // Cari oran bozulması (likidite) uzun vadede temel bir risktir → tavan uygulanır
+    applyLiquidityGuard: true,
   },
 };
 
@@ -140,6 +150,7 @@ export function calculateOpportunityScore(breakdown, weights, context = {}) {
     catalystDecayKey = 'newsCatalystScore',
     moveFeasibilityFactor,
     applyValueTrapGuard,
+    applyLiquidityGuard,
   } = context;
 
   let score = 0;
@@ -170,6 +181,11 @@ export function calculateOpportunityScore(breakdown, weights, context = {}) {
     score = Math.min(score, VALUE_TRAP_SCORE_CAP);
   }
 
+  // Cari oran 1'in altında ve düşüyorsa (çağıran tarafça doğrulanır) tavan uygula
+  if (applyLiquidityGuard) {
+    score = Math.min(score, LIQUIDITY_GUARD_SCORE_CAP);
+  }
+
   return Math.round(score);
 }
 
@@ -190,6 +206,13 @@ export function getScoreDetails(candidate, horizon = 'short', referenceDate = nu
     ? getMoveFeasibilityFactor(movePotential)
     : 1;
 
+  // Cari oran 1'in altında ve düşüyorsa likidite guard'ı bağlar (yalnızca uzun vade)
+  const liquidityRisk = Boolean(
+    config.applyLiquidityGuard &&
+      candidate.currentRatioBelowOne &&
+      candidate.currentRatioDeclining
+  );
+
   // Ham skor: hiçbir düzeltme uygulanmadan saf ağırlıklı toplam
   const rawScore = calculateOpportunityScore(breakdown, config.weights);
 
@@ -200,6 +223,7 @@ export function getScoreDetails(candidate, horizon = 'short', referenceDate = nu
     catalystDecayFactor: freshness.factor,
     moveFeasibilityFactor: feasibilityFactor,
     applyValueTrapGuard: config.applyValueTrapGuard,
+    applyLiquidityGuard: liquidityRisk,
   });
 
   // Tavan bayrağı: tavan öncesi (kırpılmış) skor gerçekten tavanı aşıyor muydu?
@@ -225,6 +249,7 @@ export function getScoreDetails(candidate, horizon = 'short', referenceDate = nu
     isMomentumLimited: feasibilityFactor < 0.99,
     movePotential: Math.round(movePotential),
     isValueTrapRisk: config.applyValueTrapGuard && isValueTrapProfile(breakdown),
+    isLiquidityRisk: liquidityRisk,
   };
 }
 

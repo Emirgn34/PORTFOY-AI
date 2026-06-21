@@ -20,6 +20,52 @@ const clamp01 = (n) => Math.max(0, Math.min(1, n));
 const round = (n) => Math.round(n);
 const pctAbove = (a, b) => (a && b ? (a / b - 1) * 100 : 0);
 
+/** Yahoo alanını sayıya çevirir (kimi sürümde { raw } objesi gelebilir). */
+function num(v) {
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'object' && typeof v.raw === 'number') return v.raw;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Çeyreklik bilançodan cari oran (dönen varlıklar / kısa vadeli borçlar) serisi
+ * ve trendini çıkarır. Yahoo `balanceSheetHistoryQuarterly` modülü genelde son
+ * ~4 çeyreği verir. Çeyreklik veri yoksa/eksikse fallback olarak son anlık değer
+ * (financialData.currentRatio) kullanılır; o durumda trend bilinmez (declining=false).
+ *
+ * Dönüş: { series:[{date,value}], latest, belowOne, declining, quarters } | null
+ */
+function buildCurrentRatioTrend(balanceSheet, fallbackCr) {
+  const statements = balanceSheet?.balanceSheetStatements ?? [];
+  const series = statements
+    .map((s) => {
+      const ca = num(s.totalCurrentAssets);
+      const cl = num(s.totalCurrentLiabilities);
+      const d = s.endDate ? new Date(s.endDate) : null;
+      if (ca == null || cl == null || cl === 0 || !d || Number.isNaN(d.getTime())) return null;
+      return { date: d.toISOString().slice(0, 10), value: Number((ca / cl).toFixed(2)) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.date) - new Date(b.date)); // eskiden yeniye
+
+  if (series.length === 0) {
+    const cr = num(fallbackCr);
+    if (cr == null) return null;
+    return { series: [], latest: cr, belowOne: cr < 1, declining: false, quarters: 0 };
+  }
+
+  const latest = series[series.length - 1].value;
+  const first = series[0].value;
+  const prev = series.length >= 2 ? series[series.length - 2].value : null;
+  // "Düşüyor": pencere boyunca net değişim negatif VE son çeyrek de bir önceki
+  // çeyreğin altında (tek seferlik sıçramaları trend saymamak için).
+  const declining = series.length >= 2 && latest < first && (prev == null || latest <= prev);
+
+  return { series, latest, belowOne: latest < 1, declining, quarters: series.length };
+}
+
 /**
  * Seans içinde geçen sürenin oranı (0–1). Hacim teyidini bununla normalize
  * ederiz: anlık günlük hacmi 3 aylık ortalamanın TAMAMIYLA değil, seansın
@@ -239,7 +285,7 @@ function buildNewsAggregate(newsRows, referenceMs) {
 }
 
 /** quote + quoteSummary + (varsa) geçmiş grafik analizinden metrikleri türetir. */
-function buildMarketMetrics(quote, summary, tech) {
+function buildMarketMetrics(quote, summary, tech, crTrend = null) {
   const price = quote.regularMarketPrice ?? null;
   const ma50 = quote.fiftyDayAverage ?? null;
   const ma200 = quote.twoHundredDayAverage ?? null;
@@ -318,14 +364,23 @@ function buildMarketMetrics(quote, summary, tech) {
   const pm = fin.profitMargins ?? null;
   const roe = fin.returnOnEquity ?? null;
   const d2e = fin.debtToEquity ?? null;
-  const cr = fin.currentRatio ?? null;
+  // Cari oran katkısı: seviye (eskiden olduğu gibi) + TREND. Çeyreklik bilanço
+  // varsa "1'in altında ve düşüyor" bozulması ayrıca cezalandırılır; iyileşme
+  // küçük bir bonus alır. Çeyreklik veri yoksa eski davranışa düşer (yalnızca seviye).
+  const crLevel = crTrend?.latest ?? num(fin.currentRatio);
+  let crContribution = crLevel != null ? (crLevel - 1) * 10 : 0;
+  if (crTrend && crTrend.quarters >= 2) {
+    if (crTrend.declining && crTrend.belowOne) crContribution -= 12;
+    else if (crTrend.declining) crContribution -= 5;
+    else if (crTrend.latest > crTrend.series[0].value) crContribution += 3;
+  }
   const fundamentalHealthScore = round(
     clamp(
       50 +
         (pm != null ? pm * 100 * 1.2 : 0) +
         (roe != null ? roe * 100 * 0.8 : 0) -
         (d2e != null ? (d2e / 100) * 15 : 0) +
-        (cr != null ? (cr - 1) * 10 : 0)
+        crContribution
     )
   );
 
@@ -360,6 +415,12 @@ function buildMarketMetrics(quote, summary, tech) {
     liquidityScore, liquidityLevel, volatilitySignal, riskLevel, riskAdjustedScore,
     sectorMarketFitScore, aboveMa200, goldenCross,
     fundamentalHealthScore, valuationScore, growthScore, dividendScore,
+    // Cari oran (likidite) — son değer + trend (uzun vade guard ve UI kullanır)
+    currentRatioLatest: crLevel != null ? Number(crLevel.toFixed(2)) : null,
+    currentRatioBelowOne: Boolean(crTrend?.belowOne),
+    currentRatioDeclining: Boolean(crTrend?.declining),
+    currentRatioSeries: crTrend?.series ?? [],
+    currentRatioQuarters: crTrend?.quarters ?? 0,
     peRatio: pe ? Number(pe.toFixed(1)) : null,
     dividendYield: dy != null ? Number((dy * 100).toFixed(1)) : null,
     // Teknik göstergeler (varsa) — gerekçe metninde kullanılır
@@ -412,9 +473,10 @@ function momentumLabel(score, horizon) {
 }
 
 /** Bir sembol için kısa + uzun vade aday nesnelerini üretir. */
-function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech) {
+function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet = null) {
   const news = buildNewsAggregate(newsRows, referenceMs);
-  const m = buildMarketMetrics(quote, summary, tech);
+  const crTrend = buildCurrentRatioTrend(balanceSheet, summary?.financialData?.currentRatio);
+  const m = buildMarketMetrics(quote, summary, tech, crTrend);
 
   const techNote = m.hasTech
     ? `Teknik göstergeler: RSI ${m.rsi}, MACD ${m.macdPositive ? 'pozitif' : 'negatif'}, ` +
@@ -510,6 +572,11 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
   if (m.valuationScore < 40) longWarnings.push('Değerleme çarpanları yüksek; geri çekilmelerde girişe dikkat.');
   if (m.growthScore < 40) longWarnings.push('Büyüme görünümü zayıf; temel iyileşme teyidi beklenebilir.');
   if (m.fundamentalHealthScore < 45) longWarnings.push('Bilanço göstergeleri zayıf; borç/marj takibi önemli.');
+  if (m.currentRatioBelowOne && m.currentRatioDeclining)
+    longWarnings.push(
+      `Cari oran 1'in altında (${m.currentRatioLatest}) ve son çeyreklerde düşüyor — şirketin ` +
+        'kısa vadeli borç ödeme gücü zayıflıyor; finansallarda bozulma sinyali.'
+    );
   if (m.riskLevel === 'Yüksek') longWarnings.push('Volatilite yüksek; uzun vadeli kademeli alım daha uygun olabilir.');
 
   const longCandidate = {
@@ -517,6 +584,12 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
     id: `live-lt-${ticker}`,
     dividendYield: m.dividendYield,
     peRatio: m.peRatio,
+    // Cari oran (likidite) — uzun vade skor guard'ı ve detay modalı kullanır
+    currentRatio: m.currentRatioLatest,
+    currentRatioBelowOne: m.currentRatioBelowOne,
+    currentRatioDeclining: m.currentRatioDeclining,
+    currentRatioSeries: m.currentRatioSeries,
+    currentRatioQuarters: m.currentRatioQuarters,
     technicalMomentumLabel: longMomentum,
     sectorTrend: m.goldenCross ? 'Uzun vadeli trend pozitif (50>200 GO)' : 'Uzun vadeli trend zayıf',
     estimatedHorizon: estimateLongHorizon(m.growthScore),
@@ -528,6 +601,10 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
       `(marj, özsermaye kârlılığı, borç ve likidite oranları); değerleme ${m.valuationScore}/100 ` +
       `(F/K ${m.peRatio ?? '—'} ve PD/DD esaslı, ucuz = yüksek); büyüme görünümü ${m.growthScore}/100; ` +
       `temettü/nakit akışı ${m.dividendScore}/100 (verim %${m.dividendYield ?? '—'}). ` +
+      (m.currentRatioLatest != null
+        ? `Cari oran ${m.currentRatioLatest}${m.currentRatioQuarters >= 2 ? (m.currentRatioDeclining ? ' (son çeyreklerde düşüyor)' : ' (stabil/iyileşiyor)') : ''}; ` +
+          `1'in altında ve düşen cari oran temel skoru düşürür ve uzun vade skoruna tavan uygular. `
+        : '') +
       `Likidite ${m.liquidityLevel.toLowerCase()}, risk ${m.riskLevel}. ${analogLongNote} Skor uzun vade ağırlıklarıyla hesaplanır.`,
     scoreBreakdown: {
       fundamentalHealthScore: m.fundamentalHealthScore,
@@ -542,6 +619,22 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech)
   };
 
   return { shortCandidate, longCandidate, market };
+}
+
+/**
+ * Çeyreklik bilanço geçmişini ayrı, izole bir çağrıyla çeker. Ayrı tutulur ki
+ * bu modülün şema/erişim hatası mevcut quoteSummary (temel veri) çağrısını
+ * bozmasın. Hata/erişimsizlikte null döner → akış cari oran trendi olmadan sürer.
+ */
+async function fetchBalanceSheetQuarterly(yahooFinance, symbol) {
+  try {
+    const res = await yahooFinance.quoteSummary(symbol, {
+      modules: ['balanceSheetHistoryQuarterly'],
+    });
+    return res?.balanceSheetHistoryQuarterly ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** 2 yıllık geçmişi retry'lı çeker (deep modda "şart koşulan" veri için). */
@@ -612,10 +705,14 @@ export async function buildCandidates(
     // Deep: 2 yıllık geçmiş grafik (RSI/MACD/momentum/analog), retry'lı.
     // Light: geçmiş çekilmez → tech=null → fiyat-temelli proxy metriklere düşülür.
     const tech = deep ? await fetchHistoryWithRetry(yahooFinance, symbol) : null;
+    // Cari oran trendi yalnızca deep modda (vitrindeki adaylar) çekilir; Faz 2
+    // ön-sıralamada (light) ekstra çağrı maliyeti olmaması için atlanır → trend
+    // bilinmez, uzun vade yalnızca son cari oran değeriyle skorlanır.
+    const balanceSheet = deep ? await fetchBalanceSheetQuarterly(yahooFinance, symbol) : null;
 
     try {
       const { shortCandidate, longCandidate, market } = buildCandidatePair(
-        symbol, quote, summary, newsRows, referenceMs, tech
+        symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet
       );
       return [
         { symbol, horizon: 'short', market, data: shortCandidate },

@@ -20,6 +20,7 @@ import {
   getReliabilityColor,
   HIGH_RISK_SCORE_CAP,
   RELIABILITY_GATE_THRESHOLD,
+  LIQUIDITY_GUARD_SCORE_CAP,
   HORIZON_CONFIGS,
 } from '../utils/opportunityScoring.js';
 import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
@@ -234,6 +235,18 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                   ? [
                       ['Temettü Verimi', `%${candidate.dividendYield?.toFixed(1) ?? '—'}`],
                       ['F/K Oranı', candidate.peRatio ?? '—'],
+                      [
+                        'Cari Oran',
+                        candidate.currentRatio != null
+                          ? `${candidate.currentRatio}${
+                              candidate.currentRatioQuarters >= 2
+                                ? candidate.currentRatioDeclining
+                                  ? ' ↓ düşüyor'
+                                  : ' ↑ stabil'
+                                : ''
+                            }`
+                          : '—',
+                      ],
                     ]
                   : []),
               ].map(([label, value]) => (
@@ -332,6 +345,14 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                     profili); skor temkinli olarak sınırlandırıldı.
                   </li>
                 )}
+                {candidate.isLiquidityRisk && (
+                  <li className="flex items-start gap-2">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0 text-loss" />
+                    Cari oran 1'in altında ({candidate.currentRatio}) ve son çeyreklerde düşüyor;
+                    kısa vadeli borç ödeme gücü zayıfladığı için temel skor düşürüldü ve uzun vade
+                    skoru {LIQUIDITY_GUARD_SCORE_CAP} ile sınırlandırıldı.
+                  </li>
+                )}
                 {candidate.newsConfidence != null && candidate.newsConfidence < 40 && (
                   <li className="flex items-start gap-2">
                     <Info size={13} className="mt-0.5 shrink-0 text-amber-400" />
@@ -344,7 +365,8 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
                   !candidate.isCapped &&
                   !candidate.isDecayed &&
                   !candidate.isMomentumLimited &&
-                  !candidate.isValueTrapRisk && (
+                  !candidate.isValueTrapRisk &&
+                  !candidate.isLiquidityRisk && (
                     <li className="flex items-start gap-2">
                       <Info size={13} className="mt-0.5 shrink-0 text-slate-500" />
                       Skora herhangi bir kırpma veya tavan uygulanmadı.
