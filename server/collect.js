@@ -206,6 +206,10 @@ async function getNewsForSymbol(symbol) {
 const DEEP_POOL_SIZE = 300;
 /** Her vade için derin analiz + vitrin buffer'ı (ilk 30'u garantilemek için biraz fazlası). */
 const DISPLAY_BUFFER = 45;
+/** AI haber analizi yapılacak vitrin adayı sayısı (her vade). Maliyet/süre sınırı:
+ *  AI (Haiku) yavaş olduğundan tüm derin havuza değil, yalnızca vitrindeki ilk
+ *  30+30'a uygulanır; gerisi data workflow backfill'iyle zamanla dolar. */
+const AI_TOP = 30;
 
 /** Büyük sembol listesini parçalara bölerek toplu quote çeker (ham quote nesneleri). */
 async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
@@ -270,7 +274,7 @@ async function enrichGatedNews(symbols) {
     let rows;
     try {
       rows = await sb(
-        `news?symbol=eq.${encodeURIComponent(symbol)}&sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=20`
+        `news?symbol=eq.${encodeURIComponent(symbol)}&sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=8`
       );
     } catch {
       return;
@@ -356,10 +360,18 @@ async function collectCandidates(trackedSymbols) {
       ...topYahooSymbols(lightRows, 'long', DISPLAY_BUFFER, referenceMs),
     ]),
   ];
-  console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analize seçildi.`);
+  // AI haber yalnızca vitrindeki ilk 30+30'a (deep havuzun tamamına değil) —
+  // AI yavaş olduğundan maliyet/süre burada sınırlanır.
+  const gatedSet = [
+    ...new Set([
+      ...topYahooSymbols(lightRows, 'short', AI_TOP, referenceMs),
+      ...topYahooSymbols(lightRows, 'long', AI_TOP, referenceMs),
+    ]),
+  ];
+  console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analiz, ${gatedSet.length} sembol AI haber.`);
 
   // --- FAZ 3 ---
-  await enrichGatedNews(deepSet); // AI'lı haber, deep skor ÖNCESİ yazılır
+  await enrichGatedNews(gatedSet); // AI'lı haber, deep skor ÖNCESİ yazılır
   const deepRows = await buildCandidates(deepSet, { yahooFinance, getNewsForSymbol, deep: true, quoteMap });
   if (deepRows.length === 0) {
     console.log('Faz 3: derin aday üretilemedi.');

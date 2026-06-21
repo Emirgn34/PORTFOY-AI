@@ -109,6 +109,27 @@ function ageDays(refreshedAt) {
 }
 
 /**
+ * Tüm sembolleri sayfalama ile okur. PostgREST/Supabase okumaları varsayılan
+ * olarak 1000 satırla sınırlıdır; ~6000 sembolün TAMAMINI almak için
+ * limit/offset ile sayfa sayfa çekeriz (aksi halde evren 1000'e kırpılır).
+ */
+async function readAllSymbols(sb) {
+  const all = [];
+  const page = 1000;
+  for (let offset = 0; ; offset += page) {
+    let rows = [];
+    try {
+      rows = (await sb(`us_universe?select=symbol&order=symbol.asc&limit=${page}&offset=${offset}`)) ?? [];
+    } catch {
+      break;
+    }
+    all.push(...rows.map((r) => r.symbol));
+    if (rows.length < page) break; // son sayfa
+  }
+  return all;
+}
+
+/**
  * ABD evren sembollerini döndürür; tablo boş veya bayatsa (maxAgeDays'ten eski)
  * Nasdaq Trader'dan yeniden çeker ve `us_universe` tablosuna yazar.
  *
@@ -116,15 +137,20 @@ function ageDays(refreshedAt) {
  * Dönüş: Yahoo formatında sembol dizisi (ABD sembolleri sade; .IS yok).
  */
 export async function getUsUniverse(sb, { maxAgeDays = 7 } = {}) {
-  let rows = [];
+  // Bayatlık kontrolü için tek satır yeter (hepsi aynı anda yazılır)
+  let meta = [];
   try {
-    rows = (await sb('us_universe?select=symbol,refreshed_at&order=refreshed_at.asc')) ?? [];
+    meta = (await sb('us_universe?select=refreshed_at&order=refreshed_at.asc&limit=1')) ?? [];
   } catch {
-    rows = [];
+    meta = [];
   }
+  const stale = meta.length === 0 || ageDays(meta[0]?.refreshed_at) > maxAgeDays;
 
-  const stale = rows.length === 0 || ageDays(rows[0]?.refreshed_at) > maxAgeDays;
-  if (!stale) return rows.map((r) => r.symbol);
+  if (!stale) {
+    const symbols = await readAllSymbols(sb); // TÜM semboller (sayfalı)
+    if (symbols.length > 0) return symbols;
+    // okuma boş döndüyse aşağıda yenilemeye düşeriz
+  }
 
   console.log('ABD evreni boş/bayat; Nasdaq Trader\'dan yenileniyor...');
   let universe;
