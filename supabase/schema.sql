@@ -60,6 +60,22 @@ create table if not exists candidates (
 
 create index if not exists candidates_horizon_idx on candidates (horizon);
 
+-- Her aday turu için artan jenerasyon numarası. Dinamik evrende seçilen semboller
+-- turdan tura değiştiğinden, frontend yalnızca EN GÜNCEL jenerasyonu gösterir;
+-- böylece önceki turdan kalan bayat satırlar listeyi kirletmez.
+alter table candidates add column if not exists generation bigint;
+
+-- ABD hisse evreni (Faz 1 tarama girdisi; usUniverse.js Nasdaq Trader'dan doldurur).
+-- Haftada bir yenilenir; ~6000 düz hisse (ETF/test/varant/unit hariç).
+create table if not exists us_universe (
+  symbol text primary key,
+  name text,
+  exchange text,
+  refreshed_at timestamptz not null default now()
+);
+
+create index if not exists us_universe_refreshed_idx on us_universe (refreshed_at);
+
 -- Satır düzeyi güvenlik: anon anahtar yalnızca okuyabilir,
 -- yazma işlemleri service_role anahtarıyla (toplayıcı) yapılır.
 alter table tracked_symbols enable row level security;
@@ -67,6 +83,7 @@ alter table quotes enable row level security;
 alter table fx_rates enable row level security;
 alter table news enable row level security;
 alter table candidates enable row level security;
+alter table us_universe enable row level security;
 
 -- (drop+create: dosya tekrar çalıştırıldığında hata vermez)
 drop policy if exists "herkes okur" on tracked_symbols;
@@ -74,6 +91,7 @@ drop policy if exists "herkes okur" on quotes;
 drop policy if exists "herkes okur" on fx_rates;
 drop policy if exists "herkes okur" on news;
 drop policy if exists "herkes okur" on candidates;
+drop policy if exists "herkes okur" on us_universe;
 drop policy if exists "anon sembol ekler" on tracked_symbols;
 
 create policy "herkes okur" on tracked_symbols for select using (true);
@@ -81,12 +99,13 @@ create policy "herkes okur" on quotes for select using (true);
 create policy "herkes okur" on fx_rates for select using (true);
 create policy "herkes okur" on news for select using (true);
 create policy "herkes okur" on candidates for select using (true);
+create policy "herkes okur" on us_universe for select using (true);
 
 -- Uygulama yeni hisse eklendiğinde sembolü izlemeye alabilsin
 create policy "anon sembol ekler" on tracked_symbols for insert with check (true);
 
 -- Yeni Supabase projelerinde PostgREST erişimi için açık yetkiler gerekir
 grant usage on schema public to anon, authenticated, service_role;
-grant select on tracked_symbols, quotes, fx_rates, news, candidates to anon, authenticated;
+grant select on tracked_symbols, quotes, fx_rates, news, candidates, us_universe to anon, authenticated;
 grant insert on tracked_symbols to anon, authenticated;
-grant all on tracked_symbols, quotes, fx_rates, news, candidates to service_role;
+grant all on tracked_symbols, quotes, fx_rates, news, candidates, us_universe to service_role;
