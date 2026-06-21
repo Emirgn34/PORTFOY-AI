@@ -370,8 +370,11 @@ async function collectCandidates(trackedSymbols) {
   ];
   console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analiz, ${gatedSet.length} sembol AI haber.`);
 
-  // --- FAZ 3 ---
-  await enrichGatedNews(gatedSet); // AI'lı haber, deep skor ÖNCESİ yazılır
+  // --- FAZ 3: derin analiz + YAZ ---
+  // Aday yazımı AI'dan ÖNCE yapılır; böylece tur, yavaş Haiku çağrılarına takılıp
+  // timeout'a düşmez. AI haber zenginleştirmesi en sonda "olabildiğince" çalışır
+  // (Haber sayfası + sonraki turun kartları için). Deep build, haber tablosunda
+  // ZATEN var olan (önceki turlardan AI'lı) duyguları kullanır.
   const deepRows = await buildCandidates(deepSet, { yahooFinance, getNewsForSymbol, deep: true, quoteMap });
   if (deepRows.length === 0) {
     console.log('Faz 3: derin aday üretilemedi.');
@@ -418,6 +421,16 @@ async function collectCandidates(trackedSymbols) {
     await snapshotScores(deepRows);
   } catch (err) {
     console.error(`[snapshot] adım atlandı: ${err.message}`);
+  }
+
+  // --- AI haber zenginleştirme (en sonda, OLABİLDİĞİNCE) ---
+  // Adaylar zaten yazıldı; bu adım yavaş olsa/timeout'a düşse bile vitrin etkilenmez.
+  // Vitrindeki ilk 30+30'un haberlerine duygu/çeviri/özet ekler → Haber sayfası ve
+  // BİR SONRAKİ turun kartları için. (Bu turun kartları DB'de zaten var olan AI'yı kullandı.)
+  try {
+    await enrichGatedNews(gatedSet);
+  } catch (err) {
+    console.error(`[enrich] adım atlandı: ${err.message}`);
   }
 }
 
