@@ -433,6 +433,19 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null) {
     pctFrom52High: tech?.pctFrom52High ?? null,
     analogShort: tech?.analogShort ?? null,
     analogLong: tech?.analogLong ?? null,
+    // Fiyat yapısı: tipik işlem bandı + destek/direnç (yalnızca deep modda)
+    priceStructure: tech?.priceStructure ?? null,
+    // Analist ortalama hedefi — beklenen performans sürücülerinden biri
+    analyst:
+      fin.targetMeanPrice && fin.numberOfAnalystOpinions
+        ? {
+            targetMean: num(fin.targetMeanPrice),
+            targetLow: num(fin.targetLowPrice),
+            targetHigh: num(fin.targetHighPrice),
+            count: num(fin.numberOfAnalystOpinions),
+            recommendation: fin.recommendationKey ?? null,
+          }
+        : null,
   };
 }
 
@@ -460,6 +473,121 @@ function analogSentence(analog) {
   );
 }
 
+/**
+ * BEKLENEN PERFORMANS — üç bağımsız kaynağın güvene göre harmanlanması:
+ *   1) Analog       : geçmişte grafik bugünküne benzediğinde sonraki N günün getirisi
+ *   2) Band dönüşü  : fiyatın tipik işlem bandının ortasına dönme potansiyeli
+ *   3) Analist hedefi: Yahoo ortalama 12 aylık hedef fiyat, vadeye ölçeklenmiş
+ *
+ * Her sürücünün değeri vade oynaklığıyla sınırlanır (bir hisse 4 haftada
+ * kendi volatilitesinin çok üzerinde hareket etmesini "beklemek" gerçekçi
+ * değildir). Hiçbir sürücü yoksa null döner → UI bölümü gizlenir.
+ */
+function buildExpectation({ price, horizon, analog, structure, analyst, annVol, ret60 }) {
+  if (!price) return null;
+  const fwdDays = horizon === 'long' ? 60 : 20;
+  const timeScale = Math.sqrt(fwdDays / 252); // yıllıktan vadeye ölçek
+  // Vade oynaklığı: sürücü değerlerinin üst sınırı ve sonuç aralığının genişliği
+  const horizonVol = (annVol ?? 30) * timeScale;
+  const cap = (v) => clamp(v, -2 * horizonVol, 2 * horizonVol);
+
+  const drivers = [];
+
+  // 1) Geçmiş benzer grafik kurulumu
+  if (analog && analog.fwdDays === fwdDays && analog.avg != null) {
+    drivers.push({
+      key: 'analog',
+      label: 'Geçmiş benzer grafik',
+      valuePct: Number(cap(analog.avg).toFixed(1)),
+      weight: clamp01(0.2 + 0.8 * (analog.confidence ?? 0.3)),
+      note:
+        `Grafik bugünküne benzer göründüğü ${analog.count} örnekte, sonraki ${fwdDays} günde ` +
+        `fiyat ortalama %${analog.avg} hareket etmiş (kazanç oranı %${analog.win}, medyan %${analog.median}).`,
+    });
+  }
+
+  // 2) Tipik banda dönüş
+  if (structure?.bandMid) {
+    const pull = (structure.bandMid / price - 1) * 100;
+    if (Math.abs(pull) >= 3) {
+      // Bir vadede bandın tamamı kapanmaz; kısa vadede yolun ~%35'i, uzun vadede ~%60'ı
+      const reversion = horizon === 'long' ? 0.6 : 0.35;
+      // Güçlü trend bandın tersine işaret ediyorsa ortalamaya dönüş varsayımı zayıflar:
+      // yükselen bir hisse eski bandına dönmek zorunda değildir (aşağı düşen de öyle).
+      const opposesTrend =
+        ret60 != null && Math.sign(pull) !== Math.sign(ret60) && Math.abs(ret60) > 12;
+      const yon = pull > 0 ? 'altında' : 'üstünde';
+      drivers.push({
+        key: 'band',
+        label: 'Tipik banda dönüş',
+        valuePct: Number(cap(pull * reversion).toFixed(1)),
+        weight: clamp01(Math.abs(pull) / 18) * (opposesTrend ? 0.3 : 0.85),
+        note:
+          `Fiyat, son ${structure.bandDays} günün tipik bandının (${structure.bandLow}–${structure.bandHigh}) ` +
+          `ortasının %${Math.abs(pull).toFixed(1)} ${yon}. ` +
+          (opposesTrend
+            ? 'Ancak son 3 aylık trend ters yönde güçlü; ortalamaya dönüş beklentisi zayıflatıldı.'
+            : 'Fiyatların zamanla bu bandın ortasına yönelme eğilimi dikkate alındı.'),
+      });
+    }
+  }
+
+  // 3) Analist ortalama hedefi (12 aylık → vadeye ölçeklenir)
+  if (analyst?.targetMean && analyst.count >= 3) {
+    const upside12m = (analyst.targetMean / price - 1) * 100;
+    drivers.push({
+      key: 'analyst',
+      label: 'Analist hedefi',
+      valuePct: Number(cap(upside12m * timeScale).toFixed(1)),
+      weight: clamp01(analyst.count / 12) * 0.8,
+      note:
+        `${analyst.count} analistin ortalama 12 aylık hedefi ${analyst.targetMean.toFixed(2)} ` +
+        `(bugüne göre %${upside12m.toFixed(1)}). Bu vadeye oranlanarak katıldı.`,
+    });
+  }
+
+  if (drivers.length === 0) return null;
+
+  const wSum = drivers.reduce((s, d) => s + d.weight, 0);
+  if (wSum <= 0) return null;
+  const expected = drivers.reduce((s, d) => s + d.valuePct * d.weight, 0) / wSum;
+
+  // Güven: sürücülerin ortalama ağırlığı + aynı yönü gösterip göstermedikleri.
+  // Sürücüler çelişiyorsa (biri yukarı, biri aşağı) güven belirgin şekilde düşer —
+  // kaynakların hemfikir olmaması, tek başına veri bolluğundan daha belirleyicidir.
+  const agreement =
+    Math.abs(drivers.reduce((s, d) => s + Math.sign(d.valuePct) * d.weight, 0)) / wSum;
+  const avgWeight = wSum / drivers.length;
+  const confidence = clamp01(0.45 * avgWeight + 0.55 * agreement);
+
+  const expectedReturnPct = Number(expected.toFixed(1));
+  const sigma = Math.max(horizonVol, Math.abs(expectedReturnPct) * 0.5);
+  const direction = expectedReturnPct > 1.5 ? 'up' : expectedReturnPct < -1.5 ? 'down' : 'flat';
+  const confLabel = confidenceLabel(confidence);
+
+  return {
+    horizonDays: fwdDays,
+    horizonLabel: fwdDays === 20 ? '~4 hafta' : '~3 ay',
+    expectedReturnPct,
+    expectedPrice: Number((price * (1 + expectedReturnPct / 100)).toFixed(2)),
+    rangeLowPct: Number((expectedReturnPct - sigma).toFixed(1)),
+    rangeHighPct: Number((expectedReturnPct + sigma).toFixed(1)),
+    expectedPriceLow: Number((price * (1 + (expectedReturnPct - sigma) / 100)).toFixed(2)),
+    expectedPriceHigh: Number((price * (1 + (expectedReturnPct + sigma) / 100)).toFixed(2)),
+    direction,
+    confidence: Number(confidence.toFixed(2)),
+    confidenceLabel: confLabel,
+    drivers: drivers
+      .map((d) => ({ ...d, weightPct: Math.round((d.weight / wSum) * 100) }))
+      .sort((a, b) => b.weightPct - a.weightPct),
+    summary:
+      `Önümüzdeki ${fwdDays === 20 ? '~4 haftada' : '~3 ayda'} beklenen hareket: ` +
+      `%${expectedReturnPct > 0 ? '+' : ''}${expectedReturnPct} ` +
+      `(olası aralık %${(expectedReturnPct - sigma).toFixed(1)} ile %${(expectedReturnPct + sigma).toFixed(1)} arası). ` +
+      `Sinyal güveni ${confLabel}. Bu bir tahmindir, garanti değildir.`,
+  };
+}
+
 function momentumLabel(score, horizon) {
   if (horizon === 'long') {
     if (score >= 70) return 'Uzun Vadeli Yükselen Trend';
@@ -484,6 +612,19 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     : '';
   const analogShortNote = analogSentence(m.analogShort);
   const analogLongNote = analogSentence(m.analogLong);
+
+  const ps = m.priceStructure;
+  const bandNote = ps
+    ? `Fiyat yapısı: son ${ps.bandDays} günde tipik işlem bandı ${ps.bandLow}–${ps.bandHigh} ` +
+      `(orta ${ps.bandMid}); fiyat bandın ortasına göre %${ps.pctVsBandMid} ` +
+      `${ps.bandPosition === 'below' ? '— bandın ALTINDA' : ps.bandPosition === 'above' ? '— bandın ÜSTÜNDE' : '— band içinde'}. ` +
+      (ps.nearestSupport
+        ? `En yakın destek ${ps.nearestSupport.level} (%${ps.nearestSupport.distancePct}, ${ps.nearestSupport.touches} dokunuş). `
+        : '') +
+      (ps.nearestResistance
+        ? `En yakın direnç ${ps.nearestResistance.level} (%${ps.nearestResistance.distancePct}, ${ps.nearestResistance.touches} dokunuş). `
+        : 'Fiyatın üzerinde geçmişten kalma belirgin bir direnç seviyesi yok. ')
+    : '';
 
   const market = mapExchangeToMarket(symbol, quote.fullExchangeName ?? quote.exchange ?? '');
   const ticker = symbol.replace(/\.IS$/, '');
@@ -522,6 +663,17 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     previousRank: null,
     relatedNews: news.relatedNews,
     verifiedSources: news.verifiedSources,
+    // Tipik işlem bandı + destek/direnç seviyeleri (deep analizde dolu)
+    priceStructure: m.priceStructure,
+    analystTarget: m.analyst,
+  };
+
+  const expectationInput = {
+    price: m.price,
+    structure: m.priceStructure,
+    analyst: m.analyst,
+    annVol: m.annVol,
+    ret60: m.ret60,
   };
 
   // --- Kısa vade ---
@@ -538,6 +690,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
   const shortCandidate = {
     ...base,
     id: `live-st-${ticker}`,
+    expectation: buildExpectation({ ...expectationInput, horizon: 'short', analog: m.analogShort }),
     technicalMomentumLabel: shortMomentum,
     sectorTrend: m.aboveMa200 ? 'Fiyat 200 günlük ortalamanın üzerinde' : 'Fiyat 200 günlük ortalamanın altında',
     estimatedHorizon: estimateShortHorizon(m.annVol),
@@ -550,7 +703,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
       `(${shortMomentum}); hacim teyidi ${m.volumeConfirmationScore}/100 (${m.volumeSignal}). ` +
       `${news.newsCount} haber tarandı, ortalama güvenilirlik ${news.averageNewsReliability}/10, ` +
       `haber katalizör skoru ${news.newsCatalystScore}/100. Likidite ${m.liquidityLevel.toLowerCase()} ` +
-      `(${m.liquidityScore}/100), risk seviyesi ${m.riskLevel}. ${techNote}${analogShortNote} ` +
+      `(${m.liquidityScore}/100), risk seviyesi ${m.riskLevel}. ${techNote}${bandNote}${analogShortNote} ` +
       `Tahmini vade, analogun ölçtüğü ~20 işlem günü (≈4 hafta) penceresinin ` +
       `yıllık volatiliteye (%${m.annVol ?? '—'}) göre ölçeklenmesiyle belirlenir. ` +
       `Skor ve sıra bu bileşenlerin vadeye uygun ağırlıklı toplamından hesaplanır.`,
@@ -582,6 +735,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
   const longCandidate = {
     ...base,
     id: `live-lt-${ticker}`,
+    expectation: buildExpectation({ ...expectationInput, horizon: 'long', analog: m.analogLong }),
     dividendYield: m.dividendYield,
     peRatio: m.peRatio,
     // Cari oran (likidite) — uzun vade skor guard'ı ve detay modalı kullanır
@@ -605,7 +759,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
         ? `Cari oran ${m.currentRatioLatest}${m.currentRatioQuarters >= 2 ? (m.currentRatioDeclining ? ' (son çeyreklerde düşüyor)' : ' (stabil/iyileşiyor)') : ''}; ` +
           `1'in altında ve düşen cari oran temel skoru düşürür ve uzun vade skoruna tavan uygular. `
         : '') +
-      `Likidite ${m.liquidityLevel.toLowerCase()}, risk ${m.riskLevel}. ${analogLongNote} Skor uzun vade ağırlıklarıyla hesaplanır.`,
+      `Likidite ${m.liquidityLevel.toLowerCase()}, risk ${m.riskLevel}. ${bandNote}${analogLongNote} Skor uzun vade ağırlıklarıyla hesaplanır.`,
     scoreBreakdown: {
       fundamentalHealthScore: m.fundamentalHealthScore,
       valuationScore: m.valuationScore,
