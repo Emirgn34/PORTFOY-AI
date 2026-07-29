@@ -183,17 +183,31 @@ function weightedPercentile(pairs, p) {
 
 /**
  * "Bu hisse normalde nerede geziyor?" bandı.
- * Son ~1 yılın kapanışlarından, 180 günlük yarı ömürle tazeliğe göre
- * ağırlıklandırılmış %20–%80 persentil aralığı. Yani fiyatın (tazelik
- * ağırlıklı) zamanın ~%60'ında içinde bulunduğu aralık.
+ * Son ~1 yılın kapanışlarından, tazeliğe göre ağırlıklandırılmış %20–%80
+ * persentil aralığı.
+ *
+ * YARI ÖMÜR SEÇİMİ (ampirik): 16 hisse × 384 örnekle ölçüldü — band geçmiş
+ * veriyle kurulup sonraki 20 günün fiyatlarının ne kadarının band içinde
+ * kaldığına bakıldı. Sonuç (ABD / BIST isabet):
+ *   180g: %42,0 / %34,6   90g: %42,3 / %37,7   60g: %44,1 / %40,7
+ *    45g: %44,5 / %43,1   30g: %42,8 / %45,1   20g: %41,1 / %43,2
+ * 45 gün her iki pazarda da optimuma yakın. Pencereyi 504 güne uzatmak
+ * kötüleştiriyor, 126 güne kısaltmak da öyle — belirleyici olan pencere
+ * uzunluğu değil, yarı ömür.
+ *
+ * BIST'in uzun yarı ömürde belirgin kötüleşmesi beklenen bir sonuç: enflasyon
+ * nedeniyle nominal fiyatlar sürekli yukarı kayıyor, 1 yıl önceki TL fiyatı
+ * bugünküyle aynı ekonomik büyüklük değil.
  */
+const BAND_HALF_LIFE_DAYS = 45;
+
 function buildPriceBand(closes, lookback = 252) {
   const n = closes.length;
   const start = Math.max(0, n - lookback);
   const pairs = [];
   for (let i = start; i < n; i++) {
     const ageDays = n - 1 - i;
-    pairs.push({ value: closes[i], weight: Math.pow(0.5, ageDays / 180) });
+    pairs.push({ value: closes[i], weight: Math.pow(0.5, ageDays / BAND_HALF_LIFE_DAYS) });
   }
   if (pairs.length < 40) return null;
 
