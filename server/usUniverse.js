@@ -159,9 +159,9 @@ export async function getUsUniverse(sb, { maxAgeDays = 7 } = {}) {
   } catch (err) {
     console.error(`[universe] çekme hatası: ${err.message}`);
     // Çekemezsek elimizdeki (bayat olsa da) listeyle devam et
-    return rows.map((r) => r.symbol);
+    return readAllSymbols(sb);
   }
-  if (universe.length === 0) return rows.map((r) => r.symbol);
+  if (universe.length === 0) return readAllSymbols(sb);
 
   const refreshed_at = new Date().toISOString();
   // Parçalar hâlinde upsert (tek istekte ~6000 satır PostgREST'i zorlayabilir)
