@@ -15,10 +15,11 @@
 
 /** Kısa vade: haber katalizörü + momentum ağırlıklı. */
 export const SHORT_TERM_SCORE_WEIGHTS = [
-  { key: 'newsCatalystScore', label: 'Haber Katalizörü', weight: 0.25 },
-  { key: 'newsReliabilityScore', label: 'Haber Güvenilirliği', weight: 0.15 },
-  { key: 'technicalMomentumScore', label: 'Teknik Momentum', weight: 0.2 },
-  { key: 'volumeConfirmationScore', label: 'Hacim Teyidi', weight: 0.15 },
+  { key: 'newsCatalystScore', label: 'Haber Katalizörü', weight: 0.2 },
+  { key: 'newsReliabilityScore', label: 'Haber Güvenilirliği', weight: 0.12 },
+  { key: 'technicalMomentumScore', label: 'Teknik Momentum', weight: 0.16 },
+  { key: 'expectedReturnScore', label: 'Beklenen Getiri', weight: 0.15 },
+  { key: 'volumeConfirmationScore', label: 'Hacim Teyidi', weight: 0.12 },
   { key: 'riskAdjustedScore', label: 'Risk Ayarlı Skor', weight: 0.1 },
   { key: 'liquidityScore', label: 'Likidite', weight: 0.1 },
   { key: 'sectorMarketFitScore', label: 'Sektör/Piyasa Uyumu', weight: 0.05 },
@@ -27,16 +28,38 @@ export const SHORT_TERM_SCORE_WEIGHTS = [
 /**
  * Uzun vade: temel analiz ağırlıklı. Uzun vadede kısa vadeli haber ve hacim
  * sinyalleri yerine bilanço sağlamlığı, değerleme ve büyüme belirleyicidir.
+ * Beklenen getiri burada DAHA AZ ağırlık taşır: ~3 aylık bir hareket tahmini,
+ * 1-3 yıllık bir tez hakkında az şey söyler.
  */
 export const LONG_TERM_SCORE_WEIGHTS = [
-  { key: 'fundamentalHealthScore', label: 'Temel Sağlamlık', weight: 0.25 },
-  { key: 'valuationScore', label: 'Değerleme', weight: 0.2 },
-  { key: 'growthScore', label: 'Büyüme Görünümü', weight: 0.2 },
-  { key: 'dividendScore', label: 'Temettü & Nakit Akışı', weight: 0.1 },
-  { key: 'newsReliabilityScore', label: 'Haber Güvenilirliği', weight: 0.1 },
-  { key: 'sectorMarketFitScore', label: 'Sektör/Piyasa Uyumu', weight: 0.1 },
+  { key: 'fundamentalHealthScore', label: 'Temel Sağlamlık', weight: 0.22 },
+  { key: 'valuationScore', label: 'Değerleme', weight: 0.18 },
+  { key: 'growthScore', label: 'Büyüme Görünümü', weight: 0.18 },
+  { key: 'expectedReturnScore', label: 'Beklenen Getiri', weight: 0.1 },
+  { key: 'dividendScore', label: 'Temettü & Nakit Akışı', weight: 0.09 },
+  { key: 'newsReliabilityScore', label: 'Haber Güvenilirliği', weight: 0.09 },
+  { key: 'sectorMarketFitScore', label: 'Sektör/Piyasa Uyumu', weight: 0.09 },
   { key: 'liquidityScore', label: 'Likidite', weight: 0.05 },
 ];
+
+/**
+ * Beklenen getiri yüzdesini 0-100 skor bileşenine çevirir.
+ *
+ * İki şey gözetilir:
+ *  1. Vade — 4 haftada %5 ile 3 ayda %5 aynı şey değil, uzun vadede aynı yüzde
+ *     daha az ayırt edicidir.
+ *  2. Sinyal güveni — güveni düşük bir beklenti sıralamayı fazla oynatmamalı,
+ *     bu yüzden sonuç nötr 50 tabanına doğru çekilir (güven 0 → etkinin %40'ı).
+ *
+ * Beklenti üretilememişse 50 (nötr) döner: veri yokluğu ceza değildir.
+ */
+export function getExpectedReturnScore(expectation, horizon = 'short') {
+  if (!expectation || typeof expectation.expectedReturnPct !== 'number') return 50;
+  const perPct = horizon === 'long' ? 2 : 4; // %+10 kısa vadede 90, uzun vadede 70
+  const raw = Math.max(0, Math.min(100, 50 + expectation.expectedReturnPct * perPct));
+  const confidence = typeof expectation.confidence === 'number' ? expectation.confidence : 0.3;
+  return Math.round(50 + (raw - 50) * (0.4 + 0.6 * confidence));
+}
 
 /** Ortalama haber güvenilirliği eşiğin altındaysa, gate uygulanan bileşen orantılı kırpılır. */
 export const RELIABILITY_GATE_THRESHOLD = 4;
@@ -155,7 +178,9 @@ export function calculateOpportunityScore(breakdown, weights, context = {}) {
 
   let score = 0;
   for (const { key, weight } of weights) {
-    let value = breakdown[key] ?? 0;
+    // Eksik bileşen NÖTR (50) sayılır, sıfır değil. Aksi halde eski verideki
+    // (yeni bileşen eklenmeden önce üretilmiş) adaylar haksız yere cezalanırdı.
+    let value = breakdown[key] ?? 50;
     if (
       key === reliabilityGateKey &&
       typeof averageNewsReliability === 'number' &&
@@ -195,7 +220,18 @@ export function calculateOpportunityScore(breakdown, weights, context = {}) {
  */
 export function getScoreDetails(candidate, horizon = 'short', referenceDate = null) {
   const config = HORIZON_CONFIGS[horizon];
-  const breakdown = candidate.scoreBreakdown;
+  // Beklenen getiri bileşeni, adayın expectation nesnesinden TÜRETİLİR (aday
+  // verisinde hazır tutulmaz). Böylece beklenti taşıyan her aday — ne zaman
+  // üretilmiş olursa olsun — skorunda da tutarlı biçimde temsil edilir.
+  // Beklenti yoksa getExpectedReturnScore zaten 50 (nötr) döner; alan HER ZAMAN
+  // doldurulur ki skor kırılımı ekranı ile hesap aynı değeri göstersin.
+  const breakdown =
+    candidate.scoreBreakdown?.expectedReturnScore == null
+      ? {
+          ...candidate.scoreBreakdown,
+          expectedReturnScore: getExpectedReturnScore(candidate.expectation, horizon),
+        }
+      : candidate.scoreBreakdown;
 
   const freshness = config.applyCatalystDecay
     ? getCatalystFreshness(candidate.catalystDate, referenceDate)
@@ -235,6 +271,8 @@ export function getScoreDetails(candidate, horizon = 'short', referenceDate = nu
   });
 
   return {
+    // Türetilmiş bileşen dahil edilmiş kırılım — UI ve gerekçe bunu kullanmalı
+    scoreBreakdown: breakdown,
     shortTermScore: score, // tarihsel isim; her iki vade için de "fırsat skoru"
     rawScore,
     scoreLabel: getScoreLabel(score),
@@ -333,6 +371,8 @@ export const FACTOR_MEANINGS = {
   newsCatalystScore: 'son haberlerin hisseyi hareket ettirme gücü',
   newsReliabilityScore: 'haberlerin geldiği kaynakların ne kadar güvenilir olduğu',
   technicalMomentumScore: 'fiyatın yönü ve hızı (RSI, MACD, hareketli ortalamalar)',
+  expectedReturnScore:
+    'geçmiş benzer grafik, fiyat bandı ve analist hedefinden çıkan beklenen hareket',
   volumeConfirmationScore: 'işlem hacminin bu hareketi doğrulayıp doğrulamadığı',
   riskAdjustedScore: 'oynaklık ve likidite düşüldükten sonra kalan güvenli alan',
   liquidityScore: 'hisseyi kolayca alıp satabilme (şirket büyüklüğü)',
