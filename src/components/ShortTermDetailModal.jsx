@@ -11,13 +11,19 @@ import {
   ShieldCheck,
   Info,
   ExternalLink,
+  LineChart,
+  Ruler,
 } from 'lucide-react';
 import ShortTermScoreBreakdown from './ShortTermScoreBreakdown.jsx';
+import ExpectedPerformanceCard from './ExpectedPerformanceCard.jsx';
+import PriceLevelsCard from './PriceLevelsCard.jsx';
+import RankExplanationCard from './RankExplanationCard.jsx';
 import {
   getScoreColor,
   getRiskColor,
   getSentimentIcon,
   getReliabilityColor,
+  getRankExplanation,
   HIGH_RISK_SCORE_CAP,
   RELIABILITY_GATE_THRESHOLD,
   LIQUIDITY_GUARD_SCORE_CAP,
@@ -39,10 +45,12 @@ function Section({ title, icon: Icon, children }) {
 
 const boxClass = 'rounded-lg border border-navy-700/60 bg-navy-850 p-4';
 
-export default function ShortTermDetailModal({ candidate, horizon = 'short', onClose }) {
+export default function ShortTermDetailModal({ candidate, horizon = 'short', totalCount = null, onClose }) {
   if (!candidate) return null;
 
   const horizonConfig = HORIZON_CONFIGS[horizon];
+  const rankExplanation = getRankExplanation(candidate, horizon, totalCount);
+  const currency = candidate.currency ?? getMarketCurrency(candidate.market);
   const scoreColors = getScoreColor(candidate.shortTermScore);
   const sentiment = getSentimentIcon(candidate.sentiment);
   const reliabilityColors = getReliabilityColor(candidate.averageNewsReliability);
@@ -61,7 +69,9 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
         onClick={(e) => e.stopPropagation()}
       >
         {/* 1. Hisse genel bilgisi + 2. skor */}
-        <div className="sticky top-0 flex items-start justify-between gap-4 border-b border-navy-700/60 bg-navy-900 px-5 py-4">
+        {/* z-10: içerikteki konumlandırılmış öğeler (fiyat bandı imleçleri) başlığın
+            üzerine boyanmasın — sticky başlık her zaman en üstte kalmalı */}
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-navy-700/60 bg-navy-900 px-5 py-4">
           <div className="flex items-center gap-4">
             <p className={`text-4xl font-bold tabular-nums ${scoreColors.text}`}>
               {candidate.shortTermScore}
@@ -113,6 +123,28 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
         </div>
 
         <div className="space-y-5 px-5 py-5">
+          {/* Beklenen performans — tahmini hareket + sebepleri */}
+          {candidate.expectation && (
+            <Section title="Beklenen Performans" icon={LineChart}>
+              <ExpectedPerformanceCard
+                expectation={candidate.expectation}
+                price={candidate.currentPrice}
+                currency={currency}
+              />
+            </Section>
+          )}
+
+          {/* Fiyat normalde nerede geziyor + destek/direnç */}
+          {candidate.priceStructure && (
+            <Section title="Fiyat Bandı ve Seviyeler" icon={Ruler}>
+              <PriceLevelsCard
+                structure={candidate.priceStructure}
+                price={candidate.currentPrice}
+                currency={currency}
+              />
+            </Section>
+          )}
+
           {/* 3. Skor kırılımı */}
           <Section title={`Skor Kırılımı (${horizonConfig.label})`} icon={Gauge}>
             <div className={boxClass}>
@@ -138,9 +170,16 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', onC
 
           {/* 5. Neden bu sıraya yerleşti? */}
           <Section title="Neden Bu Sıraya Yerleşti?" icon={ListOrdered}>
-            <div className={boxClass}>
-              <p className="text-sm leading-relaxed text-slate-300">{candidate.reasonDetailed}</p>
-            </div>
+            {rankExplanation ? (
+              <RankExplanationCard
+                explanation={rankExplanation}
+                technicalDetail={candidate.reasonDetailed}
+              />
+            ) : (
+              <div className={boxClass}>
+                <p className="text-sm leading-relaxed text-slate-300">{candidate.reasonDetailed}</p>
+              </div>
+            )}
           </Section>
 
           {/* 6. Haber katalizörleri */}

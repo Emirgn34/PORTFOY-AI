@@ -325,6 +325,111 @@ export function getTopFactors(breakdown, weights) {
   return { best, worst };
 }
 
+/**
+ * Skor bileşenlerinin günlük dildeki karşılıkları. Kullanıcı "Haber Katalizörü
+ * 72/100" gibi bir etiketi değil, ne ölçüldüğünü görmek ister.
+ */
+export const FACTOR_MEANINGS = {
+  newsCatalystScore: 'son haberlerin hisseyi hareket ettirme gücü',
+  newsReliabilityScore: 'haberlerin geldiği kaynakların ne kadar güvenilir olduğu',
+  technicalMomentumScore: 'fiyatın yönü ve hızı (RSI, MACD, hareketli ortalamalar)',
+  volumeConfirmationScore: 'işlem hacminin bu hareketi doğrulayıp doğrulamadığı',
+  riskAdjustedScore: 'oynaklık ve likidite düşüldükten sonra kalan güvenli alan',
+  liquidityScore: 'hisseyi kolayca alıp satabilme (şirket büyüklüğü)',
+  sectorMarketFitScore: 'uzun vadeli ana trendin hisseyi destekleyip desteklemediği',
+  fundamentalHealthScore: 'şirketin kârlılığı, borcu ve bilanço sağlamlığı',
+  valuationScore: 'hissenin ucuz mu pahalı mı olduğu (F/K, PD/DD)',
+  growthScore: 'kâr ve gelirin ne hızda büyüdüğü',
+  dividendScore: 'temettü verimi ve serbest nakit akışı',
+};
+
+/**
+ * "Neden bu sıraya yerleşti?" — skoru oluşturan her bileşenin sıraya kaç puan
+ * kattığını sade dille açıklar.
+ *
+ * Katkı = (bileşen puanı − 50) × ağırlık. 50 nötr kabul edilir; böylece bir
+ * bileşenin skoru YUKARI mı yoksa AŞAĞI mı çektiği doğrudan görünür — ham
+ * puanlara bakmak bunu göstermez (ağırlığı düşük ama yüksek bir bileşen,
+ * ağırlığı yüksek ama vasat bir bileşenden daha az iş yapabilir).
+ */
+export function getRankExplanation(candidate, horizon = 'short', totalCount = null) {
+  const config = HORIZON_CONFIGS[horizon];
+  const breakdown = candidate?.scoreBreakdown;
+  if (!config || !breakdown) return null;
+
+  const contributions = config.weights
+    .map(({ key, label, weight }) => {
+      const value = breakdown[key] ?? 50;
+      return {
+        key,
+        label,
+        value,
+        weight,
+        meaning: FACTOR_MEANINGS[key] ?? null,
+        points: Number(((value - 50) * weight).toFixed(1)),
+      };
+    })
+    .sort((a, b) => b.points - a.points);
+
+  const positives = contributions.filter((c) => c.points >= 0.5).slice(0, 3);
+  const negatives = contributions
+    .filter((c) => c.points <= -0.5)
+    .sort((a, b) => a.points - b.points)
+    .slice(0, 3);
+
+  // Skora sonradan uygulanan kırpma/tavanlar — sade dille
+  const adjustments = [];
+  if (candidate.isGated) {
+    adjustments.push('Haber kaynakları yeterince güvenilir olmadığı için haber puanı kırpıldı.');
+  }
+  if (candidate.isDecayed) {
+    adjustments.push(
+      `Katalizör haber ${candidate.daysSinceCatalyst} gün önceye ait; etkisi ` +
+        `%${Math.round(candidate.catalystFreshnessFactor * 100)} seviyesine indirildi.`
+    );
+  }
+  if (candidate.isMomentumLimited) {
+    adjustments.push(
+      'Momentum ve hacim zayıf; hareketi başlatacak güç görünmediği için skor kırpıldı.'
+    );
+  }
+  if (candidate.isCapped) {
+    adjustments.push(
+      `Risk seviyesi yüksek olduğu için skor ${HIGH_RISK_SCORE_CAP} ile sınırlandırıldı.`
+    );
+  }
+  if (candidate.isValueTrapRisk) {
+    adjustments.push('Ucuz görünüyor ama büyümüyor (değer tuzağı); skora tavan uygulandı.');
+  }
+  if (candidate.isLiquidityRisk) {
+    adjustments.push(
+      'Kısa vadeli borç ödeme gücü zayıflıyor; uzun vade skoruna tavan uygulandı.'
+    );
+  }
+
+  const rankPart =
+    candidate.rank != null
+      ? totalCount != null
+        ? `${candidate.symbol}, ${totalCount} aday arasında ${candidate.rank}. sırada`
+        : `${candidate.symbol}, listede ${candidate.rank}. sırada`
+      : `${candidate.symbol} için sıralama`;
+
+  const upPart = positives.length
+    ? ` Onu yukarı taşıyan: ${positives.map((p) => p.label.toLowerCase()).join(', ')}.`
+    : ' Hiçbir bileşen skoru belirgin şekilde yukarı taşımadı.';
+  const downPart = negatives.length
+    ? ` Aşağı çeken: ${negatives.map((p) => p.label.toLowerCase()).join(', ')}.`
+    : '';
+
+  return {
+    headline: `${rankPart}.${upPart}${downPart}`,
+    contributions,
+    positives,
+    negatives,
+    adjustments,
+  };
+}
+
 export function getScoreLabel(score) {
   if (score >= 90) return 'Çok Güçlü Potansiyel';
   if (score >= 75) return 'Güçlü Potansiyel';

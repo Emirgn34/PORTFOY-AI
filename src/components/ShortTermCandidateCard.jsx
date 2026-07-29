@@ -1,4 +1,4 @@
-import { ArrowUp, ArrowDown, Sparkle, HelpCircle, ShieldAlert, Droplets, Gauge, BarChart3, Briefcase, Clock, HandCoins, Plus, Check, TrendingUp, TrendingDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, Sparkle, HelpCircle, ShieldAlert, Droplets, Gauge, BarChart3, Briefcase, Clock, HandCoins, Plus, Check, TrendingUp, TrendingDown, MoveRight, Ruler } from 'lucide-react';
 import {
   getScoreColor,
   getRiskColor,
@@ -84,6 +84,22 @@ export default function ShortTermCandidateCard({
   // Skoru en çok taşıyan / en çok zorlayan bileşen — modal açmadan görünür gerekçe
   const { best, worst } = getTopFactors(candidate.scoreBreakdown, HORIZON_CONFIGS[horizon].weights);
 
+  // Beklenen performans + tipik fiyat bandı (yalnızca derin analizli adaylarda dolu)
+  const expectation = candidate.expectation ?? null;
+  const structure = candidate.priceStructure ?? null;
+  const ExpIcon =
+    expectation?.direction === 'up'
+      ? TrendingUp
+      : expectation?.direction === 'down'
+        ? TrendingDown
+        : MoveRight;
+  const expectationTone =
+    expectation?.direction === 'up'
+      ? 'border-gain/30 bg-gain/15 text-gain'
+      : expectation?.direction === 'down'
+        ? 'border-loss/30 bg-loss/15 text-loss'
+        : 'border-navy-700 bg-navy-800 text-slate-400';
+
   return (
     <article
       className="rounded-xl border border-navy-700/60 border-l-4 bg-navy-900 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-navy-600 hover:shadow-lg hover:shadow-black/30 sm:p-5"
@@ -147,6 +163,16 @@ export default function ShortTermCandidateCard({
               Tahmini vade: {candidate.estimatedHorizon}
             </span>
           )}
+          {expectation && (
+            <span
+              className={`flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${expectationTone}`}
+              title={expectation.summary}
+            >
+              <ExpIcon size={11} />
+              Beklenen {expectation.expectedReturnPct > 0 ? '+' : ''}
+              {expectation.expectedReturnPct}% · {expectation.horizonLabel}
+            </span>
+          )}
         </div>
 
         {/* Katalizör + gerekçe */}
@@ -173,6 +199,32 @@ export default function ShortTermCandidateCard({
                 </span>
               )}
             </div>
+          )}
+          {structure && (
+            <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <Ruler size={11} className="shrink-0 text-slate-500" />
+              Tipik band{' '}
+              <span className="font-medium text-ink">
+                {formatCurrency(structure.bandLow, candidate.currency ?? getMarketCurrency(candidate.market))}
+                –
+                {formatCurrency(structure.bandHigh, candidate.currency ?? getMarketCurrency(candidate.market))}
+              </span>
+              <span
+                className={
+                  structure.bandPosition === 'below'
+                    ? 'text-gain'
+                    : structure.bandPosition === 'above'
+                      ? 'text-amber-400'
+                      : 'text-slate-500'
+                }
+              >
+                {structure.bandPosition === 'below'
+                  ? `· ortanın %${Math.abs(structure.pctVsBandMid)} altında`
+                  : structure.bandPosition === 'above'
+                    ? `· ortanın %${Math.abs(structure.pctVsBandMid)} üstünde`
+                    : '· band içinde'}
+              </span>
+            </p>
           )}
           <SentimentRatioBar
             positive={candidate.positiveNewsCount}

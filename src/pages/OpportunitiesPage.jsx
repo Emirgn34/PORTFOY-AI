@@ -407,6 +407,7 @@ export default function OpportunitiesPage() {
       <ShortTermDetailModal
         candidate={selectedCandidate}
         horizon={horizon}
+        totalCount={rankedCandidates.length}
         onClose={() => setSelectedCandidate(null)}
       />
 
