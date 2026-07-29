@@ -14,7 +14,10 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15 dk: AI açıkken tur ~1 dk'dan uzun sürüyor (Haiku çağrıları hesabın hız
+    # limitine takılabiliyor). 20 dk'lık cron ile çakışmaması için 15'i geçmemeli;
+    # collect.js'teki AI_DEADLINE (8 dk) turun buraya dayanmasını zaten engeller.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 

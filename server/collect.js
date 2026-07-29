@@ -19,6 +19,19 @@ import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
 import { scoreAndRankCandidates } from '../src/utils/opportunityScoringCore.js';
 import { getUsUniverse } from './usUniverse.js';
 import { selectDeepPool } from './preScreen.js';
+
+/**
+ * AI analizi için TUR BÜTÇESİ (mutlak zaman damgası).
+ *
+ * Haiku çağrıları hesabın hız limitine göre dakikalar sürebiliyor; sınırsız
+ * bırakılırsa veri turu workflow zaman aşımına düşer. Bu tarihten sonra yeni
+ * AI partisi başlatılmaz, kalanlar sonraki tura kalır. Backfill kendini onaran
+ * bir döngü olduğu için erteleme kayıp değildir.
+ *
+ * 8 dk: veri workflow'unun 15 dk'lık zaman aşımına, fiyat/haber çekimi ve
+ * Supabase yazımları için rahat pay bırakır.
+ */
+const AI_DEADLINE = Date.now() + 8 * 60 * 1000;
 import { mapLimit } from './concurrency.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -124,7 +137,8 @@ async function collectNews(symbols) {
       // Yeni makalelere AI duygu/güvenilirlik/özet analizi (anahtar yoksa boş döner)
       const market = symbol.endsWith('.IS') ? 'BIST' : 'ABD';
       const analysis = await analyzeArticles(
-        fresh.map((a) => ({ id: a.id, title: a.title, publisher: a.publisher, market }))
+        fresh.map((a) => ({ id: a.id, title: a.title, publisher: a.publisher, market })),
+        { deadline: AI_DEADLINE }
       );
 
       await sb('news', {
@@ -169,29 +183,33 @@ async function backfillNewsAnalysis(limit = 50) {
   );
   if (!rows?.length) return;
 
-  const analysis = await analyzeArticles(
+  // Her parti biter bitmez yazılır (toplu değil): tur zaman aşımına düşerse
+  // o ana kadar analiz edilmiş haberler kalıcı olur, ödenmiş token'lar yanmaz.
+  let updated = 0;
+  await analyzeArticles(
     rows.map((r) => ({
       id: r.id,
       title: r.title_tr || r.title,
       publisher: r.publisher,
       market: r.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
-    }))
-  );
-
-  let updated = 0;
-  for (const r of rows) {
-    const ai = analysis.get(r.id);
-    if (!ai) continue;
-    try {
-      await sb(`news?id=eq.${encodeURIComponent(r.id)}`, {
-        method: 'PATCH',
-        body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
-      });
-      updated++;
-    } catch (err) {
-      console.error(`[backfill] ${r.id}: ${err.message}`);
+    })),
+    {
+      deadline: AI_DEADLINE,
+      onBatch: async (batch) => {
+        for (const [id, ai] of batch) {
+          try {
+            await sb(`news?id=eq.${encodeURIComponent(id)}`, {
+              method: 'PATCH',
+              body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
+            });
+            updated++;
+          } catch (err) {
+            console.error(`[backfill] ${id}: ${err.message}`);
+          }
+        }
+      },
     }
-  }
+  );
   console.log(`Backfill: ${updated}/${rows.length} eski haber AI ile güncellendi.`);
 }
 

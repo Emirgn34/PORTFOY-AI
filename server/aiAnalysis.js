@@ -110,22 +110,43 @@ async function analyzeBatch(batch) {
  * Anahtar yoksa veya hata olursa eksik/boş Map döner (çağıran taraf bunu
  * tolere etmeli — AI alanları opsiyoneldir).
  */
-export async function analyzeArticles(articles) {
+export async function analyzeArticles(articles, { onBatch = null, deadline = null } = {}) {
   const byId = new Map();
   if (!client || articles.length === 0) return byId;
 
   for (let i = 0; i < articles.length; i += BATCH_SIZE) {
+    // Süre bütçesi: kalan makaleler sonraki tura bırakılır. Backfill zaten
+    // kendini onaran bir döngü olduğu için bu kayıp değil, sadece erteleme.
+    if (deadline && Date.now() > deadline) {
+      console.log(`[ai] süre bütçesi doldu; ${articles.length - i} makale sonraki tura bırakıldı.`);
+      break;
+    }
+
     const batch = articles.slice(i, i + BATCH_SIZE);
     const results = await analyzeBatch(batch);
+
+    const batchMap = new Map();
     for (const r of results) {
       if (!r?.id) continue;
-      byId.set(r.id, {
+      const value = {
         sentiment: ['positive', 'negative', 'neutral'].includes(r.sentiment)
           ? r.sentiment
           : 'neutral',
         reliability: clampReliability(r.reliability),
         summaryTr: typeof r.summary_tr === 'string' ? r.summary_tr.trim() : null,
-      });
+      };
+      byId.set(r.id, value);
+      batchMap.set(r.id, value);
+    }
+
+    // Parti biter bitmez kalıcılaştır. Aksi halde tur zaman aşımına düşerse
+    // önceki partiler için ÖDENMİŞ token'lar da çöpe gider.
+    if (onBatch && batchMap.size > 0) {
+      try {
+        await onBatch(batchMap);
+      } catch (err) {
+        console.error(`[ai] parti yazımı başarısız: ${err.message}`);
+      }
     }
   }
   return byId;
