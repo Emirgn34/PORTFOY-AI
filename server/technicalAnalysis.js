@@ -165,6 +165,154 @@ function analogForward(closes, rsi, sma50, fwd, warmup) {
 }
 
 /**
+ * Yakınlığa göre ağırlıklandırılmış persentil. Ağırlıklar tazelik içindir:
+ * hissenin BUGÜNLERDE nerede gezindiği, 1 yıl önce nerede gezindiğinden
+ * daha belirleyicidir.
+ */
+function weightedPercentile(pairs, p) {
+  const sorted = [...pairs].sort((a, b) => a.value - b.value);
+  const total = sorted.reduce((s, x) => s + x.weight, 0);
+  if (total <= 0) return null;
+  let cum = 0;
+  for (const x of sorted) {
+    cum += x.weight;
+    if (cum >= p * total) return x.value;
+  }
+  return sorted[sorted.length - 1].value;
+}
+
+/**
+ * "Bu hisse normalde nerede geziyor?" bandı.
+ * Son ~1 yılın kapanışlarından, 180 günlük yarı ömürle tazeliğe göre
+ * ağırlıklandırılmış %20–%80 persentil aralığı. Yani fiyatın (tazelik
+ * ağırlıklı) zamanın ~%60'ında içinde bulunduğu aralık.
+ */
+function buildPriceBand(closes, lookback = 252) {
+  const n = closes.length;
+  const start = Math.max(0, n - lookback);
+  const pairs = [];
+  for (let i = start; i < n; i++) {
+    const ageDays = n - 1 - i;
+    pairs.push({ value: closes[i], weight: Math.pow(0.5, ageDays / 180) });
+  }
+  if (pairs.length < 40) return null;
+
+  const low = weightedPercentile(pairs, 0.2);
+  const mid = weightedPercentile(pairs, 0.5);
+  const high = weightedPercentile(pairs, 0.8);
+  if (low == null || mid == null || high == null || mid <= 0) return null;
+
+  return { low, mid, high, days: pairs.length };
+}
+
+/**
+ * Salınım pivotlarını (yerel tepe/dip) bulur ve birbirine yakın olanları
+ * TEK bir seviyede kümeler. Bir seviyeye ne kadar çok kez dokunulmuşsa
+ * (touches) o kadar anlamlı bir destek/dirençtir.
+ */
+function buildPivotLevels(closes, window = 5, tolerancePct = 2.5) {
+  const n = closes.length;
+  const pivots = [];
+  for (let i = window; i < n - window; i++) {
+    let isHigh = true;
+    let isLow = true;
+    for (let k = i - window; k <= i + window; k++) {
+      if (k === i) continue;
+      if (closes[k] > closes[i]) isHigh = false;
+      if (closes[k] < closes[i]) isLow = false;
+    }
+    if (isHigh || isLow) pivots.push({ price: closes[i], index: i });
+  }
+  if (pivots.length < 2) return [];
+
+  // Fiyata göre sırala, %tolerans içinde kalanları aynı kümeye topla
+  const sorted = [...pivots].sort((a, b) => a.price - b.price);
+  const clusters = [];
+  let current = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const ref = current[0].price;
+    if ((sorted[i].price - ref) / ref * 100 <= tolerancePct) current.push(sorted[i]);
+    else {
+      clusters.push(current);
+      current = [sorted[i]];
+    }
+  }
+  clusters.push(current);
+
+  return clusters
+    .map((c) => {
+      // Seviye: tazeliğe göre ağırlıklı ortalama (son dokunuşlar daha belirleyici)
+      const weights = c.map((p) => Math.pow(0.5, (n - 1 - p.index) / 250));
+      const wSum = weights.reduce((a, b) => a + b, 0);
+      const level = c.reduce((s, p, k) => s + p.price * weights[k], 0) / wSum;
+      const lastIndex = Math.max(...c.map((p) => p.index));
+      return { level, touches: c.length, daysSinceTouch: n - 1 - lastIndex };
+    })
+    // Tek dokunuşlu seviye ancak YAKIN tarihliyse anlamlıdır (son salınım dibi/tepesi
+    // de bir destek/dirençtir). Eski tek dokunuşlar gürültüdür, elenir.
+    .filter((l) => l.touches >= 2 || l.daysSinceTouch <= 60);
+}
+
+/**
+ * Fiyat yapısı: tipik işlem bandı + en yakın destek/direnç seviyeleri.
+ * "Hisse genelde 130–140 $ arasında geziyor ama şu an %12 aşağıda" cümlesini
+ * sayısal olarak kuran katman. Yetersiz veride null döner.
+ */
+export function analyzePriceStructure(closes) {
+  const n = closes.length;
+  const price = closes[n - 1];
+  const band = buildPriceBand(closes);
+  if (!band || !price) return null;
+
+  const levels = buildPivotLevels(closes);
+  // Anlamlılık: çok dokunulan + yakın zamanda dokunulan seviyeler önce gelir
+  const rank = (l) => l.touches + clamp01(1 - l.daysSinceTouch / 400) * 2;
+  const fmtLevel = (l) => ({
+    level: Number(l.level.toFixed(2)),
+    touches: l.touches,
+    daysSinceTouch: l.daysSinceTouch,
+    distancePct: Number(((l.level / price - 1) * 100).toFixed(1)),
+  });
+
+  const supports = levels
+    .filter((l) => l.level < price * 0.995)
+    .sort((a, b) => b.level - a.level) // fiyata en yakın destek önce
+    .slice(0, 4)
+    .sort((a, b) => rank(b) - rank(a))
+    .slice(0, 2)
+    .sort((a, b) => b.level - a.level)
+    .map(fmtLevel);
+
+  const resistances = levels
+    .filter((l) => l.level > price * 1.005)
+    .sort((a, b) => a.level - b.level) // fiyata en yakın direnç önce
+    .slice(0, 4)
+    .sort((a, b) => rank(b) - rank(a))
+    .slice(0, 2)
+    .sort((a, b) => a.level - b.level)
+    .map(fmtLevel);
+
+  const pctVsBandMid = Number(((price / band.mid - 1) * 100).toFixed(1));
+  const bandPosition =
+    price < band.low ? 'below' : price > band.high ? 'above' : 'inside';
+
+  return {
+    bandLow: Number(band.low.toFixed(2)),
+    bandMid: Number(band.mid.toFixed(2)),
+    bandHigh: Number(band.high.toFixed(2)),
+    bandDays: band.days,
+    pctVsBandMid,
+    pctVsBandLow: Number(((price / band.low - 1) * 100).toFixed(1)),
+    pctVsBandHigh: Number(((price / band.high - 1) * 100).toFixed(1)),
+    bandPosition,
+    supports,
+    resistances,
+    nearestSupport: supports[0] ?? null,
+    nearestResistance: resistances[0] ?? null,
+  };
+}
+
+/**
  * Geçmiş fiyat dizisinden tüm teknik göstergeleri + analog analizleri üretir.
  * Yetersiz veri varsa null döner.
  */
@@ -210,5 +358,6 @@ export function analyzeTechnicals(history) {
     pctFrom52Low: Number(((closes[i] / low - 1) * 100).toFixed(1)),
     analogShort: analogForward(closes, rsi, sma50, 20, 60),
     analogLong: analogForward(closes, rsi, sma50, 60, 60),
+    priceStructure: analyzePriceStructure(closes),
   };
 }
