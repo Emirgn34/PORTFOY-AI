@@ -285,7 +285,7 @@ function buildNewsAggregate(newsRows, referenceMs) {
 }
 
 /** quote + quoteSummary + (varsa) geçmiş grafik analizinden metrikleri türetir. */
-function buildMarketMetrics(quote, summary, tech, crTrend = null) {
+function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = null) {
   const price = quote.regularMarketPrice ?? null;
   const ma50 = quote.fiftyDayAverage ?? null;
   const ma200 = quote.twoHundredDayAverage ?? null;
@@ -311,11 +311,9 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null) {
     t += clamp(((tech.rsi ?? 50) - 50) * 0.4, -8, 10);
     if ((tech.rsi ?? 50) > 80) t -= 8; // aşırı alım bölgesi
     t += clamp((tech.ret20 ?? 0) * 0.5, -10, 12);
-    // Geçmiş benzer grafik kurulumunun 20 günlük ortalama getirisi (analog edge).
-    // Katkı, analogun güvenine göre ölçeklenir: tutarsız/zayıf örnekler momentumu az etkiler.
-    if (tech.analogShort) {
-      t += clamp(tech.analogShort.avg * 0.8 * (tech.analogShort.confidence ?? 1), -10, 12);
-    }
+    // NOT: Analog (geçmiş benzer kurulum) BİLEREK buraya katılmaz. O sinyal artık
+    // `expectedReturnScore` bileşeninin sürücüsü; ikisine birden koymak aynı
+    // bilgiyi ağırlıklı toplamda iki kez saymak olurdu.
     technicalMomentumScore = round(clamp(t));
   } else {
     technicalMomentumScore = round(
@@ -351,14 +349,33 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null) {
     volScore = clamp((beta - 0.5) * 40 + (rangePct - 30) * 0.8);
   }
   const volatilitySignal = volScore >= 66 ? 'Yüksek Volatilite' : volScore >= 40 ? 'Orta Volatilite' : 'Düşük Volatilite';
+  // riskLevel (etiket + skor tavanı) hem oynaklığı hem likiditeyi gözetir — bir
+  // hissenin gerçek riski ikisinin bileşkesidir.
   const riskIndex = volScore * 0.6 + (100 - liquidityScore) * 0.4;
   const riskLevel = riskIndex >= 60 ? 'Yüksek' : riskIndex >= 38 ? 'Orta' : 'Düşük';
-  const riskAdjustedScore = round(clamp(100 - riskIndex));
+  // Ama SKOR BİLEŞENİ yalnızca oynaklıktan türetilir. Likidite zaten kendi başına
+  // ağırlıklı toplamda yer alıyor; riskIndex'i kullansaydık aynı büyüklük iki kez
+  // sayılır ve skorun ~%14'ü "bu şirket ne kadar büyük" sorusuna ayrılmış olurdu.
+  const riskAdjustedScore = round(clamp(100 - volScore));
 
-  // --- Sektör/piyasa uyumu (trend bazlı; varsa gerçek SMA ilişkilerinden) ---
+  // --- Piyasaya göre güç (relative strength) ---
+  // ESKİ HALİ hissenin KENDİ 200 günlük ortalamasına bakıyordu; yani adının aksine
+  // ne sektörü ne piyasayı görüyor, technicalMomentumScore'un zaten ölçtüğü trendi
+  // ikinci kez sayıyordu (üstelik yalnızca 4 farklı değer üretebiliyordu).
+  // Artık hissenin 50 günlük ortalamasına göre konumu, ENDEKSİN aynı ölçüdeki
+  // konumuyla kıyaslanır: pozitif fark, hissenin piyasadan güçlü olduğunu gösterir.
   const aboveMa200 = tech?.pctVsSma200 != null ? tech.pctVsSma200 > 0 : price && ma200 ? price > ma200 : false;
   const goldenCross = tech?.goldenCross != null ? tech.goldenCross : ma50 && ma200 ? ma50 > ma200 : false;
-  const sectorMarketFitScore = round(clamp(58 + (aboveMa200 ? 12 : -12) + (goldenCross ? 6 : -6), 30, 88));
+  const stockVsMa50 = tech?.pctVsSma50 ?? pctAbove(price, ma50);
+  const relativeStrength =
+    benchmark?.pctVsSma50 != null ? stockVsMa50 - benchmark.pctVsSma50 : null;
+  const sectorMarketFitScore =
+    relativeStrength != null
+      ? // ±%20 fark → 0/100 uçları. Katsayı 4 denendi ama güçlü trenddeki
+        // hisselerin çoğu 100'e dayanıp bileşen yine ayırt etmez oldu; 2,5 daha
+        // geniş bir aralık bırakıyor.
+        round(clamp(50 + relativeStrength * 2.5))
+      : round(clamp(58 + (aboveMa200 ? 12 : -12) + (goldenCross ? 6 : -6), 30, 88)); // endeks yoksa eski davranış
 
   // --- Temel analiz (uzun vade) ---
   const pm = fin.profitMargins ?? null;
@@ -601,10 +618,10 @@ function momentumLabel(score, horizon) {
 }
 
 /** Bir sembol için kısa + uzun vade aday nesnelerini üretir. */
-function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet = null) {
+function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet = null, benchmark = null) {
   const news = buildNewsAggregate(newsRows, referenceMs);
   const crTrend = buildCurrentRatioTrend(balanceSheet, summary?.financialData?.currentRatio);
-  const m = buildMarketMetrics(quote, summary, tech, crTrend);
+  const m = buildMarketMetrics(quote, summary, tech, crTrend, benchmark);
 
   const techNote = m.hasTech
     ? `Teknik göstergeler: RSI ${m.rsi}, MACD ${m.macdPositive ? 'pozitif' : 'negatif'}, ` +
@@ -791,6 +808,30 @@ async function fetchBalanceSheetQuarterly(yahooFinance, symbol) {
   }
 }
 
+/** Göreli güç bileşeninin referans aldığı endeksler. */
+const BENCHMARK_SYMBOLS = { BIST: 'XU100.IS', US: '^GSPC' };
+
+/**
+ * Endekslerin 50 günlük ortalamaya göre konumunu TEK toplu çağrıyla çeker.
+ * Tur başına 2 sembollük maliyeti vardır; hisse başına değil. Hata/eksik veride
+ * ilgili pazar için null kalır → sectorMarketFitScore eski davranışına düşer.
+ */
+async function fetchBenchmarks(yahooFinance) {
+  const out = { BIST: null, US: null };
+  try {
+    const res = await yahooFinance.quote([BENCHMARK_SYMBOLS.BIST, BENCHMARK_SYMBOLS.US]);
+    for (const q of Array.isArray(res) ? res : [res]) {
+      if (!q?.regularMarketPrice || !q?.fiftyDayAverage) continue;
+      const pctVsSma50 = (q.regularMarketPrice / q.fiftyDayAverage - 1) * 100;
+      if (q.symbol === BENCHMARK_SYMBOLS.BIST) out.BIST = { pctVsSma50 };
+      if (q.symbol === BENCHMARK_SYMBOLS.US) out.US = { pctVsSma50 };
+    }
+  } catch (err) {
+    console.error(`[benchmark] endeks çekilemedi: ${err.message}`);
+  }
+  return out;
+}
+
 /** 2 yıllık geçmişi retry'lı çeker (deep modda "şart koşulan" veri için). */
 async function fetchHistoryWithRetry(yahooFinance, symbol, attempts = 3) {
   for (let i = 0; i < attempts; i++) {
@@ -822,6 +863,9 @@ export async function buildCandidates(
   { yahooFinance, getNewsForSymbol, deep = true, quoteMap = null, concurrency = deep ? 4 : 6 }
 ) {
   const referenceMs = Date.now();
+
+  // Endeks referansları (göreli güç bileşeni için) — tur başına tek çağrı
+  const benchmarks = await fetchBenchmarks(yahooFinance);
 
   // Quote'lar: Faz 1'den geldiyse onu kullan; eksikleri toplu çek
   const quotes = quoteMap instanceof Map ? new Map(quoteMap) : new Map();
@@ -866,7 +910,8 @@ export async function buildCandidates(
 
     try {
       const { shortCandidate, longCandidate, market } = buildCandidatePair(
-        symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet
+        symbol, quote, summary, newsRows, referenceMs, tech, balanceSheet,
+        symbol.endsWith('.IS') ? benchmarks.BIST : benchmarks.US
       );
       return [
         { symbol, horizon: 'short', market, data: shortCandidate },
