@@ -1,9 +1,20 @@
-# PortföyAI bulut veri toplayıcı (fiyat + kur + haber + AI analizi).
-# 20 dakikada bir çalışır (PC kapalıyken de). Fırsat adayları AYRI ve seyrek
-# (6 saat) koşar — bkz. collect-candidates.yml.
+# PortföyAI hızlı tur: fiyat + kur + taze haber + OLAY NÖBETİ.
+# 20 dakikada bir çalışır (PC kapalıyken de). Ağır iş (evren taraması, 2 yıllık
+# grafik, temel veriler) AYRI ve seyrek koşar — bkz. collect-candidates.yml.
+#
+# Olay nöbeti bu turun asıl işi: vitrindeki adayların kanıtı TAZE haberle
+# yeniden değerlendirilir. Böylece bir açıklama/anlaşma 6 saat sonra değil
+# ~20 dakika içinde yakalanır.
+#
+# AI MALİYETİ SIFIRA YAKIN: Haber duygu/güvenilirliği kural motorundan gelir
+# (server/newsHeuristics.js, ücretsiz). Haiku yalnızca YENİ bir kanıt vitrine
+# çıktığında ve olay başına BİR KEZ çağrılır (aynı olay için ikinci kez ödeme
+# yapılmaz — bkz. eventWatch.js evidenceSignature). Sakin turlarda hiç çağrı olmaz.
+#
 # Gerekli secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-#   ANTHROPIC_API_KEY (opsiyonel — AI haber analizi için; yoksa analiz atlanır)
+#   ANTHROPIC_API_KEY (opsiyonel — yoksa kanıt yine bulunur, yalnızca AI'ın
+#                      yazdığı gerekçe cümlesi olmaz)
 name: Veri Toplayici
 
 on:
@@ -14,10 +25,9 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    # 15 dk: AI açıkken tur ~1 dk'dan uzun sürüyor (Haiku çağrıları hesabın hız
-    # limitine takılabiliyor). 20 dk'lık cron ile çakışmaması için 15'i geçmemeli;
-    # collect.js'teki AI_DEADLINE (8 dk) turun buraya dayanmasını zaten engeller.
-    timeout-minutes: 15
+    # Tur ağ hızıyla sınırlı (~2-3 dk): haber çekimi dönüşümlü, AI çağrısı en
+    # fazla bir tane. 20 dk'lık cron ile çakışmaması için 12 dk'da kesilir.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
 
@@ -29,7 +39,7 @@ jobs:
       - name: Bağımlılık kur
         run: npm install yahoo-finance2 @anthropic-ai/sdk --no-save --no-audit --no-fund
 
-      - name: Veri topla ve Supabase'e yaz
+      - name: Veri topla, olay nöbetini çalıştır ve Supabase'e yaz
         run: node server/collect.js
         env:
           COLLECT_MODE: data

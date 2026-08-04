@@ -13,6 +13,8 @@
  */
 import { mapExchangeToMarket, SECTOR_TR } from './marketData.js';
 import { fetchDailyHistory, analyzeTechnicals } from './technicalAnalysis.js';
+import { estimatePublisherReliability, classifySource } from './newsHeuristics.js';
+import { buildConviction } from './evidence.js';
 import { mapLimit } from './concurrency.js';
 
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
@@ -150,25 +152,6 @@ export async function fetchDynamicUniverse(yahooFinance, { perList = 25 } = {}) 
   return [...symbols];
 }
 
-/** Yayıncı adından kaba güvenilirlik tahmini (AI yoksa kullanılır). */
-function estimatePublisherReliability(publisher = '') {
-  const p = publisher.toLowerCase();
-  if (/reuters|bloomberg|associated press|wall street journal|financial times|kap|sec/.test(p)) return 9;
-  if (/globenewswire|business wire|pr newswire/.test(p)) return 8;
-  if (/yahoo|cnbc|barron|marketwatch|investing|ekonomim|dünya|bloomberght/.test(p)) return 7;
-  if (/zacks|motley fool|simply wall|benzinga|insider monkey|paratic|mynet/.test(p)) return 6;
-  return 5;
-}
-
-/** Yayıncıyı kaynak türüne sınıflar. */
-function classifySource(publisher = '') {
-  const p = publisher.toLowerCase();
-  if (/kap|sec|globenewswire|business wire|pr newswire/.test(p)) return 'Resmi Bildirim';
-  if (/reuters|bloomberg|associated press|anadolu/.test(p)) return 'Haber Ajansı';
-  if (/zacks|motley fool|simply wall|benzinga|insider monkey/.test(p)) return 'Analiz / Araştırma';
-  return 'Finans Medyası';
-}
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Sembolün haberlerini aday alanlarına dönüştürür. */
@@ -284,6 +267,31 @@ function buildNewsAggregate(newsRows, referenceMs) {
   };
 }
 
+/**
+ * Hacim teyidi (seans-içi normalize edilmiş).
+ *
+ * Anlık hacmi 3 aylık ortalamanın TAMAMIYLA değil, seansın geçen kısmıyla
+ * kıyaslarız; böylece açılış saatlerinde haksız "Zayıf Hacim" sinyali oluşmaz.
+ * Dışa açıktır: olay nöbeti (eventWatch.js) 2 yıllık geçmişi çekmeden, yalnızca
+ * taze quote ile hacim patlaması arayabilsin diye.
+ */
+export function buildVolumeSignal(quote) {
+  const vol = quote?.regularMarketVolume ?? null;
+  const avgVol = quote?.averageDailyVolume3Month ?? quote?.averageDailyVolume10Day ?? null;
+  const expectedVolSoFar = avgVol != null ? avgVol * sessionElapsedFraction(quote) : null;
+  const volRatio = vol && expectedVolSoFar ? vol / expectedVolSoFar : 1;
+
+  return {
+    volRatio,
+    volumeConfirmationScore: round(clamp(55 + (volRatio - 1) * 60)),
+    volumeSignal:
+      volRatio >= 1.5 ? 'Güçlü Hacim Artışı'
+        : volRatio >= 1.1 ? 'Hacim Artışı'
+        : volRatio >= 0.7 ? 'Normal Hacim'
+        : 'Zayıf Hacim',
+  };
+}
+
 /** quote + quoteSummary + (varsa) geçmiş grafik analizinden metrikleri türetir. */
 function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = null) {
   const price = quote.regularMarketPrice ?? null;
@@ -292,8 +300,6 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = nu
   const chg = quote.regularMarketChangePercent ?? 0;
   const high52 = quote.fiftyTwoWeekHigh ?? null;
   const low52 = quote.fiftyTwoWeekLow ?? null;
-  const vol = quote.regularMarketVolume ?? null;
-  const avgVol = quote.averageDailyVolume3Month ?? quote.averageDailyVolume10Day ?? null;
   const marketCap = quote.marketCap ?? null;
 
   const detail = summary?.summaryDetail ?? {};
@@ -322,17 +328,7 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = nu
   }
 
   // --- Hacim teyidi (seans-içi normalize) ---
-  // Anlık hacmi 3 aylık ortalamanın tamamıyla değil, seansın geçen kısmıyla
-  // kıyaslarız; böylece açılış saatlerinde haksız "Zayıf Hacim" sinyali oluşmaz.
-  const elapsed = sessionElapsedFraction(quote);
-  const expectedVolSoFar = avgVol != null ? avgVol * elapsed : null;
-  const volRatio = vol && expectedVolSoFar ? vol / expectedVolSoFar : 1;
-  const volumeConfirmationScore = round(clamp(55 + (volRatio - 1) * 60));
-  const volumeSignal =
-    volRatio >= 1.5 ? 'Güçlü Hacim Artışı'
-      : volRatio >= 1.1 ? 'Hacim Artışı'
-      : volRatio >= 0.7 ? 'Normal Hacim'
-      : 'Zayıf Hacim';
+  const { volumeConfirmationScore, volumeSignal } = buildVolumeSignal(quote);
 
   // --- Likidite (piyasa değeri log ölçeği) ---
   const liquidityScore = marketCap
@@ -643,6 +639,21 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
         : 'Fiyatın üzerinde geçmişten kalma belirgin bir direnç seviyesi yok. ')
     : '';
 
+  // Kesinlik (kanıt gücü): "neden öneriliyor?" sorusunun somut cevabı.
+  // Skordan bağımsız çalışır — sıralamayı skor, vitrine çıkmayı kesinlik belirler.
+  const conviction = buildConviction({
+    newsRows,
+    metrics: m,
+    tech,
+    price: m.price,
+    referenceMs,
+    context: {
+      riskLevel: m.riskLevel,
+      positiveNewsCount: news.positiveNewsCount,
+      negativeNewsCount: news.negativeNewsCount,
+    },
+  });
+
   const market = mapExchangeToMarket(symbol, quote.fullExchangeName ?? quote.exchange ?? '');
   const ticker = symbol.replace(/\.IS$/, '');
   const companyName = quote.longName ?? quote.shortName ?? ticker;
@@ -683,6 +694,27 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     // Tipik işlem bandı + destek/direnç seviyeleri (deep analizde dolu)
     priceStructure: m.priceStructure,
     analystTarget: m.analyst,
+    // Kanıt gücü + tespit edilen olaylar (vitrin kapısı bunu kullanır)
+    conviction,
+    /**
+     * Yavaş değişen teknik göstergelerin anlık görüntüsü.
+     *
+     * Olay nöbeti (server/eventWatch.js) 20 dakikada bir TAZE haberle kanıt
+     * arıyor ama 2 yıllık geçmişi yeniden çekmesi imkânsız (o iş bu turun
+     * tamamını alıyor). RSI, destek seviyeleri ve altın kesişim gün içinde
+     * kayda değer değişmediği için buradan okunur; fiyat/hacme bağlı olanlar
+     * nöbet sırasında taze quote'tan yeniden hesaplanır.
+     */
+    techSnapshot: m.hasTech
+      ? {
+          rsi: m.rsi,
+          ret5: tech?.ret5 ?? null,
+          ret20: m.ret20,
+          pctVsSma200: tech?.pctVsSma200 ?? null,
+          goldenCross: m.goldenCross,
+          pctFrom52High: m.pctFrom52High,
+        }
+      : null,
   };
 
   const expectationInput = {

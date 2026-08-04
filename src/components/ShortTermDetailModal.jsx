@@ -18,6 +18,7 @@ import ShortTermScoreBreakdown from './ShortTermScoreBreakdown.jsx';
 import ExpectedPerformanceCard from './ExpectedPerformanceCard.jsx';
 import PriceLevelsCard from './PriceLevelsCard.jsx';
 import RankExplanationCard from './RankExplanationCard.jsx';
+import ConvictionCard from './ConvictionCard.jsx';
 import {
   getScoreColor,
   getRiskColor,
@@ -123,6 +124,13 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', tot
         </div>
 
         <div className="space-y-5 px-5 py-5">
+          {/* Kanıt: bu adayın listede olma sebebi — her şeyden önce gelir */}
+          {candidate.conviction?.evidence?.length > 0 && (
+            <Section title="Neden Öneriliyor?" icon={Sparkle}>
+              <ConvictionCard conviction={candidate.conviction} />
+            </Section>
+          )}
+
           {/* Beklenen performans — tahmini hareket + sebepleri */}
           {candidate.expectation && (
             <Section title="Beklenen Performans" icon={LineChart}>
@@ -134,9 +142,9 @@ export default function ShortTermDetailModal({ candidate, horizon = 'short', tot
             </Section>
           )}
 
-          {/* Fiyat normalde nerede geziyor + destek/direnç */}
+          {/* Fiyat normalde nerede geziyor + alım bölgesi + destek/direnç */}
           {candidate.priceStructure && (
-            <Section title="Fiyat Bandı ve Seviyeler" icon={Ruler}>
+            <Section title="Nereden Alınır, Nerede Zorlanır?" icon={Ruler}>
               <PriceLevelsCard
                 structure={candidate.priceStructure}
                 price={candidate.currentPrice}

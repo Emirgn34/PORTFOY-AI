@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio, Sparkle, ArrowUpRight, Check } from 'lucide-react';
+import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio, Sparkle, ArrowUpRight, Check, ShieldQuestion, ChevronDown, ChevronRight, Landmark } from 'lucide-react';
 import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
@@ -17,6 +17,13 @@ import { fetchLiveCandidates } from '../services/liveData.js';
 import ShortTermFilters, { DEFAULT_FILTERS } from '../components/ShortTermFilters.jsx';
 import ShortTermCandidateCard from '../components/ShortTermCandidateCard.jsx';
 import ShortTermDetailModal from '../components/ShortTermDetailModal.jsx';
+import {
+  passesConvictionGate,
+  getGateFailureReason,
+  getConvictionColor,
+  CONVICTION_THRESHOLD,
+  NEAR_MISS_THRESHOLD,
+} from '../utils/conviction.js';
 
 const HORIZON_TABS = [
   { value: 'short', label: 'Kısa Vade Fırsatlar' },
@@ -25,9 +32,12 @@ const HORIZON_TABS = [
 
 const HORIZON_DESCRIPTIONS = {
   short:
-    'Haber katalizörü, teyit durumu, teknik momentum, hacim, likidite ve risk verilerine göre oluşturulan kısa vadeli izleme listesi.',
+    'Yalnızca arkasında SOMUT bir olay olan adaylar listelenir: politika/düzenleyici kararı ' +
+    'veya analist yükseltmesi gibi gerçekleşmiş bir gelişme, en az bir teknik teyitle birlikte. ' +
+    'Eşiği geçen aday yoksa liste bilerek boş bırakılır.',
   long:
-    'Temel sağlamlık, değerleme, büyüme görünümü, temettü ve sektör uyumu verilerine göre oluşturulan uzun vadeli izleme listesi.',
+    'Temel sağlamlık, değerleme ve büyüme verileriyle sıralanan uzun vadeli adaylar. Vitrine ' +
+    'çıkmak için burada da somut bir kanıt (olay + teyit) aranır; skor tek başına yeterli değildir.',
 };
 
 function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/12 text-accent' }) {
@@ -44,50 +54,20 @@ function SummaryCard({ icon: Icon, label, value, iconBg = 'bg-accent/12 text-acc
   );
 }
 
-/** "Öne çıkanlar" şeridi için kompakt aday kartı (en güçlü 3 aday). */
-function FeaturedCandidate({ candidate, rank, onShowDetail }) {
-  const scoreColors = getScoreColor(candidate.shortTermScore);
-  const isGainDay = candidate.dailyChangePercent >= 0;
+/**
+ * Vitrin boşken gösterilen dürüst durum kartı.
+ *
+ * "Bugün kesin fırsat yok" mesajı bilerek bir hata gibi değil, geçerli bir
+ * sonuç gibi tasarlandı: kullanıcı listeyi boş gördüğünde sistemin bozulduğunu
+ * değil, barın yüksek tutulduğunu anlamalı.
+ */
+function EmptyState({ icon: Icon, title, body }) {
   return (
-    <button
-      type="button"
-      onClick={() => onShowDetail(candidate)}
-      className="flex flex-col gap-3 rounded-xl border border-navy-700 border-t-2 bg-navy-900 p-4 text-left transition-colors hover:border-navy-600 hover:bg-navy-850"
-      style={{ borderTopColor: scoreColors.stroke }}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-navy-800 text-[11px] font-bold text-slate-400">
-            #{rank}
-          </span>
-          <span className="font-bold text-ink">{candidate.symbol}</span>
-        </span>
-        <span className={`text-2xl font-semibold tabular-nums leading-none ${scoreColors.text}`}>
-          {candidate.shortTermScore}
-          <span className="text-xs font-medium text-slate-500">/100</span>
-        </span>
-      </div>
-      <p className="truncate text-xs text-slate-500">{candidate.companyName}</p>
-      <p className="flex items-start gap-1.5 text-xs font-medium leading-snug text-ink">
-        <Sparkle size={12} className="mt-0.5 shrink-0 text-accent-soft" />
-        <span className="line-clamp-2">{candidate.strongestCatalystTitle}</span>
-      </p>
-      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-        <span className="text-xs tabular-nums text-slate-400">
-          {formatCurrency(
-            candidate.currentPrice,
-            candidate.currency ?? getMarketCurrency(candidate.market)
-          )}{' '}
-          <span className={`font-semibold ${isGainDay ? 'text-gain' : 'text-loss'}`}>
-            {formatPercent(candidate.dailyChangePercent)}
-          </span>
-        </span>
-        <span className="flex items-center gap-0.5 text-[11px] font-medium text-accent-soft">
-          Detay
-          <ArrowUpRight size={12} />
-        </span>
-      </div>
-    </button>
+    <div className="rounded-xl border border-dashed border-navy-700 bg-navy-900/50 px-6 py-10 text-center">
+      <Icon size={32} className="mx-auto mb-3 text-slate-600" />
+      <p className="font-medium text-slate-300">{title}</p>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-slate-500">{body}</p>
+    </div>
   );
 }
 
@@ -186,6 +166,35 @@ export default function OpportunitiesPage() {
 
   const rankedCandidates = horizon === 'short' ? rankedShort : rankedLong;
 
+  /**
+   * Vitrin ayrımı: liste artık "skoru yüksek olanlar" değil, "arkasında somut
+   * kanıt olanlar" üzerine kurulu. Skor sıralamayı, kanıt ise vitrine çıkmayı
+   * belirler (bkz. src/utils/conviction.js).
+   */
+  const { certainCandidates, nearMissCandidates, hasConvictionData } = useMemo(() => {
+    const withConviction = rankedCandidates.filter((c) => c.conviction);
+    const certain = withConviction
+      .filter((c) => passesConvictionGate(c.conviction))
+      // Vitrin içinde sıralama: önce kanıt gücü, eşitlikte fırsat skoru
+      .sort(
+        (a, b) => b.conviction.score - a.conviction.score || b.shortTermScore - a.shortTermScore
+      );
+    const nearMiss = withConviction
+      .filter((c) => !passesConvictionGate(c.conviction) && c.conviction.score >= NEAR_MISS_THRESHOLD)
+      .sort((a, b) => b.conviction.score - a.conviction.score)
+      .slice(0, 3);
+    return {
+      certainCandidates: certain,
+      nearMissCandidates: nearMiss,
+      // Aday turu henüz kanıt motoruyla çalışmadıysa liste boş görünür — bu
+      // "bugün fırsat yok" DEĞİL "veri henüz üretilmedi" demektir; ikisini
+      // birbirine karıştırmamak için ayrı durum tutulur.
+      hasConvictionData: withConviction.length > 0,
+    };
+  }, [rankedCandidates]);
+
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
+
   const portfolioTickers = useMemo(
     () => new Set(portfolioStocks.map((s) => s.ticker)),
     [portfolioStocks]
@@ -207,15 +216,16 @@ export default function OpportunitiesPage() {
   // Özet kartları aktif vadenin tüm listesi üzerinden hesaplanır (filtrelerden bağımsız)
   const summary = useMemo(() => {
     const scores = rankedCandidates.map((c) => c.shortTermScore);
+    const convictionScores = rankedCandidates.map((c) => c.conviction?.score ?? 0);
     return {
       topScore: Math.max(...scores),
       avgScore: Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length),
-      strongCount: rankedCandidates.filter((c) => c.shortTermScore >= 75).length,
+      topConviction: Math.max(0, ...convictionScores),
+      withEvidence: rankedCandidates.filter((c) => c.conviction?.evidence?.length > 0).length,
       avgReliability: (
         rankedCandidates.reduce((sum, c) => sum + c.averageNewsReliability, 0) /
         rankedCandidates.length
       ).toFixed(1),
-      positiveNewsTotal: rankedCandidates.reduce((sum, c) => sum + c.positiveNewsCount, 0),
     };
   }, [rankedCandidates]);
 
@@ -283,7 +293,7 @@ export default function OpportunitiesPage() {
           {isLive ? (
             <p className={`flex items-center gap-1.5 text-xs ${dataAgeHours != null && dataAgeHours > 8 ? 'text-amber-400' : 'text-gain'}`}>
               <Radio size={12} />
-              Canlı veri — {lastUpdatedText} itibarıyla üretildi
+              Canlı veri — son güncelleme {lastUpdatedText}
               {dataAgeHours != null && (
                 <span className="text-slate-500">
                   ({dataAgeHours < 1
@@ -292,6 +302,8 @@ export default function OpportunitiesPage() {
                   {dataAgeHours > 8 ? ' · güncelleme bekleniyor' : ''})
                 </span>
               )}
+              {/* İki hız: olaylar 20 dk'da bir, yapısal analiz 6 saatte bir */}
+              <span className="text-slate-500">· haber ve olaylar 20 dakikada bir taranır</span>
             </p>
           ) : (
             <p className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -309,100 +321,176 @@ export default function OpportunitiesPage() {
       {/* Özet kartları */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard
+          icon={Landmark}
+          label="Kesin Fırsat"
+          value={hasConvictionData ? certainCandidates.length : '—'}
+          iconBg="bg-gain/12 text-gain"
+        />
+        <SummaryCard
+          icon={ShieldCheck}
+          label="En Yüksek Kanıt Gücü"
+          value={hasConvictionData ? `${summary.topConviction}/100` : '—'}
+          iconBg="bg-accent/12 text-accent"
+        />
+        <SummaryCard
+          icon={Newspaper}
+          label="Kanıt Bulunan Aday"
+          value={hasConvictionData ? summary.withEvidence : '—'}
+          iconBg="bg-navy-800 text-slate-400"
+        />
+        <SummaryCard
           icon={Trophy}
           label="En Yüksek Skor"
           value={`${summary.topScore}/100`}
-          iconBg="bg-gain/12 text-gain"
         />
         <SummaryCard
           icon={Gauge}
           label={`Ortalama ${HORIZON_CONFIGS[horizon].label} Skoru`}
           value={`${summary.avgScore}/100`}
         />
-        <SummaryCard
-          icon={Flame}
-          label="Güçlü Potansiyel Aday"
-          value={summary.strongCount}
-          iconBg="bg-gain/12 text-gain"
-        />
-        <SummaryCard
-          icon={ShieldCheck}
-          label="Ort. Haber Güvenilirliği"
-          value={`${summary.avgReliability}/10`}
-          iconBg="bg-accent/12 text-accent"
-        />
-        <SummaryCard
-          icon={Newspaper}
-          label="Pozitif Haber Sayısı"
-          value={summary.positiveNewsTotal}
-          iconBg="bg-navy-800 text-slate-400"
-        />
       </div>
 
-      {/* Öne çıkanlar: skoru en yüksek 3 aday */}
-      {rankedCandidates.length >= 3 && (
-        <section>
-          <div className="mb-2 flex items-center gap-2">
-            <Trophy size={15} className="text-accent" />
-            <h3 className="text-sm font-semibold text-ink">Öne çıkanlar</h3>
-            <span className="text-xs text-slate-500">
-              {HORIZON_CONFIGS[horizon].label.toLowerCase()} skoruna göre ilk 3 aday
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {rankedCandidates.slice(0, 3).map((candidate) => (
-              <FeaturedCandidate
-                key={`feat-${candidate.id}`}
+      {/* KESİN FIRSATLAR — sayfanın ana bölümü */}
+      <section>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Landmark size={15} className="text-accent" />
+          <h3 className="text-sm font-semibold text-ink">Kesin Fırsatlar</h3>
+          <span className="text-xs text-slate-500">
+            arkasında somut bir olay olan ve en az iki farklı kanıtın doğruladığı adaylar
+          </span>
+        </div>
+
+        {!hasConvictionData ? (
+          <EmptyState
+            icon={Clock}
+            title="Kanıt taraması henüz çalışmadı"
+            body={
+              'Bu vadedeki adaylar kanıt motoru devreye girmeden önce üretilmiş. Bir sonraki ' +
+              'aday turu (6 saatte bir) tamamlandığında kesin fırsatlar burada listelenecek. ' +
+              'O zamana kadar aşağıdaki tam listeyi kullanabilirsin.'
+            }
+          />
+        ) : certainCandidates.length === 0 ? (
+          <EmptyState
+            icon={ShieldQuestion}
+            title="Bugün kesinlik eşiğini geçen fırsat yok"
+            body={
+              `Taranan adayların hiçbirinde, kanıt gücü ${CONVICTION_THRESHOLD}/100 eşiğini geçen ve ` +
+              'en az iki farklı türden kanıtla desteklenen bir kurulum bulunamadı. Bu normal bir ' +
+              'sonuçtur: sert ve doğrulanmış olaylar her gün çıkmaz. Zayıf sinyali güçlü gibi ' +
+              'göstermemek için liste boş bırakıldı.'
+            }
+          />
+        ) : (
+          <div className="space-y-3">
+            {certainCandidates.map((candidate) => (
+              <ShortTermCandidateCard
+                key={candidate.id}
                 candidate={candidate}
-                rank={candidate.rank}
+                horizon={horizon}
+                isInPortfolio={portfolioTickers.has(candidate.symbol)}
+                isInWatchlist={watchlistTickers.has(candidate.symbol)}
+                onAddToWatchlist={handleAddToWatchlist}
                 onShowDetail={setSelectedCandidate}
               />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Eşiğe yakın adaylar — vitrine giremedi ama sebebiyle birlikte gösterilir */}
+      {nearMissCandidates.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <ShieldQuestion size={14} className="text-amber-400" />
+            <h3 className="text-sm font-semibold text-slate-300">Eşiğe yakın olanlar</h3>
+            <span className="text-xs text-slate-500">kanıtı var ama yeterli değil</span>
+          </div>
+          <div className="space-y-2">
+            {nearMissCandidates.map((candidate) => (
+              <button
+                key={`near-${candidate.id}`}
+                type="button"
+                onClick={() => setSelectedCandidate(candidate)}
+                className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-navy-700 bg-navy-900 px-4 py-3 text-left transition-colors hover:border-navy-600 hover:bg-navy-850"
+              >
+                <span className="font-semibold text-ink">{candidate.symbol}</span>
+                <span
+                  className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${getConvictionColor(candidate.conviction.score).badge}`}
+                >
+                  Kanıt {candidate.conviction.score}/100
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
+                  {getGateFailureReason(candidate.conviction)}
+                </span>
+                <ArrowUpRight size={13} className="shrink-0 text-slate-500" />
+              </button>
             ))}
           </div>
         </section>
       )}
 
-      {/* Filtreler */}
-      <ShortTermFilters
-        filters={filters}
-        onFilterChange={(partial) => setFilters((f) => ({ ...f, ...partial }))}
-        sectors={sectors}
-        markets={markets}
-      />
+      {/* Tüm taranan adaylar — katlanmış; skor odaklı eski liste burada yaşar */}
+      <section>
+        <button
+          type="button"
+          onClick={() => setShowAllCandidates((v) => !v)}
+          className="flex w-full items-center gap-2 rounded-lg border border-navy-700 bg-navy-900 px-4 py-3 text-left transition-colors hover:bg-navy-850"
+        >
+          {showAllCandidates ? (
+            <ChevronDown size={15} className="text-slate-400" />
+          ) : (
+            <ChevronRight size={15} className="text-slate-400" />
+          )}
+          <span className="text-sm font-medium text-slate-300">
+            Taranan tüm adaylar ({rankedCandidates.length})
+          </span>
+          <span className="ml-auto text-xs text-slate-500">
+            kanıt filtresi olmadan, yalnızca skora göre
+          </span>
+        </button>
 
-      <p className="text-xs text-slate-500">{visibleCandidates.length} aday gösteriliyor.</p>
-
-      {/* Aday listesi */}
-      {visibleCandidates.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-navy-700 bg-navy-900/50 py-16 text-center">
-          <SearchX size={36} className="mb-3 text-slate-600" />
-          <p className="font-medium text-slate-300">Filtrelere uyan aday bulunamadı</p>
-          <p className="mt-1 text-sm text-slate-500">
-            Minimum skoru düşürmeyi veya filtreleri sıfırlamayı deneyin.
-          </p>
-          <button
-            type="button"
-            onClick={() => setFilters(DEFAULT_FILTERS)}
-            className="mt-4 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
-          >
-            Filtreleri Sıfırla
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {visibleCandidates.map((candidate) => (
-            <ShortTermCandidateCard
-              key={candidate.id}
-              candidate={candidate}
-              horizon={horizon}
-              isInPortfolio={portfolioTickers.has(candidate.symbol)}
-              isInWatchlist={watchlistTickers.has(candidate.symbol)}
-              onAddToWatchlist={handleAddToWatchlist}
-              onShowDetail={setSelectedCandidate}
+        {showAllCandidates && (
+          <div className="mt-3 space-y-3">
+            <ShortTermFilters
+              filters={filters}
+              onFilterChange={(partial) => setFilters((f) => ({ ...f, ...partial }))}
+              sectors={sectors}
+              markets={markets}
             />
-          ))}
-        </div>
-      )}
+            <p className="text-xs text-slate-500">{visibleCandidates.length} aday gösteriliyor.</p>
+
+            {visibleCandidates.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-navy-700 bg-navy-900/50 py-16 text-center">
+                <SearchX size={36} className="mb-3 text-slate-600" />
+                <p className="font-medium text-slate-300">Filtrelere uyan aday bulunamadı</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Minimum skoru düşürmeyi veya filtreleri sıfırlamayı deneyin.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
+                  className="mt-4 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+                >
+                  Filtreleri Sıfırla
+                </button>
+              </div>
+            ) : (
+              visibleCandidates.map((candidate) => (
+                <ShortTermCandidateCard
+                  key={candidate.id}
+                  candidate={candidate}
+                  horizon={horizon}
+                  isInPortfolio={portfolioTickers.has(candidate.symbol)}
+                  isInWatchlist={watchlistTickers.has(candidate.symbol)}
+                  onAddToWatchlist={handleAddToWatchlist}
+                  onShowDetail={setSelectedCandidate}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </section>
 
       <ShortTermDetailModal
         candidate={selectedCandidate}

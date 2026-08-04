@@ -260,12 +260,16 @@ export function estimatePublisherReliability(publisher = '') {
 
 /**
  * Canlı haber kaydını uygulamanın haber şemasına dönüştürür.
- * Sentiment/güvenilirlik AI analizi bağlanana kadar tarafsız varsayılır.
+ *
+ * Duygu ve güvenilirlik KURAL MOTORUNDAN gelir (toplayıcıdaki
+ * server/newsHeuristics.js): duygu başlık kalıplarından, güvenilirlik yayıncı
+ * itibarından. Arşivdeki eski kayıtlarda AI özeti (ai_summary_tr) bulunabilir;
+ * varsa gösterilir, yenilerinde üretilmez.
  */
 export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
   const ticker = fromYahooSymbol(article.symbol);
   const isTranslated = Boolean(article.titleTr);
-  const hasAi = Boolean(article.sentiment); // AI analizi çalıştıysa duygu dolu olur
+  const hasAiSummary = Boolean(article.aiSummaryTr); // yalnızca eski arşiv kayıtlarında
   return {
     id: `live-${article.id}`,
     ticker,
@@ -279,20 +283,19 @@ export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
     content:
       (isTranslated ? `Orijinal başlık: "${article.title}"\n\n` : '') +
       (article.aiSummaryTr
-        ? `AI özeti: ${article.aiSummaryTr}\n\nTam metin için habere tıklayın.`
-        : 'Bu haber canlı kaynaktan otomatik çekildi. AI analiz motoru bağlandığında ' +
-          'özet, duygu analizi ve güvenilirlik gerekçesi otomatik üretilecektir.'),
+        ? `Özet: ${article.aiSummaryTr}\n\nTam metin için habere tıklayın.`
+        : 'Bu haber canlı kaynaktan otomatik çekildi; tam metin için habere tıklayın.'),
     type: 'Genel Haber',
     date: article.publishedAt ?? new Date().toISOString(),
     source: article.publisher,
     sentiment: article.sentiment ?? 'neutral',
     reliability: article.reliability ?? estimatePublisherReliability(article.publisher),
-    reliabilityReason: hasAi
-      ? 'Güvenilirlik, kaynağın itibarı ve başlığın tonuna göre AI (Haiku 4.5) tarafından değerlendirildi.'
-      : 'Güvenilirlik puanı şimdilik kaynak/yayıncı bazlı tahmindir; AI analizi henüz uygulanmadı.',
-    sentimentExplanation: hasAi
-      ? 'Duygu, haberin ilgili hisse açısından tonuna göre AI (Haiku 4.5) tarafından belirlendi.'
-      : 'Duygu analizi henüz uygulanmadı; AI motoru bağlanana kadar nötr varsayılır.',
+    reliabilityReason:
+      'Güvenilirlik, haberin geldiği yayıncının itibarına göre verilir (ajans/resmi bildirim ' +
+      'yüksek, spekülatif bloglar düşük).',
+    sentimentExplanation: hasAiSummary
+      ? 'Duygu, arşivdeki AI analizinden gelir.'
+      : 'Duygu, başlıktaki olay ve ton kalıplarından belirlenir; kararsız başlıklar nötr sayılır.',
     confirmedSources: [article.publisher],
     isLive: true,
     link: article.link,

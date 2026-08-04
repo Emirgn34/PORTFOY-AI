@@ -70,6 +70,52 @@ export const MOCK_SHORT_TERM_CANDIDATES = [
       nearestSupport: { level: 197.3, touches: 4, daysSinceTouch: 12, distancePct: -3.7 },
       nearestResistance: { level: 212.5, touches: 3, daysSinceTouch: 26, distancePct: 3.8 },
     },
+    // Kanıt bloğu (canlı veride server/evidence.js üretir) — kesinlik kapısını GEÇEN örnek
+    conviction: {
+      score: 91,
+      ruleScore: 94,
+      aiCertainty: 88,
+      aiDecisive: true,
+      categories: ['policy', 'technical'],
+      verdict:
+        'ABD yönetimi veri merkezi çiplerine getirilen ihracat kısıtından muafiyet tanıdığı için ' +
+        'şirketin en büyük pazarındaki sipariş akışı önündeki engel kalktı.',
+      verdictRisk: 'Muafiyetin kapsamı idari kararla daraltılabilir.',
+      evidence: [
+        {
+          category: 'policy',
+          type: 'Politika kararı',
+          direction: 'up',
+          strength: 83,
+          ageDays: 1,
+          sourceCount: 3,
+          reliability: 9,
+          sources: ['Reuters'],
+          title: 'ABD, veri merkezi çiplerine ihracat muafiyeti tanıdı',
+          link: null,
+          text:
+            'Reuters: "ABD, veri merkezi çiplerine ihracat muafiyeti tanıdı" — düzenleyici/politika ' +
+            'kaynaklı bir karar 3 ayrı yayıncı tarafından doğrulandı.',
+        },
+        {
+          category: 'technical',
+          type: 'Teknik kırılım',
+          direction: 'up',
+          strength: 78,
+          ageDays: null,
+          sourceCount: 3,
+          reliability: null,
+          sources: ['Fiyat verisi'],
+          title: 'Fiyat 52 haftanın zirvesinde',
+          link: null,
+          text:
+            'Fiyat 52 haftanın zirvesinde (zirveye uzaklık %2.7) ve son 20 günde %9.4 yükseldi. ' +
+            'İşlem hacmi normalin belirgin üzerinde; hareket hacimle teyitli.',
+        },
+      ],
+      contradictions: [],
+      penalties: [],
+    },
     expectation: {
       horizonDays: 20,
       horizonLabel: '~4 hafta',
@@ -178,6 +224,37 @@ export const MOCK_SHORT_TERM_CANDIDATES = [
     sectorTrend: 'Kamu yazılım harcamaları artıyor',
     previousRank: null,
     estimatedHorizon: '1-3 hafta',
+    // Kesinlik kapısını GEÇEMEYEN örnek: olay var ama tek türden ve teknik teyit zayıf
+    conviction: {
+      score: 66,
+      ruleScore: 70,
+      aiCertainty: 74,
+      aiDecisive: true,
+      categories: ['analyst'],
+      verdict:
+        'Çok yıllı kamu sözleşmesi sonrası üç kurum hedef fiyatını yükseltti; beklenti yukarı ' +
+        'revize edildi.',
+      verdictRisk: 'Hisse zaten yüksek çarpanlarla işlem görüyor, haber fiyata yansımış olabilir.',
+      evidence: [
+        {
+          category: 'analyst',
+          type: 'Analist yükseltmesi',
+          direction: 'up',
+          strength: 70,
+          ageDays: 3,
+          sourceCount: 2,
+          reliability: 7,
+          sources: ['MarketWatch'],
+          title: 'Üç aracı kurum hedef fiyatını yükseltti',
+          link: null,
+          text:
+            'MarketWatch: "Üç aracı kurum hedef fiyatını yükseltti". 14 analistin ortalama hedefi ' +
+            '158,40 — bugünkü fiyatın %11 üzerinde.',
+        },
+      ],
+      contradictions: [],
+      penalties: ['Tek türden kanıt var; farklı bir kaynak türünden teyit yok.'],
+    },
     reasonShort:
       'Teyitli sözleşme katalizörü güçlü; ancak yüksek volatilite ve değerleme riski skoru sınırlıyor.',
     reasonDetailed:

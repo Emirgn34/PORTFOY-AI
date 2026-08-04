@@ -8,6 +8,7 @@ import {
   HORIZON_CONFIGS,
 } from '../utils/opportunityScoring.js';
 import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
+import { getConvictionColor } from '../utils/conviction.js';
 
 /** Önceki listeye göre sıra değişim göstergesi (↑2 / ↓1 / — / Yeni). */
 function RankChange({ rank, previousRank }) {
@@ -157,6 +158,14 @@ export default function ShortTermCandidateCard({
           <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${scoreColors.badge}`}>
             {candidate.scoreLabel}
           </span>
+          {candidate.conviction?.score > 0 && (
+            <span
+              className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${getConvictionColor(candidate.conviction.score).badge}`}
+              title="Kanıt gücü: önerinin arkasındaki somut olayın sağlamlığı"
+            >
+              Kanıt {candidate.conviction.score}/100
+            </span>
+          )}
           {candidate.estimatedHorizon && (
             <span className="flex items-center gap-1 text-[10px] text-slate-500">
               <Clock size={10} />
@@ -175,11 +184,13 @@ export default function ShortTermCandidateCard({
           )}
         </div>
 
-        {/* Katalizör + gerekçe */}
+        {/* Gerekçe: kanıt cümlesi varsa o, yoksa en güçlü katalizör başlığı */}
         <div className="min-w-0 flex-1 space-y-2">
           <p className="flex items-start gap-1.5 text-sm font-medium leading-snug text-ink">
             <Sparkle size={14} className="mt-0.5 shrink-0 text-accent-soft" />
-            <span className="line-clamp-2">{candidate.strongestCatalystTitle}</span>
+            <span className="line-clamp-2">
+              {candidate.conviction?.verdict || candidate.strongestCatalystTitle}
+            </span>
           </p>
           <p className="line-clamp-2 text-xs leading-relaxed text-slate-400">
             {candidate.reasonShort}

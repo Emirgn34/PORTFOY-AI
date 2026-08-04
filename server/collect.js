@@ -14,24 +14,14 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote, fetchNewsForSymbolRaw, addTurkishTitles, FX_SYMBOLS } from './marketData.js';
-import { analyzeArticles, isAiEnabled } from './aiAnalysis.js';
+import { buildNewsSignals } from './newsHeuristics.js';
 import { buildCandidates, CANDIDATE_UNIVERSE } from './candidateBuilder.js';
 import { scoreAndRankCandidates } from '../src/utils/opportunityScoringCore.js';
 import { getUsUniverse } from './usUniverse.js';
 import { selectDeepPool } from './preScreen.js';
-
-/**
- * AI analizi için TUR BÜTÇESİ (mutlak zaman damgası).
- *
- * Haiku çağrıları hesabın hız limitine göre dakikalar sürebiliyor; sınırsız
- * bırakılırsa veri turu workflow zaman aşımına düşer. Bu tarihten sonra yeni
- * AI partisi başlatılmaz, kalanlar sonraki tura kalır. Backfill kendini onaran
- * bir döngü olduğu için erteleme kayıp değildir.
- *
- * 8 dk: veri workflow'unun 15 dk'lık zaman aşımına, fiyat/haber çekimi ve
- * Supabase yazımları için rahat pay bırakır.
- */
-const AI_DEADLINE = Date.now() + 8 * 60 * 1000;
+import { confirmConviction, isConvictionAiEnabled } from './convictionAnalysis.js';
+import { runEventWatch, getWatchPlan } from './eventWatch.js';
+import { NEAR_MISS_THRESHOLD } from '../src/utils/conviction.js';
 import { mapLimit } from './concurrency.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -85,9 +75,26 @@ async function getTrackedSymbols() {
   return DEFAULT_SYMBOLS;
 }
 
+/**
+ * Fiyat + kur çeker, Supabase'e yazar ve HAM quote nesnelerini döndürür.
+ * Ham quote'lar olay nöbetine verilir: hacim patlaması ve 52 hafta kırılımı
+ * gibi taze sinyaller ikinci bir ağ çağrısı yapılmadan oradan hesaplanır.
+ */
 async function collectQuotes(symbols) {
-  const results = await yahooFinance.quote([...symbols, ...FX_SYMBOLS]);
-  const list = (Array.isArray(results) ? results : [results]).map(mapQuote);
+  const rawMap = new Map();
+  const chunks = [];
+  const all = [...symbols, ...FX_SYMBOLS];
+  for (let i = 0; i < all.length; i += 200) chunks.push(all.slice(i, i + 200));
+
+  const raw = [];
+  for (const chunk of chunks) {
+    const results = await yahooFinance.quote(chunk);
+    for (const q of Array.isArray(results) ? results : [results]) {
+      raw.push(q);
+      rawMap.set(q.symbol, q);
+    }
+  }
+  const list = raw.map(mapQuote);
 
   const fxRows = [];
   const quoteRows = [];
@@ -114,40 +121,40 @@ async function collectQuotes(symbols) {
     await sb('fx_rates', { method: 'POST', body: fxRows, prefer: 'resolution=merge-duplicates' });
   }
   console.log(`Fiyat: ${quoteRows.length} sembol, kur: ${fxRows.length} kayıt yazıldı.`);
+  return rawMap;
 }
 
-async function collectNews(symbols) {
+/**
+ * Haber toplama.
+ *
+ * `translateFor`: yalnızca bu sembollerin başlıkları Türkçeye çevrilir.
+ * Nöbet listesi ~100 sembole çıktığı için hepsini çevirmek turu gereksiz
+ * uzatırdı; kullanıcının kendi sembolleri anında çevrilir, vitrindekiler aday
+ * turundaki enrichGatedTitles adımında toparlanır.
+ */
+async function collectNews(symbols, { translateFor = new Set() } = {}) {
   let total = 0;
-  for (const symbol of symbols) {
+  await mapLimit(symbols, 5, async (symbol) => {
     try {
       const articles = await fetchNewsForSymbolRaw(yahooFinance, symbol);
-      if (articles.length === 0) continue;
+      if (articles.length === 0) return;
 
-      // Yalnızca veritabanında olmayan makaleler işlenir (çeviri maliyeti için)
+      // Yalnızca veritabanında olmayan makaleler işlenir
       const existing = await sb(
         `news?symbol=eq.${encodeURIComponent(symbol)}&select=id`
       );
       const known = new Set(existing.map((r) => r.id));
-      const fresh = await addTurkishTitles(
-        articles.filter((a) => !known.has(a.id)),
-        symbol
-      );
-      if (fresh.length === 0) continue;
-
-      // Yeni makalelere AI duygu/güvenilirlik/özet analizi (anahtar yoksa boş döner)
-      const market = symbol.endsWith('.IS') ? 'BIST' : 'ABD';
-      const analysis = await analyzeArticles(
-        fresh.map((a) => ({ id: a.id, title: a.title, publisher: a.publisher, market })),
-        { deadline: AI_DEADLINE }
-      );
+      const unseen = articles.filter((a) => !known.has(a.id));
+      const fresh = translateFor.has(symbol) ? await addTurkishTitles(unseen, symbol) : unseen;
+      if (fresh.length === 0) return;
 
       await sb('news', {
         method: 'POST',
         body: fresh.map((a) => {
-          const ai = analysis.get(a.id);
+          // Duygu + güvenilirlik kural motorundan gelir (ücretsiz, anında).
           // TÜM satırlar AYNI anahtar kümesine sahip olmalı; aksi halde PostgREST
           // toplu insert'i "All object keys must match" (PGRST102) ile reddeder.
-          // AI analizi gelmeyen haberlerde alanlar null olarak gönderilir.
+          const signals = buildNewsSignals({ title: a.titleTr || a.title, publisher: a.publisher });
           return {
             id: a.id,
             symbol: a.symbol,
@@ -156,9 +163,8 @@ async function collectNews(symbols) {
             publisher: a.publisher,
             link: a.link,
             published_at: a.publishedAt,
-            sentiment: ai?.sentiment ?? null,
-            reliability: ai?.reliability ?? null,
-            ai_summary_tr: ai?.summaryTr ?? null,
+            sentiment: signals.sentiment,
+            reliability: signals.reliability,
           };
         }),
         prefer: 'resolution=ignore-duplicates', // eski haberler korunur, yeniler eklenir
@@ -167,50 +173,36 @@ async function collectNews(symbols) {
     } catch (err) {
       console.error(`[news] ${symbol}: ${err.message}`);
     }
-  }
+  });
   console.log(`Haber: ${symbols.length} sembol tarandı, ${total} yeni makale eklendi.`);
 }
 
 /**
- * Henüz AI analizi yapılmamış (sentiment NULL) eski haberleri kademeli olarak
- * analiz eder. Her turda sınırlı sayıda işlenir; birkaç tur içinde tüm arşiv
- * AI'ya kavuşur. Maliyet turu başına sabit kalır (self-healing backfill).
+ * Sinyalsiz (sentiment NULL) eski haberleri kural motoruyla doldurur.
+ *
+ * Eskiden bu adım her satırı Haiku'ya gönderiyordu ve maliyetin ana kaynağıydı:
+ * tüm ABD taraması haber tablosunu sürekli beslediği için kuyruk hiç boşalmıyor,
+ * 20 dakikada bir 50 makale ücretli olarak analiz ediliyordu. Artık işlem yerel
+ * ve ücretsiz olduğu için parti çok daha büyük tutulabiliyor; arşiv birkaç turda
+ * kapanır ve sonra bu adım hiçbir şey yapmaz.
  */
-async function backfillNewsAnalysis(limit = 50) {
-  if (!isAiEnabled()) return;
+async function backfillNewsSignals(limit = 400) {
   const rows = await sb(
-    `news?sentiment=is.null&select=id,symbol,title,title_tr,publisher&order=published_at.desc.nullslast&limit=${limit}`
+    `news?sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=${limit}`
   );
   if (!rows?.length) return;
 
-  // Her parti biter bitmez yazılır (toplu değil): tur zaman aşımına düşerse
-  // o ana kadar analiz edilmiş haberler kalıcı olur, ödenmiş token'lar yanmaz.
   let updated = 0;
-  await analyzeArticles(
-    rows.map((r) => ({
-      id: r.id,
-      title: r.title_tr || r.title,
-      publisher: r.publisher,
-      market: r.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
-    })),
-    {
-      deadline: AI_DEADLINE,
-      onBatch: async (batch) => {
-        for (const [id, ai] of batch) {
-          try {
-            await sb(`news?id=eq.${encodeURIComponent(id)}`, {
-              method: 'PATCH',
-              body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
-            });
-            updated++;
-          } catch (err) {
-            console.error(`[backfill] ${id}: ${err.message}`);
-          }
-        }
-      },
+  await mapLimit(rows, 6, async (r) => {
+    const signals = buildNewsSignals({ title: r.title_tr || r.title, publisher: r.publisher });
+    try {
+      await sb(`news?id=eq.${encodeURIComponent(r.id)}`, { method: 'PATCH', body: signals });
+      updated++;
+    } catch (err) {
+      console.error(`[backfill] ${r.id}: ${err.message}`);
     }
-  );
-  console.log(`Backfill: ${updated}/${rows.length} eski haber AI ile güncellendi.`);
+  });
+  console.log(`Backfill: ${updated}/${rows.length} eski haberin sinyalleri dolduruldu.`);
 }
 
 /** Bir sembolün son haberlerini Supabase'den okur (aday üretici için). */
@@ -224,10 +216,10 @@ async function getNewsForSymbol(symbol) {
 const DEEP_POOL_SIZE = 300;
 /** Her vade için derin analiz + vitrin buffer'ı (ilk 30'u garantilemek için biraz fazlası). */
 const DISPLAY_BUFFER = 45;
-/** AI haber analizi yapılacak vitrin adayı sayısı (her vade). Maliyet/süre sınırı:
- *  AI (Haiku) yavaş olduğundan tüm derin havuza değil, yalnızca vitrindeki ilk
- *  30+30'a uygulanır; gerisi data workflow backfill'iyle zamanla dolar. */
-const AI_TOP = 30;
+/** Başlık çevirisi + kesinlik (AI) turuna girecek vitrin adayı sayısı (her vade).
+ *  Tüm derin havuza değil yalnızca vitrindeki ilk 30+30'a uygulanır; bu, hem
+ *  çeviri trafiğini hem de tek AI kaleminin maliyetini sabit tutar. */
+const GATED_TOP = 30;
 
 /** Büyük sembol listesini parçalara bölerek toplu quote çeker (ham quote nesneleri). */
 async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
@@ -246,9 +238,9 @@ async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
 }
 
 /**
- * Sembollerin haberlerini RSS'ten çekip YALNIZCA yeni HAM makaleleri kaydeder
- * (çeviri ve AI YOK — onlar gated sete enrichGatedNews'te uygulanır). Faz 2'de
- * 300 sembolün haberini ucuza biriktirmek için.
+ * Sembollerin haberlerini RSS'ten çekip YALNIZCA yeni makaleleri kaydeder.
+ * Çeviri yapılmaz (o, vitrindeki sembollere enrichGatedTitles'ta uygulanır);
+ * duygu/güvenilirlik kural motorundan geldiği için burada ücretsiz doldurulur.
  */
 async function collectNewsRaw(symbols) {
   let total = 0;
@@ -269,6 +261,7 @@ async function collectNewsRaw(symbols) {
           publisher: a.publisher,
           link: a.link,
           published_at: a.publishedAt,
+          ...buildNewsSignals({ title: a.title, publisher: a.publisher }),
         })),
         prefer: 'resolution=ignore-duplicates',
       });
@@ -281,55 +274,48 @@ async function collectNewsRaw(symbols) {
 }
 
 /**
- * Gated sembollerin (vitrin adayları) AI'sız haberlerine Türkçe çeviri + AI
- * duygu/güvenilirlik/özet ekler. Deep skor öncesi çalışır ki aday verisi
- * AI'lı haber bileşenini içersin.
+ * Vitrindeki (gated) ABD sembollerinin başlıklarını Türkçeye çevirir.
+ *
+ * Çeviri ücretsiz gtx ucundan yapılır ve YALNIZCA vitrine giren sembollere
+ * uygulanır: 300 sembolün tamamını çevirmek gereksiz trafik olurdu, kullanıcı
+ * zaten yalnızca listeye çıkan adayların haberlerini okuyor. Türkçe başlık aynı
+ * zamanda kural motorunun ton tespitini de iyileştirir (çift dilli kalıplar).
  */
-async function enrichGatedNews(symbols) {
-  if (!symbols.length) return;
+async function enrichGatedTitles(symbols) {
+  const usSymbols = symbols.filter((s) => !s.endsWith('.IS')); // BIST başlıkları zaten Türkçe
+  if (!usSymbols.length) return;
+
   let updated = 0;
-  await mapLimit(symbols, 4, async (symbol) => {
+  await mapLimit(usSymbols, 4, async (symbol) => {
     let rows;
     try {
       rows = await sb(
-        `news?symbol=eq.${encodeURIComponent(symbol)}&sentiment=is.null&select=id,title,title_tr,publisher&order=published_at.desc.nullslast&limit=8`
+        `news?symbol=eq.${encodeURIComponent(symbol)}&title_tr=is.null&select=id,title,publisher&order=published_at.desc.nullslast&limit=8`
       );
     } catch {
       return;
     }
     if (!rows?.length) return;
 
-    // ABD haberlerinde eksik Türkçe başlıkları çevir (BIST zaten Türkçe)
-    if (!symbol.endsWith('.IS')) {
-      const needTr = rows.filter((r) => !r.title_tr).map((r) => ({ id: r.id, title: r.title }));
-      const withTr = await addTurkishTitles(needTr, symbol);
-      for (const a of withTr) {
-        if (!a.titleTr) continue;
-        try {
-          await sb(`news?id=eq.${encodeURIComponent(a.id)}`, { method: 'PATCH', body: { title_tr: a.titleTr } });
-        } catch {}
-        const row = rows.find((r) => r.id === a.id);
-        if (row) row.title_tr = a.titleTr;
-      }
-    }
-
-    const market = symbol.endsWith('.IS') ? 'BIST' : 'ABD';
-    const analysis = await analyzeArticles(
-      rows.map((r) => ({ id: r.id, title: r.title_tr || r.title, publisher: r.publisher, market }))
+    const withTr = await addTurkishTitles(
+      rows.map((r) => ({ id: r.id, title: r.title })),
+      symbol
     );
-    for (const r of rows) {
-      const ai = analysis.get(r.id);
-      if (!ai) continue;
+    for (const a of withTr) {
+      if (!a.titleTr) continue;
+      const publisher = rows.find((r) => r.id === a.id)?.publisher;
       try {
-        await sb(`news?id=eq.${encodeURIComponent(r.id)}`, {
+        // Başlık Türkçeleşince ton yeniden ölçülür — çeviri sonrası kalıplar
+        // (ör. "hedef fiyatı yükseltti") daha iyi eşleşir.
+        await sb(`news?id=eq.${encodeURIComponent(a.id)}`, {
           method: 'PATCH',
-          body: { sentiment: ai.sentiment, reliability: ai.reliability, ai_summary_tr: ai.summaryTr },
+          body: { title_tr: a.titleTr, ...buildNewsSignals({ title: a.titleTr, publisher }) },
         });
         updated++;
       } catch {}
     }
   });
-  console.log(`Gated haber AI: ${symbols.length} sembolde ${updated} makale güncellendi.`);
+  console.log(`Gated başlık çevirisi: ${usSymbols.length} sembolde ${updated} başlık çevrildi.`);
 }
 
 /** Aday satırlarını vadeye göre skorlayıp ilk N'in YAHOO sembollerini döndürür. */
@@ -378,21 +364,19 @@ async function collectCandidates(trackedSymbols) {
       ...topYahooSymbols(lightRows, 'long', DISPLAY_BUFFER, referenceMs),
     ]),
   ];
-  // AI haber yalnızca vitrindeki ilk 30+30'a (deep havuzun tamamına değil) —
-  // AI yavaş olduğundan maliyet/süre burada sınırlanır.
+  // Çeviri yalnızca vitrindeki ilk 30+30'a (deep havuzun tamamına değil).
   const gatedSet = [
     ...new Set([
-      ...topYahooSymbols(lightRows, 'short', AI_TOP, referenceMs),
-      ...topYahooSymbols(lightRows, 'long', AI_TOP, referenceMs),
+      ...topYahooSymbols(lightRows, 'short', GATED_TOP, referenceMs),
+      ...topYahooSymbols(lightRows, 'long', GATED_TOP, referenceMs),
     ]),
   ];
-  console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analiz, ${gatedSet.length} sembol AI haber.`);
+  console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analiz, ${gatedSet.length} sembol vitrin.`);
 
   // --- FAZ 3: derin analiz + YAZ ---
-  // Aday yazımı AI'dan ÖNCE yapılır; böylece tur, yavaş Haiku çağrılarına takılıp
-  // timeout'a düşmez. AI haber zenginleştirmesi en sonda "olabildiğince" çalışır
-  // (Haber sayfası + sonraki turun kartları için). Deep build, haber tablosunda
-  // ZATEN var olan (önceki turlardan AI'lı) duyguları kullanır.
+  // Aday yazımı ağ bağımlı zenginleştirmelerden ÖNCE yapılır; böylece tur en
+  // sondaki adımlarda takılsa bile vitrin güncellenmiş olur. Başlık çevirisi en
+  // sonda "olabildiğince" çalışır (Haber sayfası + sonraki turun kartları için).
   const deepRows = await buildCandidates(deepSet, { yahooFinance, getNewsForSymbol, deep: true, quoteMap });
   if (deepRows.length === 0) {
     console.log('Faz 3: derin aday üretilemedi.');
@@ -410,6 +394,16 @@ async function collectCandidates(trackedSymbols) {
     if (lightInTop > 0) {
       console.warn(`[uyarı] ${horizon} ilk 30'da ${lightInTop} sembolün 2 yıllık verisi çekilemedi.`);
     }
+  }
+
+  // --- Kesinlik teyidi (turun TEK AI adımı) ---
+  // Yalnızca kanıtı eşiğe yakın olan finalistlere uygulanır; AI kesinliği
+  // yalnızca AŞAĞI çekebildiği için bu adım atlanırsa (anahtar yok, hata,
+  // zaman aşımı) vitrin kural skorlarıyla çalışmaya devam eder.
+  try {
+    await confirmFinalists(deepRows);
+  } catch (err) {
+    console.error(`[kesinlik] adım atlandı: ${err.message}`);
   }
 
   // --- Yaz + bayat temizliği (jenerasyon) ---
@@ -441,14 +435,58 @@ async function collectCandidates(trackedSymbols) {
     console.error(`[snapshot] adım atlandı: ${err.message}`);
   }
 
-  // --- AI haber zenginleştirme (en sonda, OLABİLDİĞİNCE) ---
+  // --- Başlık çevirisi (en sonda, OLABİLDİĞİNCE) ---
   // Adaylar zaten yazıldı; bu adım yavaş olsa/timeout'a düşse bile vitrin etkilenmez.
-  // Vitrindeki ilk 30+30'un haberlerine duygu/çeviri/özet ekler → Haber sayfası ve
-  // BİR SONRAKİ turun kartları için. (Bu turun kartları DB'de zaten var olan AI'yı kullandı.)
+  // Vitrindeki ilk 30+30'un başlıklarını Türkçeleştirir → Haber sayfası ve BİR
+  // SONRAKİ turun kartları için.
   try {
-    await enrichGatedNews(gatedSet);
+    await enrichGatedTitles(gatedSet);
   } catch (err) {
     console.error(`[enrich] adım atlandı: ${err.message}`);
+  }
+}
+
+/**
+ * Kanıtı eşiğe yakın olan adayları AI teyidinden geçirir.
+ *
+ * Aynı sembolün kısa ve uzun vade adayları AYNI conviction nesnesini paylaşır
+ * (buildCandidatePair tek nesne üretip ikisine de koyar), bu yüzden AI sembol
+ * başına BİR kez çalışır ve sonuç iki satıra da yazılır — aynı kanıt için iki
+ * kez ödeme yapılmaz.
+ */
+async function confirmFinalists(rows) {
+  if (!isConvictionAiEnabled()) {
+    console.log('Kesinlik teyidi: ANTHROPIC_API_KEY yok, kural skorlarıyla devam ediliyor.');
+    return;
+  }
+
+  const bySymbol = new Map();
+  for (const r of rows) {
+    const c = r.data?.conviction;
+    if (!c || c.score < NEAR_MISS_THRESHOLD || !c.evidence?.length) continue;
+    if (!bySymbol.has(r.symbol)) {
+      bySymbol.set(r.symbol, {
+        symbol: r.data.symbol,
+        companyName: r.data.companyName,
+        sector: r.data.sector,
+        conviction: c,
+        rows: [],
+      });
+    }
+    bySymbol.get(r.symbol).rows.push(r);
+  }
+
+  const finalists = [...bySymbol.values()].sort((a, b) => b.conviction.score - a.conviction.score);
+  if (finalists.length === 0) {
+    console.log('Kesinlik teyidi: eşiğe yakın aday yok, AI çağrısı yapılmadı.');
+    return;
+  }
+
+  await confirmConviction(finalists);
+
+  // Teyit edilmiş kesinliği o sembolün tüm aday satırlarına yaz
+  for (const f of finalists) {
+    for (const r of f.rows) r.data.conviction = f.conviction;
   }
 }
 
@@ -482,25 +520,42 @@ async function snapshotScores(rows) {
   console.log(`Backtest: ${snapshots.length} skor anlık görüntüsü kaydedildi.`);
 }
 
-// COLLECT_MODE ile iş ikiye ayrılır:
-//   'data' (varsayılan): fiyat + kur + haber + AI backfill — sık çalışır (20 dk).
-//   'candidates': yalnızca fırsat adayı üretimi — pahalı (geçmiş grafik), seyrek
-//                 çalışır (6 saat). Adaylar zaten kendi fiyatını/geçmişini çeker
-//                 ve haberleri DB'den okur; fiyat/haber işinden bağımsızdır.
+// COLLECT_MODE ile iş ikiye ayrılır — AYRIM HIZ ÜZERİNEDİR:
+//   'data' (varsayılan, 20 dk): fiyat + kur + TAZE HABER + olay nöbeti. Hızlı
+//                 değişen her şey burada. Vitrindeki adayların kanıtı bu turda
+//                 tazelenir; yeni bir olay 6 saat değil ~20 dakika içinde görünür.
+//   'candidates' (6 saat): evren taraması + 2 yıllık grafik + temel veriler.
+//                 Yavaş değişen, pahalı iş. Sık koşulamaz, koşması da gerekmez.
 const MODE = process.env.COLLECT_MODE || 'data';
 const symbols = await getTrackedSymbols();
-console.log(`Mod: ${MODE} | AI: ${isAiEnabled() ? 'AÇIK (Haiku 4.5)' : 'KAPALI'} | ${symbols.length} sembol izleniyor`);
 
 if (MODE === 'candidates') {
+  console.log(`Mod: ${MODE} | ${symbols.length} sembol izleniyor`);
   await collectCandidates(symbols);
 } else {
-  await collectQuotes(symbols);
-  await collectNews(symbols);
-  // Eski AI'sız haberleri kademeli doldur (izole; hata olsa da akış sürer)
+  // Nöbet planı: değerlendirme tüm vitrine, haber çekimi önceliklendirilmiş alt kümeye
+  const plan = await getWatchPlan(sb, symbols);
+  console.log(
+    `Mod: ${MODE} | nöbet: ${plan.evaluate.length} sembol değerlendirilecek, ` +
+      `${plan.fetch.length} sembolün haberi çekilecek (${symbols.length} izlenen her turda)`
+  );
+
+  const quoteMap = await collectQuotes(plan.evaluate);
+  await collectNews(plan.fetch, { translateFor: new Set(symbols) });
+
+  // Sinyalsiz eski haberleri kural motoruyla doldur (ücretsiz; izole)
   try {
-    await backfillNewsAnalysis();
+    await backfillNewsSignals();
   } catch (err) {
     console.error(`[backfill] adım atlandı: ${err.message}`);
+  }
+
+  // Olay nöbeti: taze haberle kanıtı yeniden değerlendir (izole — hata olsa da
+  // fiyat/haber toplama başarılı sayılır)
+  try {
+    await runEventWatch({ sb, quoteMap, getNewsForSymbol });
+  } catch (err) {
+    console.error(`[nöbet] adım atlandı: ${err.message}`);
   }
 }
 console.log('Toplama tamamlandı.');

@@ -1,167 +1,194 @@
-import { Anchor, Ban } from 'lucide-react';
+import { ShieldCheck, TrendingUp, Target, AlertTriangle, Ban } from 'lucide-react';
 import { formatCurrency } from '../utils/portfolioCalculations.js';
+import {
+  buildEntryPlan,
+  describeLevel,
+  getEntryStatusText,
+  getBandPositionText,
+} from '../utils/priceLevels.js';
 
 /**
- * "Bu hisse normalde nerede geziyor?" kartı.
+ * "Nereden alınır, nerede zorlanır?" kartı.
  *
- * Tipik işlem bandını (son ~1 yılın tazelik ağırlıklı %20–%80 aralığı) bir
- * şerit üzerinde gösterir; üzerine bugünkü fiyatı ve geçmişte birden çok kez
- * dokunulmuş destek/direnç seviyelerini işaretler. Veri yoksa (hafif analiz)
- * bileşen hiç render edilmez.
+ * Önceki sürüm seviyeleri ince çizgiler + tooltip olarak gösteriyordu; mobilde
+ * tooltip hiç açılmadığı için sayılar görünmez kalıyordu ve "destek/direnç"
+ * terimleri açıklanmadan kullanılıyordu. Bu sürümde her seviye ETİKETLİ ve
+ * kendi cümlesiyle listelenir: kaç kez test edilmiş, bugünkü fiyata uzaklığı ne.
  */
 export default function PriceLevelsCard({ structure, price, currency }) {
   if (!structure || !price) return null;
 
-  const { bandLow, bandHigh, bandMid, pctVsBandMid, bandPosition, supports, resistances } =
-    structure;
+  const { bandLow, bandHigh, bandMid, supports = [], resistances = [] } = structure;
+  const fmt = (v) => formatCurrency(v, currency);
+  const plan = buildEntryPlan(structure, price);
 
+  // Şerit ölçeği: tüm seviyeler + band + fiyat sığsın
   const allLevels = [...supports, ...resistances].map((l) => l.level);
-  const lo = Math.min(bandLow, price, ...allLevels);
+  const lo = Math.min(bandLow, price, ...allLevels, plan?.invalidation ?? Infinity);
   const hi = Math.max(bandHigh, price, ...allLevels);
-  const pad = (hi - lo || price * 0.05) * 0.1;
+  const pad = (hi - lo || price * 0.05) * 0.12;
   const min = lo - pad;
   const max = hi + pad;
   const pos = (v) => ((v - min) / (max - min)) * 100;
 
-  const fmt = (v) => formatCurrency(v, currency);
-
-  const positionText =
-    bandPosition === 'below'
-      ? `Şu anki fiyat, bandın ortasının %${Math.abs(pctVsBandMid)} ALTINDA.`
-      : bandPosition === 'above'
-        ? `Şu anki fiyat, bandın ortasının %${Math.abs(pctVsBandMid)} ÜSTÜNDE.`
-        : `Şu anki fiyat bandın içinde (ortaya göre %${pctVsBandMid > 0 ? '+' : ''}${pctVsBandMid}).`;
-
-  const positionClass =
-    bandPosition === 'below' ? 'text-gain' : bandPosition === 'above' ? 'text-amber-400' : 'text-slate-400';
-
   return (
-    <div className="rounded-lg border border-navy-700/60 bg-navy-850 p-4">
-      <p className="text-sm leading-relaxed text-slate-300">
-        Bu hisse son {structure.bandDays} işlem gününün çoğunu{' '}
-        <span className="font-semibold text-ink">
-          {fmt(bandLow)} – {fmt(bandHigh)}
-        </span>{' '}
-        aralığında geçirdi.{' '}
-        <span className={`font-semibold ${positionClass}`}>{positionText}</span>
-      </p>
+    <div className="space-y-4">
+      {/* 1. Bu hisse normalde nerede geziyor? */}
+      <div className="rounded-lg border border-navy-700/60 bg-navy-850 p-4">
+        <p className="text-sm leading-relaxed text-slate-300">
+          Bu hisse son {structure.bandDays} işlem gününün çoğunu{' '}
+          <span className="font-semibold text-ink">
+            {fmt(bandLow)} – {fmt(bandHigh)}
+          </span>{' '}
+          aralığında geçirdi. {getBandPositionText(structure)}
+        </p>
 
-      {/* Band şeridi: üstte bugünkü fiyat, altta band sınırları ve seviyeler */}
-      <div className="relative mt-9 mb-7 h-3 rounded-full bg-navy-700/60">
-        <div
-          className="absolute inset-y-0 rounded-full bg-accent/35 ring-1 ring-inset ring-accent/50"
-          style={{ left: `${pos(bandLow)}%`, width: `${pos(bandHigh) - pos(bandLow)}%` }}
-          title={`Tipik band: ${fmt(bandLow)} – ${fmt(bandHigh)}`}
-        />
-        {/* Band ortası */}
-        <div
-          className="absolute inset-y-0 w-px bg-accent"
-          style={{ left: `${pos(bandMid)}%` }}
-          title={`Band ortası: ${fmt(bandMid)}`}
-        />
-        {/* Destek ve direnç seviyeleri — şeridin altına taşar */}
-        {supports.map((s) => (
+        {/* Şerit: bugünkü fiyat üstte, seviyeler altta ETİKETLİ */}
+        <div className="relative mt-8 mb-10 h-3 rounded-full bg-navy-700/60">
           <div
-            key={`s-${s.level}`}
-            className="absolute -bottom-1.5 h-6 w-0.5 rounded-full bg-gain"
-            style={{ left: `${pos(s.level)}%` }}
-            title={`Destek ${fmt(s.level)} — ${s.touches} kez dokunuldu`}
+            className="absolute inset-y-0 rounded-full bg-accent/30 ring-1 ring-inset ring-accent/40"
+            style={{ left: `${pos(bandLow)}%`, width: `${pos(bandHigh) - pos(bandLow)}%` }}
           />
-        ))}
-        {resistances.map((r) => (
-          <div
-            key={`r-${r.level}`}
-            className="absolute -bottom-1.5 h-6 w-0.5 rounded-full bg-loss"
-            style={{ left: `${pos(r.level)}%` }}
-            title={`Direnç ${fmt(r.level)} — ${r.touches} kez dokunuldu`}
-          />
-        ))}
-        {/* Bugünkü fiyat — şeridin ÜSTÜNDE, alttaki etiketlerle çakışmasın */}
-        <div className="absolute -top-8 flex flex-col items-center" style={{ left: `${pos(price)}%` }}>
-          <span className="-translate-x-1/2 whitespace-nowrap rounded bg-ink px-1.5 py-0.5 text-[10px] font-semibold text-white">
-            {fmt(price)}
-          </span>
-          <div className="h-4 w-0.5 -translate-x-1/2 bg-ink" />
+          <div className="absolute inset-y-0 w-px bg-accent/70" style={{ left: `${pos(bandMid)}%` }} />
+
+          {/* Giriş bölgesi — yeşil vurgu */}
+          {plan && (
+            <div
+              className="absolute -inset-y-1 rounded bg-gain/25 ring-1 ring-inset ring-gain/50"
+              style={{ left: `${pos(plan.low)}%`, width: `${Math.max(1.5, pos(plan.high) - pos(plan.low))}%` }}
+            />
+          )}
+
+          {supports.map((s) => (
+            <div key={`s-${s.level}`} className="absolute -bottom-1.5" style={{ left: `${pos(s.level)}%` }}>
+              <div className="h-6 w-0.5 -translate-x-1/2 rounded-full bg-gain" />
+              <span className="mt-0.5 block -translate-x-1/2 whitespace-nowrap text-[10px] font-medium tabular-nums text-gain">
+                {fmt(s.level)}
+              </span>
+            </div>
+          ))}
+          {resistances.map((r) => (
+            <div key={`r-${r.level}`} className="absolute -bottom-1.5" style={{ left: `${pos(r.level)}%` }}>
+              <div className="h-6 w-0.5 -translate-x-1/2 rounded-full bg-loss" />
+              <span className="mt-0.5 block -translate-x-1/2 whitespace-nowrap text-[10px] font-medium tabular-nums text-loss">
+                {fmt(r.level)}
+              </span>
+            </div>
+          ))}
+
+          <div className="absolute -top-8 flex flex-col items-center" style={{ left: `${pos(price)}%` }}>
+            <span className="-translate-x-1/2 whitespace-nowrap rounded bg-ink px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              şimdi {fmt(price)}
+            </span>
+            <div className="h-4 w-0.5 -translate-x-1/2 bg-ink" />
+          </div>
         </div>
-        {/* Band sınırları */}
-        <span
-          className="absolute top-5 -translate-x-1/2 whitespace-nowrap text-[10px] tabular-nums text-slate-500"
-          style={{ left: `${pos(bandLow)}%` }}
-        >
-          {fmt(bandLow)}
-        </span>
-        <span
-          className="absolute top-5 -translate-x-1/2 whitespace-nowrap text-[10px] tabular-nums text-slate-500"
-          style={{ left: `${pos(bandHigh)}%` }}
-        >
-          {fmt(bandHigh)}
-        </span>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500">
+          <Legend className="bg-accent/30 ring-1 ring-inset ring-accent/40" label="normal işlem bandı" wide />
+          <Legend className="bg-gain/40 ring-1 ring-inset ring-gain/60" label="alım bölgesi" wide />
+          <Legend className="bg-gain" label="alt seviyeler (destek)" />
+          <Legend className="bg-loss" label="üst seviyeler (direnç)" />
+        </div>
       </div>
 
-      {/* Şeridin okunması için küçük gösterge */}
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500">
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-3 rounded-sm bg-accent/35 ring-1 ring-inset ring-accent/50" />
-          tipik band
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-3 w-0.5 rounded-full bg-gain" />
-          destek
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-3 w-0.5 rounded-full bg-loss" />
-          direnç
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-3 w-0.5 rounded-full bg-ink" />
-          bugünkü fiyat
-        </span>
-      </div>
+      {/* 2. Alım bölgesi + bozulma seviyesi */}
+      {plan && (
+        <div className="rounded-lg border border-gain/25 bg-gain/5 p-4">
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gain">
+            <Target size={13} />
+            Hangi fiyattan alınabilir?
+          </p>
+          <p className="mt-2 text-lg font-semibold tabular-nums text-ink">
+            {fmt(plan.low)} – {fmt(plan.high)}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-300">
+            {plan.anchorIsSupport
+              ? `Bu aralık, geçmişte ${plan.anchorTouches} kez tutmuş olan ${fmt(plan.low)} seviyesinin hemen üstü. ` +
+                'Buradan girildiğinde "nerede yanıldığım belli olur" noktası yakındır.'
+              : 'Belirgin bir destek seviyesi bulunmadığı için aralık, hissenin normal işlem bandının alt sınırından hesaplandı.'}
+          </p>
+          <p className="mt-2 text-xs font-medium text-slate-200">{getEntryStatusText(plan)}</p>
+          <p className="mt-3 flex items-start gap-1.5 border-t border-gain/20 pt-2.5 text-xs leading-relaxed text-amber-200/90">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0 text-amber-400" />
+            <span>
+              <span className="font-semibold">{fmt(plan.invalidation)}</span> altına inerse bu kurulum
+              bozulur — dayanak seviye kırılmış olur ve fikrin gerekçesi ortadan kalkar.
+            </span>
+          </p>
+        </div>
+      )}
 
-      {/* Seviye listesi */}
+      {/* 3. Alt ve üst seviyeler — sade dille */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <LevelList
-          title="Destekler (aşağıda tutabilecek seviyeler)"
+        <LevelBlock
+          icon={ShieldCheck}
+          title="ALT SEVİYELER (destek)"
+          subtitle="Fiyat düşerse buralarda tutması beklenir"
           levels={supports}
+          kind="support"
           fmt={fmt}
           tone="gain"
-          emptyText="Fiyatın altında geçmişten kalma belirgin destek yok."
+          emptyText="Fiyatın altında geçmişten kalma belirgin bir seviye yok — düşüşte tutunacak referans zayıf."
         />
-        <LevelList
-          title="Dirençler (yukarıda zorlayabilecek seviyeler)"
+        <LevelBlock
+          icon={TrendingUp}
+          title="ÜST SEVİYELER (direnç)"
+          subtitle="Fiyat yükselirse buralarda zorlanması beklenir"
           levels={resistances}
+          kind="resistance"
           fmt={fmt}
           tone="loss"
-          emptyText="Fiyatın üzerinde belirgin direnç yok — hisse zirve bölgesinde."
+          emptyText="Fiyatın üzerinde belirgin bir seviye yok — hisse zirve bölgesinde, önü açık."
         />
       </div>
     </div>
   );
 }
 
-function LevelList({ title, levels, fmt, tone, emptyText }) {
-  const toneClass = tone === 'gain' ? 'text-gain' : 'text-loss';
+function Legend({ className, label, wide = false }) {
   return (
-    <div>
-      <p className="mb-1.5 text-[10px] uppercase tracking-wide text-slate-500">{title}</p>
+    <span className="flex items-center gap-1">
+      <span className={`${wide ? 'h-2 w-3' : 'h-3 w-0.5'} rounded-sm ${className}`} />
+      {label}
+    </span>
+  );
+}
+
+function LevelBlock({ icon: Icon, title, subtitle, levels, kind, fmt, tone, emptyText }) {
+  const toneText = tone === 'gain' ? 'text-gain' : 'text-loss';
+  const toneBorder = tone === 'gain' ? 'border-gain/20' : 'border-loss/20';
+
+  return (
+    <div className={`rounded-lg border ${toneBorder} bg-navy-850 p-4`}>
+      <p className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${toneText}`}>
+        <Icon size={13} />
+        {title}
+      </p>
+      <p className="mt-0.5 text-[11px] text-slate-500">{subtitle}</p>
+
       {levels.length === 0 ? (
-        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-slate-400">
+        <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-400">
           <Ban size={12} className="mt-0.5 shrink-0 text-slate-500" />
           {emptyText}
         </p>
       ) : (
-        <ul className="space-y-1">
-          {levels.map((l) => (
-            <li key={l.level} className="flex items-center gap-2 text-xs">
-              <Anchor size={12} className={`shrink-0 ${toneClass}`} />
-              <span className="font-semibold tabular-nums text-ink">{fmt(l.level)}</span>
-              <span className={`tabular-nums ${toneClass}`}>
-                {l.distancePct > 0 ? '+' : ''}
-                {l.distancePct}%
-              </span>
-              <span className="ml-auto text-[10px] text-slate-500">{l.touches} dokunuş</span>
-            </li>
-          ))}
+        <ul className="mt-3 space-y-3">
+          {levels.map((level) => {
+            const d = describeLevel(level, kind);
+            return (
+              <li key={level.level}>
+                <p className="flex items-baseline gap-2">
+                  <span className="text-sm font-semibold tabular-nums text-ink">{fmt(level.level)}</span>
+                  <span className="text-[11px] text-slate-400">{d.distanceText}</span>
+                  <span className={`ml-auto text-[10px] font-medium uppercase ${toneText}`}>
+                    {d.confidence}
+                  </span>
+                </p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-400">{d.behaviourText}.</p>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
