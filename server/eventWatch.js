@@ -61,6 +61,7 @@ const LIGHT_FIELDS = [
   'posNews:data->positiveNewsCount',
   'negNews:data->negativeNewsCount',
   'volSignal:data->volumeSignal',
+  'edge:data->expectation',
 ];
 /** İç içe jsonb yolu — PostgREST sürümüne göre desteklenmeyebilir, ayrı tutulur. */
 const NESTED_FIELD = 'volScore:data->scoreBreakdown->volumeConfirmationScore';
@@ -192,7 +193,8 @@ export async function runEventWatch({ sb, quoteMap, getNewsForSymbol }) {
     }
 
     // AI teyidi yalnızca YENİ bir kanıt vitrine çıktığında çalışır
-    const willPromote = isPassing && !conviction.verdict;
+    const willPromote =
+      isPassing && row.edge?.hasActionableEdge !== false && !conviction.verdict;
     if (willPromote) {
       promoted.push({
         symbol: row.ticker ?? row.symbol,

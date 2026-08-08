@@ -10,6 +10,8 @@ import { withNewsImportance } from '../utils/newsImportance.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
 
+const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
+
 /** Haber kapsamı: hangi hisselerin haberleri gösterilsin? */
 const SCOPE_OPTIONS = [
   { value: 'all', label: 'Tüm Hisseler' },
@@ -137,7 +139,7 @@ export default function NewsPage() {
   // Her habere bileşik "önem skoru" ve portföy/izleme ilgisi eklenir.
   const allNews = useMemo(
     () =>
-      [...liveNews, ...(liveNews.length ? [] : MOCK_NEWS)].map((n) =>
+      [...liveNews, ...(liveNews.length || !MOCK_ENABLED ? [] : MOCK_NEWS)].map((n) =>
         withNewsImportance(
           {
             ...n,

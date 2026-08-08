@@ -13,6 +13,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { SECTOR_TR } from './marketData.js';
+import { recordAiUsage } from './aiControl.js';
 
 const MODEL = 'claude-haiku-4-5';
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
@@ -21,7 +22,7 @@ const pctAbove = (a, b) => (a && b ? (a / b - 1) * 100 : 0);
 
 function toYahooSymbol(h) {
   const t = String(h.ticker || '').toUpperCase();
-  return h.market === 'BIST' ? `${t}.IS` : t;
+  return h.market === 'BIST' && !t.endsWith('.IS') ? `${t}.IS` : t;
 }
 
 /** Hissenin değerini TRY'ye çevirir (ağırlık hesabı için). */
@@ -124,21 +125,8 @@ const AI_SCHEMA = {
   type: 'object',
   properties: {
     portfolio_comment: { type: 'string' },
-    stocks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          ticker: { type: 'string' },
-          recommendation: { type: 'string', enum: ['Güçlü', 'İzlenmeli', 'Nötr', 'Riskli'] },
-          comment: { type: 'string' },
-        },
-        required: ['ticker', 'recommendation', 'comment'],
-        additionalProperties: false,
-      },
-    },
   },
-  required: ['portfolio_comment', 'stocks'],
+  required: ['portfolio_comment'],
   additionalProperties: false,
 };
 
@@ -146,12 +134,9 @@ const SYSTEM_PROMPT =
   'Sen deneyimli bir portföy analistisin. Sana bir yatırımcının portföyü ve her ' +
   'hisse için hesaplanmış GERÇEK skorlar (temel, teknik, risk, getiri potansiyeli, ' +
   'haber güvenilirliği, sektör, ağırlık) verilecek. Görevin:\n' +
-  '- portfolio_comment: Portföyün geneli için 2-4 cümlelik Türkçe yorum — ' +
+  '- portfolio_comment: Portföyün geneli için en fazla 3 kısa Türkçe cümle — ' +
   'çeşitlendirme/yoğunlaşma riski, sektör dağılımı, genel risk-getiri dengesi ve ' +
-  'somut bir öneri içersin.\n' +
-  '- her hisse için: recommendation (Güçlü/İzlenmeli/Nötr/Riskli — verilen skorlarla ' +
-  'tutarlı olsun) ve comment (o hisseye özgü, skorlara dayanan 1-2 cümlelik Türkçe ' +
-  'yorum; neden güçlü/zayıf olduğunu açıkla).\n' +
+  'somut bir risk kontrolü içersin. Hisse bazlı yorum üretme.\n' +
   'Yalnızca verilen verilere dayan, uydurma. Yatırım tavsiyesi dili kullanma; ' +
   'veri odaklı ve nesnel ol.';
 
@@ -161,7 +146,7 @@ function autoComment(ticker, s) {
   return (
     `${ticker} için genel görünüm ${güç} (skor ${s.overallScore}/100). Temel sağlamlık ` +
     `${s.fundamentalScore}, teknik ${s.technicalScore}, getiri potansiyeli ${s.returnPotential}, ` +
-    `risk ${s.riskScore}. (AI yorumu için ANTHROPIC_API_KEY tanımlanmalı.)`
+    `risk ${s.riskScore}.`
   );
 }
 
@@ -228,25 +213,29 @@ export async function buildPortfolioAnalysis(holdings, deps) {
   const weightedRisk = perStock.reduce((s, p) => s + p.scores.riskScore * w(p), 0);
   const weightedReturn = perStock.reduce((s, p) => s + p.scores.returnPotential * w(p), 0);
 
-  // Çeşitlendirme: sektör yoğunlaşması (HHI) + hisse sayısı
+  // Çeşitlendirme: sektör ve tekil pozisyon yoğunlaşması (HHI).
+  // Salt hisse sayısı bonusu verilmez; aynı sektörde korelasyonlu 8 hisse gerçek
+  // çeşitlendirme sağlamaz.
   const sectorWeights = {};
   for (const p of perStock) sectorWeights[p.sector] = (sectorWeights[p.sector] || 0) + w(p);
-  const hhi = Object.values(sectorWeights).reduce((s, x) => s + x * x, 0);
-  const countBonus = Math.min(perStock.length, 8) / 8; // çok hisse = daha iyi
-  const diversificationScore = round(clamp((1 - hhi) * 90 + countBonus * 15));
+  const sectorHhi = Object.values(sectorWeights).reduce((s, x) => s + x * x, 0);
+  const positionHhi = perStock.reduce((sum, position) => sum + w(position) ** 2, 0);
+  const diversificationScore = round(clamp(100 * (1 - (sectorHhi * 0.65 + positionHhi * 0.35))));
+  const largestPositionWeight = Math.max(...perStock.map(w), 0);
+  const largestSectorWeight = Math.max(...Object.values(sectorWeights), 0);
 
   const overallScore = round(
     clamp(fundamentalScore * 0.3 + technicalScore * 0.2 + weightedReturn * 0.25 + diversificationScore * 0.1 + newsImpactScore * 0.15)
   );
   const riskLevel = riskLevelFromScore(weightedRisk);
 
-  // --- Tek Claude çağrısı (portföy + hisse yorumları) ---
+  // --- İsteğe bağlı tek ve kısa Claude çağrısı (yalnızca portföy özeti) ---
   let aiPortfolioComment = null;
-  const aiByTicker = new Map();
   if (anthropicKey) {
     try {
       const client = new Anthropic({ apiKey: anthropicKey });
-      const lines = perStock.map((p) => {
+      // Prompt maliyetini portföy büyüdükçe sınırsız artırma: en büyük 15 pozisyon yeterli.
+      const lines = [...perStock].sort((a, b) => w(b) - w(a)).slice(0, 15).map((p) => {
         const s = p.scores;
         return `- ${p.holding.ticker} (${p.holding.company ?? ''}, ${p.sector}, ağırlık %${(w(p) * 100).toFixed(1)}): genel ${s.overallScore}, temel ${s.fundamentalScore}, teknik ${s.technicalScore}, getiri ${s.returnPotential}, risk ${s.riskScore}, haber güvenilirliği ${s.reliableNewsAvg}/10, haber tonu ${s.sentiment}`;
       });
@@ -255,21 +244,23 @@ export async function buildPortfolioAnalysis(holdings, deps) {
         `risk seviyesi ${riskLevel}, temel ${fundamentalScore}, teknik ${technicalScore}, ` +
         `haber etkisi ${newsImpactScore}. Sektör dağılımı: ` +
         Object.entries(sectorWeights).map(([k, v]) => `${k} %${(v * 100).toFixed(0)}`).join(', ') +
-        `.\n\nHisseler:\n${lines.join('\n')}\n\nHer ticker için yorum+öneri ve portföy geneli yorumu üret.`;
+        `.\n\nEn büyük pozisyonlar:\n${lines.join('\n')}\n\nYalnızca portföy geneli yorumunu üret.`;
 
       const response = await client.messages.create({
         model: MODEL,
-        max_tokens: 2500,
+        max_tokens: 350,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
         output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
       });
+      await recordAiUsage('portfolio', response, {
+        model: MODEL,
+        holdings: perStock.length,
+        promptVersion: 'portfolio-v2-summary-only',
+      });
       const text = response.content.find((b) => b.type === 'text')?.text ?? '{}';
       const parsed = JSON.parse(text);
       aiPortfolioComment = parsed.portfolio_comment ?? null;
-      for (const r of parsed.stocks ?? []) {
-        if (r?.ticker) aiByTicker.set(String(r.ticker).toUpperCase(), r);
-      }
     } catch (err) {
       console.error(`[analysis] AI hatası: ${err.message}`);
     }
@@ -279,7 +270,6 @@ export async function buildPortfolioAnalysis(holdings, deps) {
   const stocks = {};
   for (const p of perStock) {
     const t = p.holding.ticker.toUpperCase();
-    const ai = aiByTicker.get(t);
     const s = p.scores;
     stocks[t] = {
       overallScore: s.overallScore,
@@ -287,8 +277,8 @@ export async function buildPortfolioAnalysis(holdings, deps) {
       returnPotential: s.returnPotential,
       newsSensitivity: s.newsSensitivity,
       reliableNewsAvg: s.reliableNewsAvg,
-      recommendation: ai?.recommendation ?? deriveRecommendation(s.overallScore, s.riskScore),
-      comment: ai?.comment ?? autoComment(t, s),
+      recommendation: deriveRecommendation(s.overallScore, s.riskScore),
+      comment: autoComment(t, s),
     };
   }
 
@@ -302,9 +292,12 @@ export async function buildPortfolioAnalysis(holdings, deps) {
       newsImpactScore,
       fundamentalScore,
       technicalScore,
+      largestPositionWeight: Number((largestPositionWeight * 100).toFixed(1)),
+      largestSectorWeight: Number((largestSectorWeight * 100).toFixed(1)),
       comment:
         aiPortfolioComment ??
-        `Portföy genel skoru ${overallScore}/100, risk seviyesi ${riskLevel}. Çeşitlendirme ${diversificationScore}/100. (Detaylı AI yorumu için ANTHROPIC_API_KEY tanımlanmalı.)`,
+        `Portföy genel skoru ${overallScore}/100, risk seviyesi ${riskLevel}. ` +
+        `Çeşitlendirme ${diversificationScore}/100; en büyük sektör ağırlıkları ve yüksek riskli pozisyonlar sınırlandırılmalıdır.`,
     },
     stocks,
   };

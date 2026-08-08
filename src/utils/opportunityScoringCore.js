@@ -28,8 +28,8 @@ export const SHORT_TERM_SCORE_WEIGHTS = [
 /**
  * Uzun vade: temel analiz ağırlıklı. Uzun vadede kısa vadeli haber ve hacim
  * sinyalleri yerine bilanço sağlamlığı, değerleme ve büyüme belirleyicidir.
- * Beklenen getiri burada DAHA AZ ağırlık taşır: ~3 aylık bir hareket tahmini,
- * 1-3 yıllık bir tez hakkında az şey söyler.
+ * Beklenen getiri burada daha az ağırlık taşır: 1 yıllık fiyat beklentisi,
+ * 1-4 yıllık temel tezin yalnızca bir parçasıdır.
  */
 export const LONG_TERM_SCORE_WEIGHTS = [
   { key: 'fundamentalHealthScore', label: 'Temel Sağlamlık', weight: 0.22 },
@@ -46,7 +46,7 @@ export const LONG_TERM_SCORE_WEIGHTS = [
  * Beklenen getiri yüzdesini 0-100 skor bileşenine çevirir.
  *
  * İki şey gözetilir:
- *  1. Vade — 4 haftada %5 ile 3 ayda %5 aynı şey değil, uzun vadede aynı yüzde
+ *  1. Vade — 4 haftada %5 ile 1 yılda %5 aynı şey değil, uzun vadede aynı yüzde
  *     daha az ayırt edicidir.
  *  2. Sinyal güveni — güveni düşük bir beklenti sıralamayı fazla oynatmamalı,
  *     bu yüzden sonuç nötr 50 tabanına doğru çekilir (güven 0 → etkinin %40'ı).
@@ -291,9 +291,73 @@ export function getScoreDetails(candidate, horizon = 'short', referenceDate = nu
   };
 }
 
+function percentile(values, target) {
+  if (values.length < 2) return 50;
+  const sorted = [...values].sort((a, b) => a - b);
+  const indexes = [];
+  sorted.forEach((value, index) => {
+    if (value === target) indexes.push(index);
+  });
+  if (!indexes.length) return 50;
+  const averageIndex = indexes.reduce((sum, index) => sum + index, 0) / indexes.length;
+  return (averageIndex / (sorted.length - 1)) * 100;
+}
+
+/**
+ * Mutlak çarpanların sektör yapısını cezalandırmaması için uzun-vade değerleme,
+ * kalite ve büyüme skorlarını sektör içi yüzdelikle harmanlar. Küçük sektör
+ * örneklerinde pazar grubu kullanılır. Girdi nesneleri değiştirilmez.
+ */
+export function applySectorRelativeNormalization(candidates) {
+  const keys = ['fundamentalHealthScore', 'valuationScore', 'growthScore'];
+  const marketGroups = new Map();
+  const sectorGroups = new Map();
+
+  for (const candidate of candidates) {
+    const market = candidate.market ?? 'unknown';
+    const sector = candidate.sector ?? 'unknown';
+    const marketKey = String(market);
+    const sectorKey = `${marketKey}|${sector}`;
+    if (!marketGroups.has(marketKey)) marketGroups.set(marketKey, []);
+    if (!sectorGroups.has(sectorKey)) sectorGroups.set(sectorKey, []);
+    marketGroups.get(marketKey).push(candidate);
+    sectorGroups.get(sectorKey).push(candidate);
+  }
+
+  return candidates.map((candidate) => {
+    if (!candidate.scoreBreakdown) return candidate;
+    const market = String(candidate.market ?? 'unknown');
+    const sectorKey = `${market}|${candidate.sector ?? 'unknown'}`;
+    const sectorPeers = sectorGroups.get(sectorKey) ?? [];
+    const peers = sectorPeers.length >= 4 ? sectorPeers : marketGroups.get(market) ?? sectorPeers;
+    const breakdown = { ...candidate.scoreBreakdown };
+    const absoluteFactorScores = {};
+
+    for (const key of keys) {
+      const raw = Number(candidate.scoreBreakdown[key]);
+      if (!Number.isFinite(raw)) continue;
+      const peerValues = peers
+        .map((peer) => Number(peer.scoreBreakdown?.[key]))
+        .filter(Number.isFinite);
+      const relative = percentile(peerValues, raw);
+      absoluteFactorScores[key] = raw;
+      breakdown[key] = Math.round(raw * 0.55 + relative * 0.45);
+    }
+
+    return {
+      ...candidate,
+      scoreBreakdown: breakdown,
+      absoluteFactorScores,
+      sectorRelativeNormalized: true,
+      sectorPeerCount: peers.length,
+    };
+  });
+}
+
 /** Adayları seçilen vade konfigürasyonuyla skorlar, sıralar ve sıra numarası atar. */
 export function scoreAndRankCandidates(candidates, horizon = 'short', referenceDate = null) {
-  return candidates
+  const normalized = horizon === 'long' ? applySectorRelativeNormalization(candidates) : candidates;
+  return normalized
     .map((candidate) => ({ ...candidate, ...getScoreDetails(candidate, horizon, referenceDate) }))
     .sort((a, b) => b.shortTermScore - a.shortTermScore)
     .map((candidate, index) => ({ ...candidate, rank: index + 1 }));

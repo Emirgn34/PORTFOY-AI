@@ -10,6 +10,17 @@ import ScoreBadge from '../components/ScoreBadge.jsx';
 import { getScoreColors, RISK_LEVEL_CONFIG } from '../utils/scoreColors.js';
 import { getStockMetrics, toTRY } from '../utils/portfolioCalculations.js';
 
+const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
+const EMPTY_ANALYSIS = {
+  overallScore: 0,
+  riskLevel: 'Orta',
+  diversificationScore: 0,
+  newsImpactScore: 0,
+  fundamentalScore: 0,
+  technicalScore: 0,
+  comment: 'Henüz gerçek portföy analizi oluşturulmadı.',
+};
+
 /** Büyük SVG halka — genel portföy skoru. */
 function PortfolioScoreRing({ score }) {
   const colors = getScoreColors(score);
@@ -79,11 +90,11 @@ export default function AnalysisPage() {
     }
   }
 
-  // Gerçek analiz varsa onu, yoksa örnek (mock) veriyi kullan
+  // Production'da gerçek analiz yokken örnek skor gösterilmez.
   const isReal = Boolean(result);
-  const portfolio = result?.portfolio ?? MOCK_PORTFOLIO_ANALYSIS;
+  const portfolio = result?.portfolio ?? (MOCK_ENABLED ? MOCK_PORTFOLIO_ANALYSIS : EMPTY_ANALYSIS);
   const getAnalysis = (ticker) =>
-    result?.stocks?.[ticker.toUpperCase()] ?? getStockAnalysis(ticker);
+    result?.stocks?.[ticker.toUpperCase()] ?? (MOCK_ENABLED ? getStockAnalysis(ticker) : null);
 
   // Her hissenin TRY bazlı portföy ağırlığı
   const weights = useMemo(() => {
@@ -119,10 +130,15 @@ export default function AnalysisPage() {
                 {result?.aiUsed ? ' ve AI (Haiku 4.5) yorumuyla' : ''} oluşturuldu.
                 {updatedText && <> Son güncelleme: {updatedText}.</>}
               </>
-            ) : (
+            ) : MOCK_ENABLED ? (
               <>
                 Aşağıdaki skorlar <span className="text-slate-200">örnek (mock)</span> verilerdir.
                 Portföyüne özel gerçek değerlendirme için <span className="text-accent-soft">Portföyümü Analiz Et</span>'e bas.
+              </>
+            ) : (
+              <>
+                Henüz gerçek analiz oluşturulmadı. Portföyüne özel değerlendirme için{' '}
+                <span className="text-accent-soft">Portföyümü Analiz Et</span>'e bas.
               </>
             )}
           </p>
@@ -184,12 +200,16 @@ export default function AnalysisPage() {
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">
           Hisse Bazlı Analiz
         </h2>
-        {stocks.length === 0 ? (
+        {stocks.length === 0 || (!isReal && !MOCK_ENABLED) ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-navy-700 bg-navy-900/50 py-16 text-center">
             <Inbox size={36} className="mb-3 text-slate-600" />
-            <p className="font-medium text-slate-300">Analiz edilecek hisse yok</p>
+            <p className="font-medium text-slate-300">
+              {stocks.length === 0 ? 'Analiz edilecek hisse yok' : 'Henüz hisse analizi oluşturulmadı'}
+            </p>
             <p className="mt-1 text-sm text-slate-500">
-              Portföyüm sayfasından hisse ekleyince analizler burada görünecek.
+              {stocks.length === 0
+                ? 'Portföyüm sayfasından hisse ekleyince analizler burada görünecek.'
+                : 'Portföyümü Analiz Et düğmesi gerçek skorları oluşturur.'}
             </p>
           </div>
         ) : (

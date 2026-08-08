@@ -375,8 +375,11 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = nu
 
   // --- Temel analiz (uzun vade) ---
   const pm = fin.profitMargins ?? null;
+  const operatingMargin = fin.operatingMargins ?? null;
   const roe = fin.returnOnEquity ?? null;
+  const roa = fin.returnOnAssets ?? null;
   const d2e = fin.debtToEquity ?? null;
+  const qualityFcf = fin.freeCashflow ?? null;
   // Cari oran katkısı: seviye (eskiden olduğu gibi) + TREND. Çeyreklik bilanço
   // varsa "1'in altında ve düşüyor" bozulması ayrıca cezalandırılır; iyileşme
   // küçük bir bonus alır. Çeyreklik veri yoksa eski davranışa düşer (yalnızca seviye).
@@ -391,8 +394,11 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = nu
     clamp(
       50 +
         (pm != null ? pm * 100 * 1.2 : 0) +
-        (roe != null ? roe * 100 * 0.8 : 0) -
+        (operatingMargin != null ? operatingMargin * 100 * 0.35 : 0) +
+        (roe != null ? roe * 100 * 0.8 : 0) +
+        (roa != null ? roa * 100 * 0.4 : 0) -
         (d2e != null ? (d2e / 100) * 15 : 0) +
+        (qualityFcf != null ? (qualityFcf > 0 ? 4 : -8) : 0) +
         crContribution
     )
   );
@@ -496,12 +502,28 @@ function analogSentence(analog) {
  * kendi volatilitesinin çok üzerinde hareket etmesini "beklemek" gerçekçi
  * değildir). Hiçbir sürücü yoksa null döner → UI bölümü gizlenir.
  */
-function buildExpectation({ price, horizon, analog, structure, analyst, annVol, ret60 }) {
+/** 12 aylık beklenen getiriyi bileşik olarak hedef işlem günü vadesine taşır. */
+export function scaleAnnualReturnToHorizon(annualReturnPct, tradingDays) {
+  const annual = Number(annualReturnPct) / 100;
+  if (!Number.isFinite(annual) || annual <= -1 || tradingDays <= 0) return null;
+  return (Math.pow(1 + annual, tradingDays / 252) - 1) * 100;
+}
+
+function buildExpectation({
+  price,
+  horizon,
+  analog,
+  structure,
+  analyst,
+  annVol,
+  ret60,
+  roundTripCostBps = 0,
+}) {
   if (!price) return null;
-  const fwdDays = horizon === 'long' ? 60 : 20;
-  const timeScale = Math.sqrt(fwdDays / 252); // yıllıktan vadeye ölçek
+  const fwdDays = horizon === 'long' ? 252 : 20;
+  const volatilityTimeScale = Math.sqrt(fwdDays / 252);
   // Vade oynaklığı: sürücü değerlerinin üst sınırı ve sonuç aralığının genişliği
-  const horizonVol = (annVol ?? 30) * timeScale;
+  const horizonVol = (annVol ?? 30) * volatilityTimeScale;
   const cap = (v) => clamp(v, -2 * horizonVol, 2 * horizonVol);
 
   const drivers = [];
@@ -548,14 +570,15 @@ function buildExpectation({ price, horizon, analog, structure, analyst, annVol, 
   // 3) Analist ortalama hedefi (12 aylık → vadeye ölçeklenir)
   if (analyst?.targetMean && analyst.count >= 3) {
     const upside12m = (analyst.targetMean / price - 1) * 100;
+    const horizonUpside = scaleAnnualReturnToHorizon(upside12m, fwdDays);
     drivers.push({
       key: 'analyst',
       label: 'Analist hedefi',
-      valuePct: Number(cap(upside12m * timeScale).toFixed(1)),
+      valuePct: Number(cap(horizonUpside).toFixed(1)),
       weight: clamp01(analyst.count / 12) * 0.8,
       note:
         `${analyst.count} analistin ortalama 12 aylık hedefi ${analyst.targetMean.toFixed(2)} ` +
-        `(bugüne göre %${upside12m.toFixed(1)}). Bu vadeye oranlanarak katıldı.`,
+        `(bugüne göre %${upside12m.toFixed(1)}). Beklenen getiri bileşik olarak ${fwdDays} işlem gününe ölçeklendi.`,
     });
   }
 
@@ -563,7 +586,9 @@ function buildExpectation({ price, horizon, analog, structure, analyst, annVol, 
 
   const wSum = drivers.reduce((s, d) => s + d.weight, 0);
   if (wSum <= 0) return null;
-  const expected = drivers.reduce((s, d) => s + d.valuePct * d.weight, 0) / wSum;
+  const grossExpected = drivers.reduce((s, d) => s + d.valuePct * d.weight, 0) / wSum;
+  const estimatedTradingCostPct = Math.max(0, Number(roundTripCostBps) || 0) / 100;
+  const expected = grossExpected - estimatedTradingCostPct;
 
   // Güven: sürücülerin ortalama ağırlığı + aynı yönü gösterip göstermedikleri.
   // Sürücüler çelişiyorsa (biri yukarı, biri aşağı) güven belirgin şekilde düşer —
@@ -574,14 +599,21 @@ function buildExpectation({ price, horizon, analog, structure, analyst, annVol, 
   const confidence = clamp01(0.45 * avgWeight + 0.55 * agreement);
 
   const expectedReturnPct = Number(expected.toFixed(1));
+  const grossExpectedReturnPct = Number(grossExpected.toFixed(1));
   const sigma = Math.max(horizonVol, Math.abs(expectedReturnPct) * 0.5);
   const direction = expectedReturnPct > 1.5 ? 'up' : expectedReturnPct < -1.5 ? 'down' : 'flat';
   const confLabel = confidenceLabel(confidence);
+  const minimumActionableEdgePct = horizon === 'short' ? 1.5 : 5;
+  const hasActionableEdge = expectedReturnPct >= minimumActionableEdgePct;
 
   return {
     horizonDays: fwdDays,
-    horizonLabel: fwdDays === 20 ? '~4 hafta' : '~3 ay',
+    horizonLabel: fwdDays === 20 ? '~4 hafta' : '~1 yıl',
     expectedReturnPct,
+    grossExpectedReturnPct,
+    estimatedTradingCostPct: Number(estimatedTradingCostPct.toFixed(2)),
+    minimumActionableEdgePct,
+    hasActionableEdge,
     expectedPrice: Number((price * (1 + expectedReturnPct / 100)).toFixed(2)),
     rangeLowPct: Number((expectedReturnPct - sigma).toFixed(1)),
     rangeHighPct: Number((expectedReturnPct + sigma).toFixed(1)),
@@ -594,9 +626,11 @@ function buildExpectation({ price, horizon, analog, structure, analyst, annVol, 
       .map((d) => ({ ...d, weightPct: Math.round((d.weight / wSum) * 100) }))
       .sort((a, b) => b.weightPct - a.weightPct),
     summary:
-      `Önümüzdeki ${fwdDays === 20 ? '~4 haftada' : '~3 ayda'} beklenen hareket: ` +
+      `Önümüzdeki ${fwdDays === 20 ? '~4 haftada' : '~1 yılda'} beklenen hareket: ` +
       `%${expectedReturnPct > 0 ? '+' : ''}${expectedReturnPct} ` +
       `(olası aralık %${(expectedReturnPct - sigma).toFixed(1)} ile %${(expectedReturnPct + sigma).toFixed(1)} arası). ` +
+      `Tahmini işlem maliyeti %${estimatedTradingCostPct.toFixed(2)} düşülmüştür. ` +
+      `${hasActionableEdge ? 'Net avantaj işlem eşiğini geçiyor.' : 'Net avantaj işlem eşiğini geçmiyor; beklemek daha uygun.'} ` +
       `Sinyal güveni ${confLabel}. Bu bir tahmindir, garanti değildir.`,
   };
 }
@@ -660,6 +694,14 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
   const rawSector = summary?.assetProfile?.sector ?? null;
   const sector = SECTOR_TR[rawSector] ?? rawSector ?? 'Diğer';
   const currency = quote.currency ?? (symbol.endsWith('.IS') ? 'TRY' : 'USD');
+  const maxPositionWeightPct =
+    m.liquidityLevel === 'Düşük'
+      ? 3
+      : m.riskLevel === 'Yüksek'
+        ? 5
+        : m.riskLevel === 'Orta'
+          ? 8
+          : 10;
 
   const base = {
     symbol: ticker,
@@ -696,6 +738,12 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     analystTarget: m.analyst,
     // Kanıt gücü + tespit edilen olaylar (vitrin kapısı bunu kullanır)
     conviction,
+    riskControls: {
+      maxPositionWeightPct,
+      maxSectorWeightPct: 25,
+      annualizedVolatilityPct: m.annVol ?? null,
+      invalidationReference: m.priceStructure?.nearestSupport?.level ?? null,
+    },
     /**
      * Yavaş değişen teknik göstergelerin anlık görüntüsü.
      *
@@ -723,6 +771,9 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     analyst: m.analyst,
     annVol: m.annVol,
     ret60: m.ret60,
+    // Komisyon + spread + kayma için muhafazakâr gidiş-dönüş varsayımı.
+    roundTripCostBps:
+      (market === 'BIST' ? 30 : 10) + (m.liquidityLevel === 'Düşük' ? 25 : m.liquidityLevel === 'Orta' ? 10 : 0),
   };
 
   // --- Kısa vade ---
@@ -735,11 +786,16 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
   if (m.volumeSignal === 'Zayıf Hacim') shortWarnings.push('Hacim teyidi zayıf; hareket potansiyeli sınırlı olabilir.');
   if (m.analogShort?.confidence != null && m.analogShort.confidence < 0.35)
     shortWarnings.push('Geçmiş-benzerlik (analog) sinyalinin güveni düşük; örnekler tutarsız, tek başına yön belirleyici sayılmamalı.');
+  shortWarnings.push(`Risk bütçesi için tek hisse ağırlığı portföyün %${maxPositionWeightPct} seviyesini aşmamalı.`);
 
+  const shortExpectation = buildExpectation({ ...expectationInput, horizon: 'short', analog: m.analogShort });
+  if (shortExpectation && !shortExpectation.hasActionableEdge) {
+    shortWarnings.push('Tahmini net avantaj, işlem maliyeti sonrası kısa-vade işlem eşiğini geçmiyor.');
+  }
   const shortCandidate = {
     ...base,
     id: `live-st-${ticker}`,
-    expectation: buildExpectation({ ...expectationInput, horizon: 'short', analog: m.analogShort }),
+    expectation: shortExpectation,
     technicalMomentumLabel: shortMomentum,
     sectorTrend: m.aboveMa200 ? 'Fiyat 200 günlük ortalamanın üzerinde' : 'Fiyat 200 günlük ortalamanın altında',
     estimatedHorizon: estimateShortHorizon(m.annVol),
@@ -780,11 +836,16 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
         'kısa vadeli borç ödeme gücü zayıflıyor; finansallarda bozulma sinyali.'
     );
   if (m.riskLevel === 'Yüksek') longWarnings.push('Volatilite yüksek; uzun vadeli kademeli alım daha uygun olabilir.');
+  longWarnings.push(`Risk bütçesi için tek hisse ağırlığı portföyün %${maxPositionWeightPct}, sektör toplamı %25 seviyesini aşmamalı.`);
 
+  const longExpectation = buildExpectation({ ...expectationInput, horizon: 'long', analog: m.analogLong });
+  if (longExpectation && !longExpectation.hasActionableEdge) {
+    longWarnings.push('Tahmini net avantaj, işlem maliyeti sonrası uzun-vade işlem eşiğini geçmiyor.');
+  }
   const longCandidate = {
     ...base,
     id: `live-lt-${ticker}`,
-    expectation: buildExpectation({ ...expectationInput, horizon: 'long', analog: m.analogLong }),
+    expectation: longExpectation,
     dividendYield: m.dividendYield,
     peRatio: m.peRatio,
     // Cari oran (likidite) — uzun vade skor guard'ı ve detay modalı kullanır

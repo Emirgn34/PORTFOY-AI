@@ -21,8 +21,9 @@ import { getUsUniverse } from './usUniverse.js';
 import { selectDeepPool } from './preScreen.js';
 import { confirmConviction, isConvictionAiEnabled } from './convictionAnalysis.js';
 import { runEventWatch, getWatchPlan } from './eventWatch.js';
-import { NEAR_MISS_THRESHOLD } from '../src/utils/conviction.js';
+import { CONVICTION_THRESHOLD } from '../src/utils/conviction.js';
 import { mapLimit } from './concurrency.js';
+import { buildEvidenceSignature } from './aiControl.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -430,7 +431,7 @@ async function collectCandidates(trackedSymbols) {
 
   // Backtest skor anlık görüntüsü
   try {
-    await snapshotScores(deepRows);
+    await snapshotScores(deepRows, generation);
   } catch (err) {
     console.error(`[snapshot] adım atlandı: ${err.message}`);
   }
@@ -447,7 +448,7 @@ async function collectCandidates(trackedSymbols) {
 }
 
 /**
- * Kanıtı eşiğe yakın olan adayları AI teyidinden geçirir.
+ * Yalnızca kural motoruyla vitrin eşiğini geçen adayları AI teyidinden geçirir.
  *
  * Aynı sembolün kısa ve uzun vade adayları AYNI conviction nesnesini paylaşır
  * (buildCandidatePair tek nesne üretip ikisine de koyar), bu yüzden AI sembol
@@ -463,7 +464,12 @@ async function confirmFinalists(rows) {
   const bySymbol = new Map();
   for (const r of rows) {
     const c = r.data?.conviction;
-    if (!c || c.score < NEAR_MISS_THRESHOLD || !c.evidence?.length) continue;
+    if (
+      !c ||
+      c.score < CONVICTION_THRESHOLD ||
+      !c.evidence?.length ||
+      r.data?.expectation?.hasActionableEdge === false
+    ) continue;
     if (!bySymbol.has(r.symbol)) {
       bySymbol.set(r.symbol, {
         symbol: r.data.symbol,
@@ -478,7 +484,7 @@ async function confirmFinalists(rows) {
 
   const finalists = [...bySymbol.values()].sort((a, b) => b.conviction.score - a.conviction.score);
   if (finalists.length === 0) {
-    console.log('Kesinlik teyidi: eşiğe yakın aday yok, AI çağrısı yapılmadı.');
+    console.log('Kesinlik teyidi: kural eşiğini geçen aday yok, AI çağrısı yapılmadı.');
     return;
   }
 
@@ -491,8 +497,10 @@ async function confirmFinalists(rows) {
 }
 
 /** Aday skorlarını score_snapshots tablosuna ekler (backtest track record'u). */
-async function snapshotScores(rows) {
+async function snapshotScores(rows, generation) {
   const referenceMs = Date.now();
+  const capturedAt = new Date(referenceMs).toISOString();
+  const episodeDate = capturedAt.slice(0, 10);
   const byHorizon = { short: [], long: [] };
   for (const r of rows) {
     if (byHorizon[r.horizon]) byHorizon[r.horizon].push(r.data);
@@ -511,12 +519,27 @@ async function snapshotScores(rows) {
         rank: c.rank,
         capture_price: c.currentPrice ?? null,
         currency: c.currency ?? null,
+        captured_at: capturedAt,
+        generation,
+        signal_key: `${episodeDate}:${c.market ?? 'unknown'}:${c.symbol}:${horizon}`,
+        conviction_rule_score: c.conviction?.ruleScore ?? c.conviction?.score ?? null,
+        conviction_final_score: c.conviction?.score ?? null,
+        ai_used: c.conviction?.aiCertainty != null,
+        ai_cache_hit: Boolean(c.conviction?.aiCacheHit),
+        ai_certainty: c.conviction?.aiCertainty ?? null,
+        evidence_signature: c.conviction?.evidence?.length
+          ? buildEvidenceSignature(c.conviction)
+          : null,
       });
     }
   }
 
   if (snapshots.length === 0) return;
-  await sb('score_snapshots', { method: 'POST', body: snapshots });
+  await sb('score_snapshots', {
+    method: 'POST',
+    body: snapshots,
+    prefer: 'resolution=ignore-duplicates',
+  });
   console.log(`Backtest: ${snapshots.length} skor anlık görüntüsü kaydedildi.`);
 }
 

@@ -29,3 +29,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKTEST_BIST_COST_BPS: ${{ vars.BACKTEST_BIST_COST_BPS || '30' }}
+          BACKTEST_US_COST_BPS: ${{ vars.BACKTEST_US_COST_BPS || '10' }}
