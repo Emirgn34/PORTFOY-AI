@@ -15,7 +15,7 @@ on:
 jobs:
   candidates:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
 
@@ -35,3 +35,6 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # Vitrin adaylarının haberlerine AI duygu/özet için (yoksa AI sessizce atlanır)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 6 saatlik akış gecikmeye dayanıklı; standart Messages API'ye göre %50 ucuzdur.
+          ANTHROPIC_USE_BATCH: 'true'
+          AI_DAILY_BUDGET_USD: ${{ vars.AI_DAILY_BUDGET_USD || '1.00' }}

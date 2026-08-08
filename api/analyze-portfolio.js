@@ -12,6 +12,12 @@
 import { createClient } from '@supabase/supabase-js';
 import YahooFinance from 'yahoo-finance2';
 import { buildPortfolioAnalysis } from '../server/portfolioAnalysis.js';
+import { canSpendAi } from '../server/aiControl.js';
+import {
+  isFreshPortfolioCache,
+  normalizeHoldings,
+  portfolioFingerprint,
+} from '../server/portfolioRequest.js';
 
 export const maxDuration = 60; // analiz birkaç sembol için 10sn'yi aşabilir
 
@@ -39,10 +45,47 @@ export default async function handler(req, res) {
   if (userErr || !userData.user) return res.status(401).json({ error: 'Geçersiz oturum.' });
   const userId = userData.user.id;
 
-  const holdings = Array.isArray(req.body?.holdings) ? req.body.holdings : [];
-  if (holdings.length === 0) return res.status(400).json({ error: 'Portföy boş.' });
+  let holdings;
+  try {
+    holdings = normalizeHoldings(req.body?.holdings);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  const fingerprint = portfolioFingerprint(holdings);
+  const cacheHours = Number(process.env.PORTFOLIO_AI_CACHE_HOURS) || 6;
 
   try {
+    // Aynı portföy için taze sonuç varsa Yahoo/Claude çağrısı yapmadan dön.
+    const { data: cachedRow } = await sb
+      .from('portfolio_analyses')
+      .select('data, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (isFreshPortfolioCache(cachedRow?.data, fingerprint, cacheHours)) {
+      return res.status(200).json({ analysis: { ...cachedRow.data, cacheHit: true } });
+    }
+
+    let allowAi = Boolean(ANTHROPIC_API_KEY) && (await canSpendAi({ reserveUsd: 0.02 }));
+    if (allowAi) {
+      const parsedDailyLimit = Number(process.env.PORTFOLIO_AI_DAILY_LIMIT);
+      const parsedCooldown = Number(process.env.PORTFOLIO_AI_COOLDOWN_SECONDS);
+      const dailyLimit = Math.max(0, Number.isFinite(parsedDailyLimit) ? parsedDailyLimit : 5);
+      const cooldown = Math.max(0, Number.isFinite(parsedCooldown) ? parsedCooldown : 300);
+      const quota = await sb.rpc('consume_portfolio_ai_quota', {
+        p_user_id: userId,
+        p_daily_limit: dailyLimit,
+        p_cooldown_seconds: cooldown,
+      });
+      if (quota.error) {
+        // Maliyet koruması migration uygulanana kadar güvenli biçimde AI'ı kapatır;
+        // deterministik analiz yine üretilir.
+        console.error(`[analyze-portfolio] AI kotası okunamadı: ${quota.error.message}`);
+        allowAi = false;
+      } else {
+        allowAi = quota.data === true;
+      }
+    }
+
     // Döviz kurları (TRY'ye çevirip ağırlık hesabı için)
     const fx = { USD: 1, EUR: 1 };
     try {
@@ -66,8 +109,10 @@ export default async function handler(req, res) {
       yahooFinance,
       getNewsForSymbol,
       fx,
-      anthropicKey: ANTHROPIC_API_KEY,
+      anthropicKey: allowAi ? ANTHROPIC_API_KEY : null,
     });
+    analysis.portfolioFingerprint = fingerprint;
+    analysis.cacheHit = false;
 
     // Kullanıcının satırına kaydet (sonraki açılışta AI'sız okunur)
     await sb

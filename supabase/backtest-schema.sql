@@ -23,6 +23,20 @@ create table if not exists score_snapshots (
   currency      text
 );
 
+-- Mevcut kurulumlar için ileri-test v2 alanları.
+alter table score_snapshots add column if not exists generation bigint;
+alter table score_snapshots add column if not exists signal_key text;
+alter table score_snapshots add column if not exists conviction_rule_score smallint;
+alter table score_snapshots add column if not exists conviction_final_score smallint;
+alter table score_snapshots add column if not exists ai_used boolean not null default false;
+alter table score_snapshots add column if not exists ai_cache_hit boolean not null default false;
+alter table score_snapshots add column if not exists ai_certainty smallint;
+alter table score_snapshots add column if not exists evidence_signature text;
+
+-- Altı saatte bir üretilen aynı günlük aday dört ayrı işlem sayılmasın.
+create unique index if not exists score_snapshots_signal_key_uidx
+  on score_snapshots (signal_key) where signal_key is not null;
+
 create index if not exists score_snapshots_captured_idx
   on score_snapshots (captured_at desc);
 create index if not exists score_snapshots_symbol_idx
@@ -36,3 +50,4 @@ create policy "giris yapan okur" on score_snapshots
   for select to authenticated using (true);
 
 grant select on score_snapshots to authenticated;
+grant all on score_snapshots to service_role;

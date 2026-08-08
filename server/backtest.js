@@ -1,201 +1,184 @@
 /**
- * Backtest (ileri-test) raporu.
+ * Nokta-zaman ileri-test raporu.
  *
- * score_snapshots tablosundaki geçmiş skorları, gerçek geçmiş fiyatlarla
- * eşleştirir ve "yüksek skorlu adaylar gerçekten getiriyi öngördü mü?"
- * sorusunu ölçer. Her anlık görüntü için SABİT pencere ileri getirisi
- * hesaplanır (kısa vade 21 gün, uzun vade 90 gün) ve aynı dönemdeki endeks
- * getirisiyle karşılaştırılır (excess = hisse − endeks).
- *
- * Sonuçlar skor bandına göre gruplanır; üst bant alt bandı geçiyorsa skor
- * sinyal taşıyor demektir. Vadesi henüz dolmamış görüntüler "bekleyen" sayılır.
- *
- * Çalıştırma (GitHub Actions veya lokal):
- *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node server/backtest.js
+ * - kısa: 20 işlem seansı, uzun: 252 işlem seansı
+ * - aynı sembol/vade/günün tekrarları tek sinyal epizodu sayılır
+ * - endekse göre fazla getiri ve tahmini işlem maliyeti sonrası net sonuç raporlanır
  */
 import YahooFinance from 'yahoo-finance2';
+import { mapLimit } from './concurrency.js';
+import {
+  TRADING_WINDOWS,
+  closeOnOrBefore,
+  dedupeSignalEpisodes,
+  forwardTradingClose,
+  mean,
+  summarizeReturns,
+} from './backtestMetrics.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_URL || !SERVICE_KEY) {
-  console.error('HATA: SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY gerekli.');
-  process.exit(1);
-}
-
-const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-// Vade başına sabit değerlendirme penceresi (takvim günü) ve skor bantları.
-const WINDOW_DAYS = { short: 21, long: 90 };
+const PAGE_SIZE = 1000;
+const DAY_MS = 86_400_000;
 const BANDS = [
-  { label: 'Güçlü (75+)', test: (s) => s >= 75 },
-  { label: 'Orta (60-74)', test: (s) => s >= 60 && s < 75 },
-  { label: 'Zayıf (<60)', test: (s) => s < 60 },
+  { label: 'Güçlü (75+)', test: (score) => score >= 75 },
+  { label: 'Orta (60-74)', test: (score) => score >= 60 && score < 75 },
+  { label: 'Zayıf (<60)', test: (score) => score < 60 },
 ];
 
-async function sbGet(pathAndQuery) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
-  });
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
-}
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+const pct = (value) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%`;
 
-/** Bir sembolün günlük kapanışlarını {t, close} dizisi olarak getirir (artan tarih). */
-async function fetchCloses(symbol, period1) {
-  try {
-    const res = await yahooFinance.chart(symbol, { period1, interval: '1d' });
-    return (res?.quotes ?? [])
-      .filter((q) => q.close != null)
-      .map((q) => ({ t: new Date(q.date).getTime(), close: q.close }))
-      .sort((a, b) => a.t - b.t);
-  } catch {
-    return [];
-  }
+function costBps(market) {
+  const name = market === 'BIST' ? 'BACKTEST_BIST_COST_BPS' : 'BACKTEST_US_COST_BPS';
+  const fallback = market === 'BIST' ? 30 : 10;
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
-
-/** targetMs'ye en yakın (mode: 'before' → öncesi/eşit, 'after' → sonrası/eşit) kapanış. */
-function closeAt(closes, targetMs, mode) {
-  if (!closes.length) return null;
-  if (mode === 'before') {
-    let found = null;
-    for (const c of closes) {
-      if (c.t <= targetMs) found = c.close;
-      else break;
-    }
-    return found;
-  }
-  for (const c of closes) {
-    if (c.t >= targetMs) return c.close;
-  }
-  return null;
-}
-
-const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-const median = (a) => {
-  if (!a.length) return 0;
-  const s = [...a].sort((x, y) => x - y);
-  return s[Math.floor(s.length / 2)];
-};
-const pct = (n) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)}%`;
 
 function benchmarkSymbol(market) {
   return market === 'BIST' ? 'XU100.IS' : '^GSPC';
 }
 
+async function sbGetAll(pathAndQuery) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        Range: `${from}-${from + PAGE_SIZE - 1}`,
+      },
+    });
+    if (!response.ok) throw new Error(`Supabase ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    const page = await response.json();
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
+async function fetchCloses(symbol, period1) {
+  try {
+    const result = await yahooFinance.chart(symbol, { period1, interval: '1d' });
+    return (result?.quotes ?? [])
+      .filter((quote) => quote.close != null)
+      .map((quote) => ({ t: new Date(quote.date).getTime(), close: quote.close }))
+      .sort((a, b) => a.t - b.t);
+  } catch (error) {
+    console.warn(`[backtest] ${symbol} geçmişi alınamadı: ${error.message}`);
+    return [];
+  }
+}
+
+function bucketFor(buckets, horizon, band, aiGroup) {
+  const key = `${horizon}|${band}|${aiGroup}`;
+  if (!buckets[key]) buckets[key] = { gross: [], excess: [], costs: [] };
+  return buckets[key];
+}
+
 async function main() {
-  const snapshots = await sbGet(
-    'score_snapshots?select=*&order=captured_at.asc&limit=20000'
-  );
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    throw new Error('SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY gerekli.');
+  }
+
+  const raw = await sbGetAll('score_snapshots?select=*&order=captured_at.asc');
+  const snapshots = dedupeSignalEpisodes(raw);
   if (!snapshots.length) {
-    console.log('Henüz skor anlık görüntüsü yok. Aday üreticisi çalıştıkça birikecek.');
+    console.log('Henüz skor anlık görüntüsü yok.');
     return;
   }
 
-  const now = Date.now();
-  const earliest = Math.min(...snapshots.map((s) => new Date(s.captured_at).getTime()));
-  const period1 = new Date(earliest - 7 * DAY_MS);
-
-  // Her sembolün ve endekslerin geçmişini bir kez çek
-  const symbols = [...new Set(snapshots.map((s) => (s.market === 'BIST' ? `${s.symbol}.IS` : s.symbol)))];
-  const benchSymbols = [...new Set(snapshots.map((s) => benchmarkSymbol(s.market)))];
-
+  const earliest = Math.min(...snapshots.map((snapshot) => new Date(snapshot.captured_at).getTime()));
+  const period1 = new Date(earliest - 10 * DAY_MS);
+  const stockSymbols = snapshots.map((snapshot) =>
+    snapshot.market === 'BIST' && !String(snapshot.symbol).endsWith('.IS')
+      ? `${snapshot.symbol}.IS`
+      : snapshot.symbol
+  );
+  const symbols = [...new Set([...stockSymbols, ...snapshots.map((s) => benchmarkSymbol(s.market))])];
   const histories = new Map();
-  for (const sym of [...symbols, ...benchSymbols]) {
-    histories.set(sym, await fetchCloses(sym, period1));
-  }
+  await mapLimit(symbols, 6, async (symbol) => {
+    histories.set(symbol, await fetchCloses(symbol, period1));
+  });
 
-  // Vade + bant bazında toplama
-  const buckets = {}; // `${horizon}|${band}` -> { rets:[], excess:[] }
+  const now = Date.now();
+  const buckets = {};
   let pending = 0;
   let evaluated = 0;
 
-  for (const snap of snapshots) {
-    const window = WINDOW_DAYS[snap.horizon];
-    if (!window) continue;
-    const capturedMs = new Date(snap.captured_at).getTime();
-    const evalMs = capturedMs + window * DAY_MS;
-    if (evalMs > now) {
+  for (const snapshot of snapshots) {
+    const sessions = TRADING_WINDOWS[snapshot.horizon];
+    if (!sessions) continue;
+    const capturedMs = new Date(snapshot.captured_at).getTime();
+    const yahooSymbol =
+      snapshot.market === 'BIST' && !String(snapshot.symbol).endsWith('.IS')
+        ? `${snapshot.symbol}.IS`
+        : snapshot.symbol;
+    const closes = histories.get(yahooSymbol) ?? [];
+    const end = forwardTradingClose(closes, capturedMs, sessions);
+    if (!end || end.t > now) {
       pending++;
-      continue; // vade henüz dolmadı
+      continue;
     }
+    const start = Number(snapshot.capture_price) > 0
+      ? { close: Number(snapshot.capture_price), t: capturedMs }
+      : closeOnOrBefore(closes, capturedMs);
+    if (!start?.close || !end.close) continue;
+    const gross = end.close / start.close - 1;
 
-    const yahooSym = snap.market === 'BIST' ? `${snap.symbol}.IS` : snap.symbol;
-    const closes = histories.get(yahooSym) ?? [];
-    const p0 = Number(snap.capture_price) || closeAt(closes, capturedMs, 'before');
-    const pEval = closeAt(closes, evalMs, 'after');
-    if (!(p0 > 0) || !(pEval > 0)) continue;
-    const realized = pEval / p0 - 1;
+    const benchmark = histories.get(benchmarkSymbol(snapshot.market)) ?? [];
+    const benchmarkStart = closeOnOrBefore(benchmark, capturedMs);
+    const benchmarkEnd = closeOnOrBefore(benchmark, end.t);
+    const benchmarkReturn =
+      benchmarkStart?.close && benchmarkEnd?.close
+        ? benchmarkEnd.close / benchmarkStart.close - 1
+        : null;
 
-    // Endeks getirisi (aynı pencere)
-    const bench = histories.get(benchmarkSymbol(snap.market)) ?? [];
-    const b0 = closeAt(bench, capturedMs, 'before');
-    const bEval = closeAt(bench, evalMs, 'after');
-    const benchRet = b0 > 0 && bEval > 0 ? bEval / b0 - 1 : null;
-
-    const band = BANDS.find((b) => b.test(snap.score))?.label ?? '?';
-    const key = `${snap.horizon}|${band}`;
-    if (!buckets[key]) buckets[key] = { rets: [], excess: [] };
-    buckets[key].rets.push(realized);
-    if (benchRet != null) buckets[key].excess.push(realized - benchRet);
+    const band = BANDS.find((item) => item.test(snapshot.score))?.label ?? '?';
+    const aiGroup = snapshot.ai_used ? 'AI teyitli' : 'Kural';
+    for (const group of [aiGroup, 'Tümü']) {
+      const bucket = bucketFor(buckets, snapshot.horizon, band, group);
+      bucket.gross.push(gross);
+      if (benchmarkReturn != null) bucket.excess.push(gross - benchmarkReturn);
+      bucket.costs.push(costBps(snapshot.market));
+    }
     evaluated++;
   }
 
-  // --- Rapor ---
-  console.log('='.repeat(64));
-  console.log('BACKTEST RAPORU (ileri-test)');
-  console.log(`Toplam anlık görüntü: ${snapshots.length} | değerlendirilen: ${evaluated} | bekleyen (vade dolmadı): ${pending}`);
-  console.log(`Pencere: kısa vade ${WINDOW_DAYS.short} gün, uzun vade ${WINDOW_DAYS.long} gün`);
-  console.log('='.repeat(64));
-
-  if (evaluated === 0) {
-    console.log('\nHenüz vadesi dolmuş görüntü yok; track record birikiyor.');
-    console.log('İlk anlamlı kısa-vade sonuçları ~3 hafta, uzun-vade ~3 ay sonra görünür.');
-    return;
-  }
+  console.log('='.repeat(92));
+  console.log('İLERİ-TEST RAPORU — işlem seansı, tekil sinyal epizodu, maliyet sonrası');
+  console.log(
+    `Ham snapshot: ${raw.length} | tekil epizot: ${snapshots.length} | değerlendirilen: ${evaluated} | bekleyen: ${pending}`
+  );
+  console.log(`Pencereler: kısa ${TRADING_WINDOWS.short} işlem günü, uzun ${TRADING_WINDOWS.long} işlem günü`);
+  console.log('='.repeat(92));
 
   for (const horizon of ['short', 'long']) {
-    const label = horizon === 'short' ? 'KISA VADE' : 'UZUN VADE';
-    const rows = BANDS.map((b) => {
-      const data = buckets[`${horizon}|${b.label}`] ?? { rets: [], excess: [] };
-      return { band: b.label, ...data };
-    }).filter((r) => r.rets.length > 0);
-
-    console.log(`\n${label}`);
-    if (!rows.length) {
-      console.log('  (vadesi dolmuş veri yok)');
-      continue;
-    }
-    console.log('  Bant            n    Ort.Getiri  İsabet   Ort.Excess(endekse göre)  Medyan');
-    for (const r of rows) {
-      const hit = r.rets.filter((x) => x > 0).length / r.rets.length;
-      const ex = r.excess.length ? pct(mean(r.excess)) : '—';
-      console.log(
-        `  ${r.band.padEnd(14)} ${String(r.rets.length).padStart(3)}   ` +
-          `${pct(mean(r.rets)).padStart(8)}   ${(hit * 100).toFixed(0).padStart(4)}%   ` +
-          `${ex.padStart(10)}              ${pct(median(r.rets)).padStart(7)}`
-      );
-    }
-
-    // Basit yorum: üst bant alt bandı geçiyor mu?
-    const strong = buckets[`${horizon}|Güçlü (75+)`];
-    const weak = buckets[`${horizon}|Zayıf (<60)`];
-    if (strong?.excess?.length && weak?.excess?.length) {
-      const diff = mean(strong.excess) - mean(weak.excess);
-      console.log(
-        diff > 0
-          ? `  → Sinyal var: Güçlü bant, Zayıf bandı endekse göre ${pct(diff)} geçiyor.`
-          : `  → Sinyal YOK/ters: Güçlü bant, Zayıf bandın gerisinde (${pct(diff)}).`
-      );
+    console.log(`\n${horizon === 'short' ? 'KISA VADE' : 'UZUN VADE'}`);
+    for (const aiGroup of ['Tümü', 'AI teyitli', 'Kural']) {
+      const rows = BANDS.map((band) => {
+        const data = buckets[`${horizon}|${band.label}|${aiGroup}`];
+        if (!data?.gross.length) return null;
+        const averageCost = mean(data.costs);
+        return { band: band.label, ...summarizeReturns(data.gross, data.excess, averageCost) };
+      }).filter(Boolean);
+      if (!rows.length) continue;
+      console.log(`  ${aiGroup}`);
+      console.log('  Bant            n   Brüt Ort.  Net Ort.  Net İsabet  Net Excess  Excess t');
+      for (const row of rows) {
+        console.log(
+          `  ${row.band.padEnd(14)} ${String(row.count).padStart(4)}  ${pct(row.grossMean).padStart(9)} ` +
+            `${pct(row.netMean).padStart(9)}  ${(row.hitRateNet * 100).toFixed(0).padStart(8)}%  ` +
+            `${pct(row.excessMeanNet).padStart(10)}  ${row.excessTStat == null ? '—' : row.excessTStat.toFixed(2)}`
+        );
+      }
     }
   }
 
-  console.log('\nNot: Tek başına getiri değil, ENDEKSE GÖRE excess ve üst-vs-alt bant farkı önemlidir.');
-  console.log('Örneklem küçükken sonuçlar gürültülüdür; birkaç ay biriktikçe anlam kazanır.');
+  console.log('\nNot: Sonuçlar yatırım getirisi garantisi değildir. Yeni eşik/faktörler yalnızca ileri dönem ve maliyet sonrası doğrulanmalıdır.');
 }
 
-main().catch((err) => {
-  console.error('Backtest hatası:', err.message);
-  process.exit(1);
+main().catch((error) => {
+  console.error(`Backtest hatası: ${error.message}`);
+  process.exitCode = 1;
 });

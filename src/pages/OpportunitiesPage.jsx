@@ -25,6 +25,8 @@ import {
   NEAR_MISS_THRESHOLD,
 } from '../utils/conviction.js';
 
+const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
+
 const HORIZON_TABS = [
   { value: 'short', label: 'Kısa Vade Fırsatlar' },
   { value: 'long', label: 'Uzun Vade Fırsatlar' },
@@ -147,7 +149,7 @@ export default function OpportunitiesPage() {
 
   const isLive = Boolean(liveShort || liveLong);
   // Katalizör tazeliği ve "son güncelleme" canlıda gerçek üretim anına, mock'ta sabit LAST_UPDATED'a göre.
-  const referenceDate = generatedAt ?? LAST_UPDATED;
+  const referenceDate = generatedAt ?? (MOCK_ENABLED ? LAST_UPDATED : new Date().toISOString());
 
   // Verinin yaşı (saat); bayatlık uyarısı için. Adaylar ~6 saatte bir üretilir.
   const dataAgeHours = generatedAt
@@ -156,11 +158,11 @@ export default function OpportunitiesPage() {
 
   // Skor ve sıra her zaman vadeye uygun ağırlık setiyle breakdown'dan türetilir.
   const rankedShort = useMemo(
-    () => scoreAndRankCandidates(liveShort ?? MOCK_SHORT_TERM_CANDIDATES, 'short', referenceDate),
+    () => scoreAndRankCandidates(liveShort ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []), 'short', referenceDate),
     [liveShort, referenceDate]
   );
   const rankedLong = useMemo(
-    () => scoreAndRankCandidates(liveLong ?? MOCK_LONG_TERM_CANDIDATES, 'long', referenceDate),
+    () => scoreAndRankCandidates(liveLong ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []), 'long', referenceDate),
     [liveLong, referenceDate]
   );
 
@@ -174,7 +176,13 @@ export default function OpportunitiesPage() {
   const { certainCandidates, nearMissCandidates, hasConvictionData } = useMemo(() => {
     const withConviction = rankedCandidates.filter((c) => c.conviction);
     const certain = withConviction
-      .filter((c) => passesConvictionGate(c.conviction))
+      .filter(
+        (c) =>
+          passesConvictionGate(c.conviction) &&
+          // Yeni üretimlerde işlem maliyeti sonrası asgari avantaj yoksa “işlem yok”.
+          // Eski kayıtlar alanı taşımadığı için geriye dönük uyumluluk korunur.
+          c.expectation?.hasActionableEdge !== false
+      )
       // Vitrin içinde sıralama: önce kanıt gücü, eşitlikte fırsat skoru
       .sort(
         (a, b) => b.conviction.score - a.conviction.score || b.shortTermScore - a.shortTermScore

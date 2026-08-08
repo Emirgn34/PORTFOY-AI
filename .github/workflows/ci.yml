@@ -1,0 +1,24 @@
+name: Kod Kalitesi
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Bağımlılıkları kur
+        run: npm ci --no-audit --no-fund
+      - name: Birim testleri
+        run: npm test
+      - name: Production build
+        run: npm run build
