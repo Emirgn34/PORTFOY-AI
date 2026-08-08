@@ -19,6 +19,14 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
 
+  async function refreshProfile() {
+    const userId = session?.user?.id;
+    if (!userId) return null;
+    const nextProfile = await getProfile(userId);
+    setProfile(nextProfile);
+    return nextProfile;
+  }
+
   useEffect(() => {
     if (!HAS_SUPABASE) {
       setLoading(false);
@@ -59,6 +67,7 @@ export function AuthProvider({ children }) {
     role: profile?.role ?? null,
     isAdmin: profile?.role === 'admin',
     isAuthenticated: Boolean(session),
+    refreshProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -86,12 +86,16 @@ export default function AdminPage() {
             <input
               id="new-username"
               type="text"
+              autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
               placeholder="kullanici"
+              minLength={3}
+              maxLength={32}
+              pattern="[A-Za-z0-9_.-]+"
               required
             />
           </div>
@@ -101,12 +105,14 @@ export default function AdminPage() {
             </label>
             <input
               id="new-password"
-              type="text"
+              type="password"
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded-lg border border-navy-700 bg-navy-950 px-3 py-2.5 text-sm text-ink placeholder-slate-600 outline-none focus:border-accent/60"
               placeholder="en az 6 karakter"
+              minLength={6}
+              maxLength={128}
               required
             />
           </div>

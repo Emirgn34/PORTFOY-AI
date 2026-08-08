@@ -77,3 +77,32 @@ export async function updatePassword(newPassword) {
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   return { error };
 }
+
+/**
+ * Kullanıcı adını ve Supabase Auth'taki dahili giriş adresini sunucu üzerinden
+ * birlikte günceller. Dönüş: { username, error }.
+ */
+export async function updateUsername(newUsername) {
+  if (!supabase) return { username: null, error: new Error('Kimlik servisi yapılandırılmamış.') };
+  const token = await getAccessToken();
+  if (!token) return { username: null, error: new Error('Oturum gerekli.') };
+
+  try {
+    const response = await fetch('/api/account', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ username: newUsername }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Kullanıcı adı güncellenemedi.');
+
+    // Auth e-postası sunucuda değişti; istemcinin JWT bilgisini yenile.
+    await supabase.auth.refreshSession();
+    return { username: payload.username, error: null };
+  } catch (error) {
+    return { username: null, error };
+  }
+}

@@ -75,6 +75,9 @@ export default async function handler(req, res) {
       if (!password || String(password).length < 6) {
         return res.status(400).json({ error: 'Parola en az 6 karakter olmalı.' });
       }
+      if (String(password).length > 128) {
+        return res.status(400).json({ error: 'Parola en fazla 128 karakter olabilir.' });
+      }
       const newRole = role === 'admin' ? 'admin' : 'user';
 
       // Kullanıcı adı zaten var mı? (dostça hata için önden kontrol)
@@ -87,8 +90,36 @@ export default async function handler(req, res) {
         password: String(password),
         email_confirm: true,
         user_metadata: { username: uname, role: newRole },
+        // registration-schema.sql daha önce çalıştırılmış olsa bile Admin
+        // panelinden açılan hesap doğrudan onaylı ve seçilen rolle oluşturulur.
+        app_metadata: {
+          portfoyai_role: newRole,
+          registration_status: 'approved',
+        },
       });
       if (error) throw error;
+
+      // registration-schema.sql kuruluysa profil durumunu da kesin olarak
+      // onayla. Eski şemada status/approved_at sütunları bulunmadığı için ilk
+      // güncelleme hata verirse yalnızca rolü eşitleyen geriye uyumlu yolu kullan.
+      const { error: profileApprovalError } = await sb
+        .from('profiles')
+        .update({ role: newRole, status: 'approved', approved_at: new Date().toISOString() })
+        .eq('id', data.user.id);
+
+      if (profileApprovalError) {
+        const { error: legacyProfileError } = await sb
+          .from('profiles')
+          .update({ role: newRole })
+          .eq('id', data.user.id);
+
+        if (legacyProfileError) {
+          // Yarım oluşturulmuş ve giriş yetkisi belirsiz bir hesap bırakma.
+          await sb.auth.admin.deleteUser(data.user.id);
+          throw legacyProfileError;
+        }
+      }
+
       return res.status(201).json({ user: { id: data.user.id, username: uname, role: newRole } });
     }
 
