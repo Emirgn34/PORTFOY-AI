@@ -48,8 +48,26 @@ export const EVIDENCE_CATEGORIES = {
 /**
  * Kesinlik eşiği: vitrine çıkmak için gereken minimum kanıt gücü.
  * TEK AYAR NOKTASI — liste çok doluysa yükselt, sürekli boşsa düşür.
+ *
+ * Kalibrasyon deploy gerektirmesin diye ortam değişkeninden okunur:
+ * - Sunucu/GitHub Actions: `CONVICTION_THRESHOLD`
+ * - Frontend (Vercel build): `VITE_CONVICTION_THRESHOLD`
+ * Bu modül hem Node'dan (server/collect.js) hem tarayıcıdan yüklendiği için
+ * iki ortam da güvenle yoklanır; hiçbiri yoksa varsayılan 78 kullanılır.
  */
-export const CONVICTION_THRESHOLD = 78;
+const DEFAULT_CONVICTION_THRESHOLD = 78;
+
+function readThresholdOverride() {
+  // Node tarafı (tarayıcıda `process` tanımsızdır)
+  const fromNode = globalThis.process?.env?.CONVICTION_THRESHOLD;
+  // Vite tarafı (Node'da import.meta.env tanımsızdır)
+  const fromVite = import.meta.env?.VITE_CONVICTION_THRESHOLD;
+  const raw = fromNode ?? fromVite;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 100 ? parsed : null;
+}
+
+export const CONVICTION_THRESHOLD = readThresholdOverride() ?? DEFAULT_CONVICTION_THRESHOLD;
 
 /**
  * Vitrine çıkmak için gereken minimum BAĞIMSIZ kanıt kategorisi sayısı.
