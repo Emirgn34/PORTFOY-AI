@@ -27,4 +27,12 @@ export default defineConfig({
       '/api': 'http://localhost:8787',
     },
   },
+  test: {
+    // Arayüz testleri: yalnızca src altındaki *.test.jsx dosyaları.
+    // Sunucu/util testleri test/ klasöründe kalır ve `node --test` ile koşar.
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/*.test.jsx'],
+    setupFiles: ['./src/testing/setup.js'],
+  },
 });

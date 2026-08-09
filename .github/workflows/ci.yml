@@ -18,7 +18,9 @@ jobs:
           cache: npm
       - name: Bağımlılıkları kur
         run: npm ci --no-audit --no-fund
-      - name: Birim testleri
-        run: npm test
+      - name: Birim testleri (sunucu + skor motoru)
+        run: npm run test:unit
+      - name: Arayüz testleri (production kod yolu)
+        run: npm run test:ui
       - name: Production build
         run: npm run build
