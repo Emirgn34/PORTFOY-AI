@@ -65,7 +65,26 @@ export default async function handler(req, res) {
       return res.status(200).json({ analysis: { ...cachedRow.data, cacheHit: true } });
     }
 
-    let allowAi = Boolean(ANTHROPIC_API_KEY) && (await canSpendAi({ reserveUsd: 0.02 }));
+    // AI atlanırsa SEBEBİNİ taşı. Eskiden bu düşüşler yalnızca sunucu log'una
+    // yazılıyordu; kullanıcı "yorumlar neden otomatik?" sorusunun cevabını
+    // hiçbir yerde göremiyordu (migration/env eksik mi, kota mı doldu?).
+    let aiNotice = null;
+    let allowAi = Boolean(ANTHROPIC_API_KEY);
+    if (!allowAi) {
+      aiNotice = {
+        code: 'no_key',
+        message: 'ANTHROPIC_API_KEY tanımlı değil — yorumlar AI olmadan üretildi.',
+      };
+    }
+
+    if (allowAi && !(await canSpendAi({ reserveUsd: 0.02 }))) {
+      allowAi = false;
+      aiNotice = {
+        code: 'budget',
+        message: 'Günlük Claude bütçesi doldu — yorumlar AI olmadan üretildi.',
+      };
+    }
+
     if (allowAi) {
       const parsedDailyLimit = Number(process.env.PORTFOLIO_AI_DAILY_LIMIT);
       const parsedCooldown = Number(process.env.PORTFOLIO_AI_COOLDOWN_SECONDS);
@@ -81,8 +100,20 @@ export default async function handler(req, res) {
         // deterministik analiz yine üretilir.
         console.error(`[analyze-portfolio] AI kotası okunamadı: ${quota.error.message}`);
         allowAi = false;
+        aiNotice = {
+          code: 'setup_missing',
+          message:
+            'AI kota tablosu kurulu değil (supabase/ai-control-schema.sql çalıştırılmamış) — ' +
+            'yorumlar AI olmadan üretildi.',
+        };
       } else {
         allowAi = quota.data === true;
+        if (!allowAi) {
+          aiNotice = {
+            code: 'quota',
+            message: `AI limiti: günde ${dailyLimit} analiz ve analizler arası ${Math.round(cooldown / 60)} dk bekleme. Skorlar güncel, yorumlar AI olmadan üretildi.`,
+          };
+        }
       }
     }
 
@@ -113,6 +144,15 @@ export default async function handler(req, res) {
     });
     analysis.portfolioFingerprint = fingerprint;
     analysis.cacheHit = false;
+    // AI izin verildiği hâlde çağrı içeride hata aldıysa (kredi bitti, ağ vb.)
+    // buildPortfolioAnalysis aiUsed=false döner; kullanıcı yine bilgilendirilir.
+    if (!aiNotice && allowAi && !analysis.aiUsed) {
+      aiNotice = {
+        code: 'ai_failed',
+        message: 'Claude çağrısı tamamlanamadı (kredi veya bağlantı) — yorumlar AI olmadan üretildi.',
+      };
+    }
+    analysis.aiNotice = aiNotice;
 
     // Kullanıcının satırına kaydet (sonraki açılışta AI'sız okunur)
     await sb

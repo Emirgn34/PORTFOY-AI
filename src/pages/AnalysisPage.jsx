@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Gauge, Sparkles, FlaskConical, Inbox, Loader2, RefreshCw, BrainCircuit } from 'lucide-react';
 import useSyncedState from '../hooks/useSyncedState.js';
+import { MOCK_ENABLED } from '../config.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { MOCK_PORTFOLIO_ANALYSIS, getStockAnalysis } from '../data/mockAnalysis.js';
@@ -10,7 +11,6 @@ import ScoreBadge from '../components/ScoreBadge.jsx';
 import { getScoreColors, RISK_LEVEL_CONFIG } from '../utils/scoreColors.js';
 import { getStockMetrics, toTRY } from '../utils/portfolioCalculations.js';
 
-const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
 const EMPTY_ANALYSIS = {
   overallScore: 0,
   riskLevel: 'Orta',
@@ -31,7 +31,14 @@ function PortfolioScoreRing({ score }) {
   return (
     <div className="relative h-32 w-32 shrink-0">
       <svg viewBox="0 0 128 128" className="h-32 w-32 -rotate-90">
-        <circle cx="64" cy="64" r={radius} fill="none" stroke="#1d2a52" strokeWidth="10" />
+        <circle
+          cx="64"
+          cy="64"
+          r={radius}
+          fill="none"
+          stroke="var(--color-navy-700)"
+          strokeWidth="10"
+        />
         <circle
           cx="64"
           cy="64"
@@ -53,13 +60,28 @@ function PortfolioScoreRing({ score }) {
 }
 
 export default function AnalysisPage() {
-  const [stocks] = useSyncedState({
+  // Portföy kullanıcının kendi satırından gelene kadar içerik mount edilmez;
+  // aksi halde demo (seed) hisseler kullanıcının portföyüymüş gibi görünür.
+  const [stocks, , { loading }] = useSyncedState({
     table: 'portfolios',
     column: 'stocks',
     localKey: 'portfoyai_stocks',
     seed: SEED_STOCKS,
     readOnly: true,
   });
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 size={26} className="animate-spin text-accent-soft" />
+      </div>
+    );
+  }
+
+  return <AnalysisContent stocks={stocks} />;
+}
+
+function AnalysisContent({ stocks }) {
   const { configured } = useAuth();
   const [result, setResult] = useState(null); // gerçek analiz (kayıtlı veya yeni)
   const [generating, setGenerating] = useState(false);
@@ -105,6 +127,12 @@ export default function AnalysisPage() {
       weightPercent: total > 0 ? (values[i] / total) * 100 : 0,
     }));
   }, [stocks]);
+
+  // Analiz üretildikten sonra portföye eklenen hisseler: skorları yok, kartları
+  // "bekliyor" durumunda çizilir ve kullanıcı yenilemeye çağrılır.
+  const missingTickers = isReal
+    ? stocks.map((s) => s.ticker).filter((t) => !result?.stocks?.[t.toUpperCase()])
+    : [];
 
   const riskClass = RISK_LEVEL_CONFIG[portfolio.riskLevel] ?? RISK_LEVEL_CONFIG['Orta'];
   const updatedText = result?.generatedAt
@@ -157,6 +185,19 @@ export default function AnalysisPage() {
       </div>
       {error && (
         <p className="rounded-lg border border-loss/30 bg-loss/10 px-3 py-2 text-xs text-loss">{error}</p>
+      )}
+      {result?.aiNotice?.message && (
+        <p className="rounded-lg border border-navy-700 bg-navy-850 px-3 py-2 text-xs text-slate-400">
+          <span className="font-semibold text-slate-300">Not:</span> {result.aiNotice.message}
+        </p>
+      )}
+      {missingTickers.length > 0 && (
+        <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-slate-400">
+          Portföyün son analizden sonra değişmiş:{' '}
+          <span className="font-semibold text-slate-200">{missingTickers.join(', ')}</span> için skor
+          yok. Güncel değerlendirme için <span className="font-semibold text-slate-200">Yenile</span>'ye
+          bas.
+        </p>
       )}
 
       {/* Genel portföy skoru */}

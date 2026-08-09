@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar.jsx';
 import Header from './Header.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 import { TourProvider } from '../tour/TourProvider.jsx';
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { pathname } = useLocation();
 
   return (
     <TourProvider>
@@ -17,7 +19,10 @@ export default function Layout() {
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1400px]">
-            <Outlet />
+            {/* key: sayfa değişince hata sınırı sıfırlanır */}
+            <ErrorBoundary key={pathname}>
+              <Outlet />
+            </ErrorBoundary>
           </div>
         </main>
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio, Sparkle, ArrowUpRight, Check, ShieldQuestion, ChevronDown, ChevronRight, Landmark } from 'lucide-react';
 import useSyncedState from '../hooks/useSyncedState.js';
+import { MOCK_ENABLED } from '../config.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
@@ -25,7 +26,6 @@ import {
   NEAR_MISS_THRESHOLD,
 } from '../utils/conviction.js';
 
-const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
 
 const HORIZON_TABS = [
   { value: 'short', label: 'Kısa Vade Fırsatlar' },
@@ -74,7 +74,7 @@ function EmptyState({ icon: Icon, title, body }) {
 }
 
 export default function OpportunitiesPage() {
-  const [portfolioStocks] = useSyncedState({
+  const [portfolioStocks, , portfolioState] = useSyncedState({
     table: 'portfolios',
     column: 'stocks',
     localKey: 'portfoyai_stocks',
@@ -203,9 +203,11 @@ export default function OpportunitiesPage() {
 
   const [showAllCandidates, setShowAllCandidates] = useState(false);
 
+  // Portföy buluttan gelene kadar demo (seed) hisseler "portföyünde var"
+  // rozetiyle işaretlenmemeli — yükleme bitene dek küme boş kalır.
   const portfolioTickers = useMemo(
-    () => new Set(portfolioStocks.map((s) => s.ticker)),
-    [portfolioStocks]
+    () => new Set(portfolioState.loading ? [] : portfolioStocks.map((s) => s.ticker)),
+    [portfolioStocks, portfolioState.loading]
   );
 
   const sectors = useMemo(

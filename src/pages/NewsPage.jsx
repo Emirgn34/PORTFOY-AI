@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, SearchX, Radio, X, Flame } from 'lucide-react';
 import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
 import useSyncedState from '../hooks/useSyncedState.js';
+import { MOCK_ENABLED } from '../config.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { fetchLiveNews, fetchAllLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
@@ -10,7 +11,6 @@ import { withNewsImportance } from '../utils/newsImportance.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
 
-const MOCK_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
 
 /** Haber kapsamı: hangi hisselerin haberleri gösterilsin? */
 const SCOPE_OPTIONS = [

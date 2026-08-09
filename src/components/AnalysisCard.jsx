@@ -1,4 +1,4 @@
-import { Sparkles } from 'lucide-react';
+import { Sparkles, HelpCircle } from 'lucide-react';
 import ScoreBadge from './ScoreBadge.jsx';
 import { getScoreColors, RECOMMENDATION_CONFIG } from '../utils/scoreColors.js';
 
@@ -12,7 +12,14 @@ function ScoreRing({ score }) {
   return (
     <div className="relative h-16 w-16 shrink-0">
       <svg viewBox="0 0 64 64" className="h-16 w-16 -rotate-90">
-        <circle cx="32" cy="32" r={radius} fill="none" stroke="#1d2a52" strokeWidth="6" />
+        <circle
+          cx="32"
+          cy="32"
+          r={radius}
+          fill="none"
+          stroke="var(--color-navy-700)"
+          strokeWidth="6"
+        />
         <circle
           cx="32"
           cy="32"
@@ -34,7 +41,39 @@ function ScoreRing({ score }) {
   );
 }
 
+/**
+ * Analizi olmayan hisse için gösterilen kart.
+ * Analiz üretildikten SONRA portföye eklenen hisseler bu durumda olur —
+ * eskiden analysis=null geldiğinde kart render'da patlıyor ve tüm sayfa
+ * bomboş kalıyordu.
+ */
+function PendingAnalysisCard({ stock, weightPercent }) {
+  return (
+    <div className="flex flex-col rounded-xl border border-dashed border-navy-700 bg-navy-900/50 p-5">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-dashed border-navy-700">
+          <HelpCircle size={22} className="text-slate-500" />
+        </div>
+        <div>
+          <p className="font-bold text-ink">{stock.ticker}</p>
+          <p className="text-xs text-slate-500">{stock.company}</p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Portföy ağırlığı:{' '}
+            <span className="font-semibold text-slate-300">{weightPercent.toFixed(1)}%</span>
+          </p>
+        </div>
+      </div>
+      <p className="mt-auto rounded-lg border border-navy-700/60 bg-navy-850 p-3 text-xs leading-relaxed text-slate-400">
+        Bu hisse son analiz üretildikten sonra portföye eklenmiş.{' '}
+        <span className="font-semibold text-slate-300">Yenile</span> düğmesi skorlarını da hesaplar.
+      </p>
+    </div>
+  );
+}
+
 export default function AnalysisCard({ stock, analysis, weightPercent }) {
+  if (!analysis) return <PendingAnalysisCard stock={stock} weightPercent={weightPercent} />;
+
   const recommendationClass =
     RECOMMENDATION_CONFIG[analysis.recommendation] ?? RECOMMENDATION_CONFIG['Nötr'];
 
