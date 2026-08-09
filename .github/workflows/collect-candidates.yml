@@ -38,3 +38,4 @@ jobs:
           # 6 saatlik akış gecikmeye dayanıklı; standart Messages API'ye göre %50 ucuzdur.
           ANTHROPIC_USE_BATCH: 'true'
           AI_DAILY_BUDGET_USD: ${{ vars.AI_DAILY_BUDGET_USD || '1.00' }}
+          CONVICTION_THRESHOLD: ${{ vars.CONVICTION_THRESHOLD || '78' }}

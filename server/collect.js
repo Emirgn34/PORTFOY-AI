@@ -24,6 +24,11 @@ import { runEventWatch, getWatchPlan } from './eventWatch.js';
 import { CONVICTION_THRESHOLD } from '../src/utils/conviction.js';
 import { mapLimit } from './concurrency.js';
 import { buildEvidenceSignature } from './aiControl.js';
+import {
+  assessGenerationCompleteness,
+  selectMarketBalancedSymbols,
+} from './candidateSelection.js';
+import { buildModelPortfolios } from '../src/utils/modelPortfolioCore.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -64,8 +69,22 @@ async function sb(pathAndQuery, { method = 'GET', body = null, prefer = null } =
 }
 
 async function getTrackedSymbols() {
-  const rows = await sb('tracked_symbols?select=symbol');
-  if (rows.length > 0) return rows.map((r) => r.symbol);
+  // Bu tablo ortak tarama girdisidir; hatalı/şişirilmiş kayıtların tüm işi
+  // sınırsız büyütmesine izin verme. DB politikası da yalnız authenticated yazıma açıktır.
+  const rows = await sb('tracked_symbols?select=symbol&order=symbol.asc&limit=1000');
+  const symbols = [
+    ...new Set(
+      (rows ?? [])
+        .map((row) => String(row.symbol ?? '').trim().toUpperCase())
+        .filter((symbol) => /^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol))
+    ),
+  ].slice(0, 500);
+  if (symbols.length > 0) {
+    if ((rows?.length ?? 0) !== symbols.length) {
+      console.warn(`[tracked] ${rows?.length ?? 0} kayıttan güvenli sınırlar içindeki ${symbols.length} sembol kullanılacak.`);
+    }
+    return symbols;
+  }
 
   console.log('İzleme tablosu boş; varsayılan semboller ekleniyor...');
   await sb('tracked_symbols', {
@@ -215,12 +234,27 @@ async function getNewsForSymbol(symbol) {
 
 /** Faz 1 ön-elemesinden geçip derin analize aday olacak ABD havuzu boyutu. */
 const DEEP_POOL_SIZE = 300;
-/** Her vade için derin analiz + vitrin buffer'ı (ilk 30'u garantilemek için biraz fazlası). */
-const DISPLAY_BUFFER = 45;
+/** Her vade için derin analiz + araştırma havuzu (pazar dengeli ilk 100). */
+const DISPLAY_BUFFER = 100;
 /** Başlık çevirisi + kesinlik (AI) turuna girecek vitrin adayı sayısı (her vade).
- *  Tüm derin havuza değil yalnızca vitrindeki ilk 30+30'a uygulanır; bu, hem
+ *  Tüm derin havuza değil yalnızca vitrindeki ilk 50+50'ye uygulanır; bu, hem
  *  çeviri trafiğini hem de tek AI kaleminin maliyetini sabit tutar. */
-const GATED_TOP = 30;
+const GATED_TOP = 50;
+/** Derin/vitrin havuzunda BIST payı; kalan kontenjan ABD içindir. */
+const BIST_CANDIDATE_SHARE = 0.45;
+
+function generationCoverageIsSafe(label, plannedSymbols, completedRows) {
+  const coverage = assessGenerationCompleteness(plannedSymbols, completedRows);
+  if (coverage.ok) return true;
+  const details = coverage.markets
+    .map((item) => `${item.market} ${item.actual}/${item.expected}`)
+    .join(', ');
+  console.error(
+    `[candidates] ${label} eksik: ${coverage.actual}/${coverage.expected} ` +
+      `(%${Math.round(coverage.ratio * 100)}), ${details}. Önceki jenerasyon korunuyor.`
+  );
+  return false;
+}
 
 /** Büyük sembol listesini parçalara bölerek toplu quote çeker (ham quote nesneleri). */
 async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
@@ -228,11 +262,18 @@ async function fetchQuotesChunked(symbols, chunkSize = 200, concurrency = 3) {
   for (let i = 0; i < symbols.length; i += chunkSize) chunks.push(symbols.slice(i, i + chunkSize));
   const map = new Map();
   await mapLimit(chunks, concurrency, async (chunk, idx) => {
-    try {
-      const res = await yahooFinance.quote(chunk);
-      for (const q of Array.isArray(res) ? res : [res]) map.set(q.symbol, q);
-    } catch (err) {
-      console.error(`[quotes] parça ${idx}: ${err.message}`);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await yahooFinance.quote(chunk);
+        for (const q of Array.isArray(res) ? res : [res]) map.set(q.symbol, q);
+        return;
+      } catch (err) {
+        if (attempt === 3) {
+          console.error(`[quotes] parça ${idx}, 3 deneme başarısız: ${err.message}`);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+      }
     }
   });
   return map;
@@ -319,22 +360,11 @@ async function enrichGatedTitles(symbols) {
   console.log(`Gated başlık çevirisi: ${usSymbols.length} sembolde ${updated} başlık çevrildi.`);
 }
 
-/** Aday satırlarını vadeye göre skorlayıp ilk N'in YAHOO sembollerini döndürür. */
-function topYahooSymbols(rows, horizon, n, referenceMs) {
-  const horizonRows = rows.filter((r) => r.horizon === horizon);
-  const tickerToYahoo = new Map(horizonRows.map((r) => [r.data.symbol, r.symbol]));
-  const ranked = scoreAndRankCandidates(horizonRows.map((r) => r.data), horizon, referenceMs);
-  return ranked
-    .slice(0, n)
-    .map((c) => tickerToYahoo.get(c.symbol))
-    .filter(Boolean);
-}
-
 /**
  * 3 fazlı fırsat üretimi:
  *   Faz 1 — tüm ABD evreni → ucuz ön-skor → en iyi 300
  *   Faz 2 — 300 (+BIST/çekirdek) → hafif analiz (2yıl YOK) + ham haber → ön sıralama
- *   Faz 3 — her vadede ilk ~45 → 2 yıllık ZORUNLU analiz + gated AI haber → yaz
+ *   Faz 3 — her vadede pazar dengeli ilk 100 → 2 yıllık ZORUNLU analiz + gated AI haber → yaz
  */
 async function collectCandidates(trackedSymbols) {
   const referenceMs = Date.now();
@@ -345,6 +375,13 @@ async function collectCandidates(trackedSymbols) {
   const quoteSymbols = [...new Set([...usUniverse, ...core])];
   console.log(`Faz 1: ${quoteSymbols.length} sembol için toplu fiyat çekiliyor...`);
   const quoteMap = await fetchQuotesChunked(quoteSymbols);
+  if (
+    !generationCoverageIsSafe(
+      'Faz 1 fiyat kapsamı',
+      quoteSymbols,
+      [...quoteMap.keys()].map((symbol) => ({ symbol }))
+    )
+  ) return;
 
   const usQuotes = usUniverse.map((s) => quoteMap.get(s)).filter(Boolean);
   const pool = selectDeepPool(usQuotes, { total: DEEP_POOL_SIZE });
@@ -359,17 +396,38 @@ async function collectCandidates(trackedSymbols) {
     console.log('Faz 2: aday üretilemedi.');
     return;
   }
+  if (!generationCoverageIsSafe('Faz 2 hafif analiz kapsamı', faz2Symbols, lightRows)) return;
+  const lightSymbols = new Set(lightRows.map((row) => row.symbol));
+  const eligibleTracked = trackedSymbols.filter((symbol) => lightSymbols.has(symbol));
   const deepSet = [
     ...new Set([
-      ...topYahooSymbols(lightRows, 'short', DISPLAY_BUFFER, referenceMs),
-      ...topYahooSymbols(lightRows, 'long', DISPLAY_BUFFER, referenceMs),
+      ...selectMarketBalancedSymbols(lightRows, 'short', {
+        total: DISPLAY_BUFFER,
+        bistShare: BIST_CANDIDATE_SHARE,
+        referenceMs,
+      }),
+      ...selectMarketBalancedSymbols(lightRows, 'long', {
+        total: DISPLAY_BUFFER,
+        bistShare: BIST_CANDIDATE_SHARE,
+        referenceMs,
+      }),
+      // Kullanıcının portföy/izleme sembolleri puanı ne olursa olsun derin analiz edilir.
+      ...eligibleTracked,
     ]),
   ];
-  // Çeviri yalnızca vitrindeki ilk 30+30'a (deep havuzun tamamına değil).
+  // Çeviri yalnızca vitrindeki ilk 50+50'ye (deep havuzun tamamına değil).
   const gatedSet = [
     ...new Set([
-      ...topYahooSymbols(lightRows, 'short', GATED_TOP, referenceMs),
-      ...topYahooSymbols(lightRows, 'long', GATED_TOP, referenceMs),
+      ...selectMarketBalancedSymbols(lightRows, 'short', {
+        total: GATED_TOP,
+        bistShare: BIST_CANDIDATE_SHARE,
+        referenceMs,
+      }),
+      ...selectMarketBalancedSymbols(lightRows, 'long', {
+        total: GATED_TOP,
+        bistShare: BIST_CANDIDATE_SHARE,
+        referenceMs,
+      }),
     ]),
   ];
   console.log(`Faz 2 bitti: ${deepSet.length} sembol derin analiz, ${gatedSet.length} sembol vitrin.`);
@@ -384,6 +442,8 @@ async function collectCandidates(trackedSymbols) {
     return;
   }
 
+  if (!generationCoverageIsSafe('Faz 3 derin analiz kapsamı', deepSet, deepRows)) return;
+
   // "Şart koşma" doğrulaması: vitrindeki ilk 30 gerçekten 2 yıllık (deep) mı?
   for (const horizon of ['short', 'long']) {
     const ranked = scoreAndRankCandidates(
@@ -397,28 +457,23 @@ async function collectCandidates(trackedSymbols) {
     }
   }
 
-  // --- Kesinlik teyidi (turun TEK AI adımı) ---
-  // Yalnızca kanıtı eşiğe yakın olan finalistlere uygulanır; AI kesinliği
-  // yalnızca AŞAĞI çekebildiği için bu adım atlanırsa (anahtar yok, hata,
-  // zaman aşımı) vitrin kural skorlarıyla çalışmaya devam eder.
-  try {
-    await confirmFinalists(deepRows);
-  } catch (err) {
-    console.error(`[kesinlik] adım atlandı: ${err.message}`);
-  }
-
-  // --- Yaz + bayat temizliği (jenerasyon) ---
+  // --- Önce deterministik jenerasyonu yayınla ---
+  // Batch AI çağrısı 55 dakikaya kadar sürebilir. Adayları ondan önce yazarak
+  // workflow sonradan zaman aşımına uğrasa bile yeni taramayı kaybetmeyiz.
   const generation = Date.now();
-  await sb('candidates', {
-    method: 'POST',
-    body: deepRows.map((r) => ({
+  const generatedAt = new Date(generation).toISOString();
+  const candidatePayload = () =>
+    deepRows.map((r) => ({
       symbol: r.symbol,
       horizon: r.horizon,
       market: r.market,
       data: r.data,
       generation,
-      updated_at: new Date().toISOString(),
-    })),
+      updated_at: generatedAt,
+    }));
+  await sb('candidates', {
+    method: 'POST',
+    body: candidatePayload(),
     prefer: 'resolution=merge-duplicates',
   });
   try {
@@ -429,6 +484,50 @@ async function collectCandidates(trackedSymbols) {
   }
   console.log(`Aday: ${deepRows.length / 2} sembol yazıldı (jenerasyon ${generation}).`);
 
+  // Aynı aday jenerasyonundan dört risk seviyeli model sepet üret.
+  // Tablo migration'ı henüz uygulanmadıysa aday turu yine başarılı sayılır;
+  // istemci aynı motorla adaylardan anlık fallback üretebilir.
+  async function publishModelPortfolios() {
+    const modelPortfolios = buildModelPortfolios({
+      shortCandidates: deepRows.filter((row) => row.horizon === 'short').map((row) => row.data),
+      longCandidates: deepRows.filter((row) => row.horizon === 'long').map((row) => row.data),
+      generatedAt,
+      sourceGeneration: generation,
+    });
+    await sb('model_portfolios', {
+      method: 'POST',
+      body: modelPortfolios.map((portfolio) => ({
+        slug: portfolio.slug,
+        risk_tier: portfolio.riskTier,
+        source_generation: generation,
+        generated_at: generatedAt,
+        valid_until: portfolio.validUntil,
+        data: portfolio,
+        updated_at: generatedAt,
+      })),
+      prefer: 'resolution=merge-duplicates',
+    });
+    console.log(`Model portföy: ${modelPortfolios.length} sepet güncellendi.`);
+  }
+  try {
+    await publishModelPortfolios();
+  } catch (err) {
+    console.error(`[model-portfolios] adım atlandı: ${err.message}`);
+  }
+
+  // --- Kesinlik teyidi (turun TEK AI adımı) ---
+  // AI yalnızca aşağı yönlü teyit verebilir. Tamamlanırsa aynı jenerasyon
+  // yerinde güncellenir; tamamlanmazsa yukarıdaki kural skorları geçerli kalır.
+  try {
+    const confirmedRows = await confirmFinalists(deepRows);
+    if (confirmedRows.length > 0) {
+      const patched = await publishAiConvictions(confirmedRows, generation);
+      console.log(`Kesinlik teyidi: ${patched}/${confirmedRows.length} satır aynı jenerasyonda güvenle güncellendi.`);
+    }
+  } catch (err) {
+    console.error(`[kesinlik] adım atlandı: ${err.message}`);
+  }
+
   // Backtest skor anlık görüntüsü
   try {
     await snapshotScores(deepRows, generation);
@@ -438,7 +537,7 @@ async function collectCandidates(trackedSymbols) {
 
   // --- Başlık çevirisi (en sonda, OLABİLDİĞİNCE) ---
   // Adaylar zaten yazıldı; bu adım yavaş olsa/timeout'a düşse bile vitrin etkilenmez.
-  // Vitrindeki ilk 30+30'un başlıklarını Türkçeleştirir → Haber sayfası ve BİR
+  // Vitrindeki ilk 50+50'nin başlıklarını Türkçeleştirir → Haber sayfası ve BİR
   // SONRAKİ turun kartları için.
   try {
     await enrichGatedTitles(gatedSet);
@@ -458,7 +557,7 @@ async function collectCandidates(trackedSymbols) {
 async function confirmFinalists(rows) {
   if (!isConvictionAiEnabled()) {
     console.log('Kesinlik teyidi: ANTHROPIC_API_KEY yok, kural skorlarıyla devam ediliyor.');
-    return;
+    return [];
   }
 
   const bySymbol = new Map();
@@ -485,15 +584,53 @@ async function confirmFinalists(rows) {
   const finalists = [...bySymbol.values()].sort((a, b) => b.conviction.score - a.conviction.score);
   if (finalists.length === 0) {
     console.log('Kesinlik teyidi: kural eşiğini geçen aday yok, AI çağrısı yapılmadı.');
-    return;
+    return [];
   }
 
+  const before = new Map(finalists.map((finalist) => [finalist.symbol, finalist.conviction]));
   await confirmConviction(finalists);
+  const processed = finalists.filter((finalist) => finalist.conviction !== before.get(finalist.symbol));
 
-  // Teyit edilmiş kesinliği o sembolün tüm aday satırlarına yaz
-  for (const f of finalists) {
+  // Yalnız gerçekten cache/AI kararı uygulanmış kesinliği ilgili aday satırlarına yaz.
+  for (const f of processed) {
     for (const r of f.rows) r.data.conviction = f.conviction;
   }
+  return processed.flatMap((finalist) => finalist.rows);
+}
+
+/**
+ * Uzun süren AI çağrısı sırasında olay nöbetinin yazdığı taze veriyi ezmeden,
+ * yalnız aynı jenerasyon + aynı kanıt imzasındaki conviction alanını günceller.
+ */
+async function publishAiConvictions(rows, generation) {
+  let patched = 0;
+  await mapLimit(rows, 5, async (row) => {
+    const baseFilter =
+      `symbol=eq.${encodeURIComponent(row.symbol)}` +
+      `&horizon=eq.${encodeURIComponent(row.horizon)}` +
+      `&generation=eq.${generation}`;
+    const currentRows = await sb(`candidates?${baseFilter}&select=data,updated_at`);
+    const current = currentRows?.[0];
+    if (!current?.data || !current.updated_at) return;
+    if (
+      buildEvidenceSignature(current.data.conviction) !==
+      buildEvidenceSignature(row.data.conviction)
+    ) return;
+
+    const result = await sb(
+      `candidates?${baseFilter}&updated_at=eq.${encodeURIComponent(current.updated_at)}`,
+      {
+        method: 'PATCH',
+        body: {
+          data: { ...current.data, conviction: row.data.conviction },
+          updated_at: new Date().toISOString(),
+        },
+        prefer: 'return=representation',
+      }
+    );
+    if (result?.length) patched += 1;
+  });
+  return patched;
 }
 
 /** Aday skorlarını score_snapshots tablosuna ekler (backtest track record'u). */

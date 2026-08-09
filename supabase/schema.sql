@@ -7,6 +7,13 @@ create table if not exists tracked_symbols (
   added_at timestamptz not null default now()
 );
 
+-- Geçmişteki bozuk bir kayıt migration'ı durdurmasın; NOT VALID kısıtı yine de
+-- bundan sonraki tüm yazımlarda makul Yahoo hisse sembolü biçimini uygular.
+alter table tracked_symbols drop constraint if exists tracked_symbols_symbol_format;
+alter table tracked_symbols
+  add constraint tracked_symbols_symbol_format
+  check (symbol ~ '^[A-Z][A-Z0-9.\-]{0,14}$') not valid;
+
 -- Son fiyatlar (sembol başına tek satır, toplayıcı günceller)
 create table if not exists quotes (
   symbol text primary key,
@@ -76,6 +83,18 @@ create table if not exists us_universe (
 
 create index if not exists us_universe_refreshed_idx on us_universe (refreshed_at);
 
+-- Dört risk seviyeli ortak model portföyler (6 saatlik aday turundan üretilir).
+create table if not exists model_portfolios (
+  slug text primary key,
+  risk_tier smallint not null check (risk_tier between 1 and 4),
+  source_generation bigint not null,
+  generated_at timestamptz not null,
+  valid_until timestamptz not null,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists model_portfolios_generated_idx on model_portfolios (generated_at desc);
+
 -- Satır düzeyi güvenlik: anon anahtar yalnızca okuyabilir,
 -- yazma işlemleri service_role anahtarıyla (toplayıcı) yapılır.
 alter table tracked_symbols enable row level security;
@@ -84,6 +103,7 @@ alter table fx_rates enable row level security;
 alter table news enable row level security;
 alter table candidates enable row level security;
 alter table us_universe enable row level security;
+alter table model_portfolios enable row level security;
 
 -- (drop+create: dosya tekrar çalıştırıldığında hata vermez)
 drop policy if exists "herkes okur" on tracked_symbols;
@@ -92,7 +112,9 @@ drop policy if exists "herkes okur" on fx_rates;
 drop policy if exists "herkes okur" on news;
 drop policy if exists "herkes okur" on candidates;
 drop policy if exists "herkes okur" on us_universe;
+drop policy if exists "herkes okur" on model_portfolios;
 drop policy if exists "anon sembol ekler" on tracked_symbols;
+drop policy if exists "giris yapan sembol ekler" on tracked_symbols;
 
 create policy "herkes okur" on tracked_symbols for select using (true);
 create policy "herkes okur" on quotes for select using (true);
@@ -100,12 +122,15 @@ create policy "herkes okur" on fx_rates for select using (true);
 create policy "herkes okur" on news for select using (true);
 create policy "herkes okur" on candidates for select using (true);
 create policy "herkes okur" on us_universe for select using (true);
+create policy "herkes okur" on model_portfolios for select using (true);
 
 -- Uygulama yeni hisse eklendiğinde sembolü izlemeye alabilsin
-create policy "anon sembol ekler" on tracked_symbols for insert with check (true);
+create policy "giris yapan sembol ekler" on tracked_symbols
+  for insert to authenticated with check (true);
 
 -- Yeni Supabase projelerinde PostgREST erişimi için açık yetkiler gerekir
 grant usage on schema public to anon, authenticated, service_role;
-grant select on tracked_symbols, quotes, fx_rates, news, candidates, us_universe to anon, authenticated;
-grant insert on tracked_symbols to anon, authenticated;
-grant all on tracked_symbols, quotes, fx_rates, news, candidates, us_universe to service_role;
+grant select on tracked_symbols, quotes, fx_rates, news, candidates, us_universe, model_portfolios to anon, authenticated;
+revoke insert on tracked_symbols from anon;
+grant insert on tracked_symbols to authenticated;
+grant all on tracked_symbols, quotes, fx_rates, news, candidates, us_universe, model_portfolios to service_role;

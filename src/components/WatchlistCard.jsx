@@ -7,6 +7,7 @@ import {
   Target,
   CalendarPlus,
   Briefcase,
+  Clock,
 } from 'lucide-react';
 import { formatCurrency, formatPercent } from '../utils/portfolioCalculations.js';
 
@@ -65,6 +66,17 @@ export default function WatchlistCard({
   const sinceAdded = getSinceAddedPercent(item);
   const targetInfo = getTargetInfo(item);
   const horizon = HORIZON_BADGES[item.horizon] ?? HORIZON_BADGES.long;
+  const isModelPlan = Boolean(item.modelPortfolio?.slug && item.entryPlan);
+  const generatedAtMs = new Date(item.entryPlan?.sourceGeneratedAt).getTime();
+  const explicitValidUntilMs = new Date(
+    item.entryPlan?.validUntil ?? item.modelPortfolio?.validUntil
+  ).getTime();
+  const planValidUntilMs = Number.isFinite(explicitValidUntilMs)
+    ? explicitValidUntilMs
+    : Number.isFinite(generatedAtMs)
+      ? generatedAtMs + 6 * 60 * 60 * 1000
+      : null;
+  const modelPlanIsStale = isModelPlan && (!planValidUntilMs || Date.now() > planValidUntilMs);
   const addedDate = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(
     new Date(item.addedAt)
   );
@@ -218,6 +230,40 @@ export default function WatchlistCard({
           </button>
         </div>
       </div>
+      {item.entryPlan && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-navy-800 pt-3 text-xs">
+          <span className={`font-semibold ${modelPlanIsStale ? 'text-amber-400' : 'text-accent'}`}>
+            {item.modelPortfolio?.slug ? 'Model portföy planı' : 'Planlı giriş'}
+          </span>
+          {modelPlanIsStale ? (
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <Clock size={12} />
+              Bu giriş planının süresi doldu; güncel model portföyünü yeniden kontrol edin.
+            </span>
+          ) : (
+            <>
+              <span className="text-slate-500">
+                Giriş:{' '}
+                <strong className="font-semibold tabular-nums text-gain">
+                  {formatCurrency(item.entryPlan.low, item.currency)} – {formatCurrency(item.entryPlan.high, item.currency)}
+                </strong>
+              </span>
+              <span className="text-slate-500">
+                Bozulma:{' '}
+                <strong className="font-semibold tabular-nums text-loss">
+                  {formatCurrency(item.entryPlan.invalidation, item.currency)}
+                </strong>
+              </span>
+              {item.modelPortfolio?.recommendedWeightPct != null && (
+                <span className="text-slate-500">
+                  Sepet ağırlığı:{' '}
+                  <strong className="font-semibold text-ink">%{item.modelPortfolio.recommendedWeightPct}</strong>
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </article>
   );
 }

@@ -16,6 +16,7 @@ import { fetchDailyHistory, analyzeTechnicals } from './technicalAnalysis.js';
 import { estimatePublisherReliability, classifySource } from './newsHeuristics.js';
 import { buildConviction } from './evidence.js';
 import { mapLimit } from './concurrency.js';
+import { BIST_SCAN_SYMBOLS } from './bistUniverse.js';
 
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
@@ -116,15 +117,14 @@ function estimateLongHorizon(growthScore) {
   return '2-4 yıl';
 }
 
-/** Küratörlü ABD + BIST çekirdek evreni (takip edilen sembollerle birleştirilir). */
+/** Küratörlü ABD + resmi KAP BIST 100 evreni (takip edilenlerle birleştirilir). */
 export const CANDIDATE_UNIVERSE = [
   // ABD (ağırlıklı)
   'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AMD', 'AVGO', 'NFLX',
   'JPM', 'V', 'MA', 'COST', 'WMT', 'XOM', 'LLY', 'UNH', 'KO', 'PEP',
   'DIS', 'CRM', 'ORCL', 'ADBE', 'INTC',
-  // BIST
-  'THYAO.IS', 'ASELS.IS', 'SISE.IS', 'TUPRS.IS', 'KCHOL.IS', 'SASA.IS', 'EREGL.IS',
-  'BIMAS.IS', 'FROTO.IS', 'GARAN.IS', 'AKBNK.IS', 'PGSUS.IS', 'TCELL.IS', 'ENJSA.IS',
+  // BIST: 14 sabit hisseden KAP'in güncel BIST 100 bileşenlerine çıkarıldı.
+  ...BIST_SCAN_SYMBOLS,
 ];
 
 /**
@@ -441,6 +441,13 @@ function buildMarketMetrics(quote, summary, tech, crTrend = null, benchmark = nu
     currentRatioSeries: crTrend?.series ?? [],
     currentRatioQuarters: crTrend?.quarters ?? 0,
     peRatio: pe ? Number(pe.toFixed(1)) : null,
+    forwardPeRatio: num(stats.forwardPE ?? fin.forwardPE),
+    pegRatio: num(stats.pegRatio),
+    priceToBook: pb != null ? Number(pb.toFixed(2)) : null,
+    debtToEquity: d2e != null ? Number(d2e.toFixed(1)) : null,
+    revenueGrowthPct: rg != null ? Number((rg * 100).toFixed(1)) : null,
+    earningsGrowthPct: eg != null ? Number((eg * 100).toFixed(1)) : null,
+    profitMarginPct: pm != null ? Number((pm * 100).toFixed(1)) : null,
     dividendYield: dy != null ? Number((dy * 100).toFixed(1)) : null,
     // Teknik göstergeler (varsa) — gerekçe metninde kullanılır
     hasTech: Boolean(tech),
@@ -693,6 +700,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
   const companyName = quote.longName ?? quote.shortName ?? ticker;
   const rawSector = summary?.assetProfile?.sector ?? null;
   const sector = SECTOR_TR[rawSector] ?? rawSector ?? 'Diğer';
+  const industry = summary?.assetProfile?.industry ?? null;
   const currency = quote.currency ?? (symbol.endsWith('.IS') ? 'TRY' : 'USD');
   const maxPositionWeightPct =
     m.liquidityLevel === 'Düşük'
@@ -708,6 +716,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     companyName,
     market,
     sector,
+    industry,
     currency,
     currentPrice: m.price,
     dailyChangePercent: m.chg != null ? Number(m.chg.toFixed(2)) : 0,
@@ -736,6 +745,18 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     // Tipik işlem bandı + destek/direnç seviyeleri (deep analizde dolu)
     priceStructure: m.priceStructure,
     analystTarget: m.analyst,
+    fundamentals: {
+      peRatio: m.peRatio,
+      forwardPeRatio: m.forwardPeRatio,
+      pegRatio: m.pegRatio,
+      priceToBook: m.priceToBook,
+      debtToEquity: m.debtToEquity,
+      revenueGrowthPct: m.revenueGrowthPct,
+      earningsGrowthPct: m.earningsGrowthPct,
+      profitMarginPct: m.profitMarginPct,
+      dividendYieldPct: m.dividendYield,
+      currentRatio: m.currentRatioLatest,
+    },
     // Kanıt gücü + tespit edilen olaylar (vitrin kapısı bunu kullanır)
     conviction,
     riskControls: {
@@ -878,6 +899,8 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
       newsReliabilityScore: news.newsReliabilityScore,
       sectorMarketFitScore: m.sectorMarketFitScore,
       liquidityScore: m.liquidityScore,
+      // Uzun vade skor ağırlığına doğrudan girmez; model portföyün risk filtresi kullanır.
+      riskAdjustedScore: m.riskAdjustedScore,
     },
     riskWarnings: longWarnings,
   };

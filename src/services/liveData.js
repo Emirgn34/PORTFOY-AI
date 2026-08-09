@@ -190,14 +190,37 @@ export async function fetchLiveNews(stocks, { limit = 300 } = {}) {
  */
 export async function fetchLiveCandidates(horizon) {
   const rows = await sbGet(
-    `candidates?horizon=eq.${encodeURIComponent(horizon)}&select=data,updated_at&order=updated_at.desc`
+    `candidates?horizon=eq.${encodeURIComponent(horizon)}&select=data,updated_at,generation&order=generation.desc.nullslast,updated_at.desc`
   );
   if (!rows?.length) return null;
-  const candidates = rows.map((r) => r.data).filter(Boolean);
+  // Bayat temizliği bir turda başarısız olsa bile farklı jenerasyonları karıştırma.
+  // Legacy satırlarda generation NULL olabilir; Number(null) === 0 olduğu için
+  // filtrelemeden dönüştürmek tarihi yanlışlıkla 1970'e çevirirdi.
+  const generations = rows
+    .filter((row) => row.generation != null && row.generation !== '')
+    .map((row) => Number(row.generation))
+    .filter(Number.isFinite);
+  const latestGeneration = generations.length ? Math.max(...generations) : null;
+  const latestRows = latestGeneration == null
+    ? rows
+    : rows.filter((row) => Number(row.generation) === latestGeneration);
+  const candidates = latestRows.map((r) => r.data).filter(Boolean);
   if (!candidates.length) return null;
-  // order=updated_at.desc → ilk satır en güncel
-  const generatedAt = rows[0]?.updated_at ?? null;
-  return { candidates, generatedAt };
+  // Olay nöbeti updated_at'i değiştirebilir; yapısal analiz zamanı jenerasyondur.
+  const generatedAt = latestGeneration != null
+    ? new Date(latestGeneration).toISOString()
+    : latestRows[0]?.updated_at ?? null;
+  return { candidates, generatedAt, generation: latestGeneration };
+}
+
+/** Ortak dört model portföy snapshot'ını getirir. */
+export async function fetchLiveModelPortfolios() {
+  const rows = await sbGet(
+    'model_portfolios?select=slug,risk_tier,source_generation,generated_at,valid_until,data&order=risk_tier.asc'
+  );
+  if (!rows?.length) return null;
+  const portfolios = rows.map((row) => row.data).filter(Boolean);
+  return portfolios.length ? portfolios : null;
 }
 
 /**

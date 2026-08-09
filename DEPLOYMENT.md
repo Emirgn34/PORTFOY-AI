@@ -20,6 +20,7 @@ tekrar çalıştırmak zararsızdır (hepsi `if not exists` / `create or replace
 | `supabase/analysis-schema.sql` | portfolio_analyses | Portföy Analizi kaydedilemez |
 | `supabase/ai-control-schema.sql` | Claude cache + maliyet sayacı + kullanıcı kotası | **Analiz çalışır ama AI yorumu ÜRETİLMEZ** |
 | `supabase/backtest-schema.sql` | Backtest epizotları | Backtest raporu boş kalır |
+| `supabase/model-portfolios-schema.sql` | Dört hazır portföy snapshot'ı + güvenli tarama kuyruğu | Hazır Portföyler yalnız demo/fallback gösterir |
 
 `ai-control-schema.sql` çalıştırılmadığında uygulama çökmez; deterministik
 fallback ile çalışır. Artık bu durum **arayüzde de görünür**: Portföy Analizi
@@ -37,6 +38,7 @@ VITE_SUPABASE_ANON_KEY
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
 ANTHROPIC_API_KEY
+SEC_USER_AGENT=PortfoyAI/1.0 iletisim@alanadiniz.com
 AI_DAILY_BUDGET_USD=1.00
 PORTFOLIO_AI_DAILY_LIMIT=5
 PORTFOLIO_AI_CACHE_HOURS=6

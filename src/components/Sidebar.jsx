@@ -1,12 +1,14 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Eye, Newspaper, TrendingUp, LineChart, X, Shield, LogOut } from 'lucide-react';
+import { LayoutDashboard, Eye, Newspaper, TrendingUp, LineChart, X, Shield, LogOut, Database, WalletCards } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { signOut } from '../services/auth.js';
 
 const NAV_ITEMS = [
   { to: '/portfolio', label: 'Portföy Özeti', icon: LayoutDashboard },
   { to: '/opportunities', label: 'Fırsatlar', icon: TrendingUp },
+  { to: '/model-portfolios', label: 'Hazır Portföyler', icon: WalletCards },
   { to: '/analysis', label: 'Portföy Analizi', icon: LineChart },
+  { to: '/research', label: 'Araştırma Merkezi', icon: Database },
   { to: '/news', label: 'Haberler', icon: Newspaper },
   { to: '/watchlist', label: 'Takip Listesi', icon: Eye },
 ];

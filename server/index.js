@@ -29,6 +29,9 @@ import {
   FX_SYMBOLS,
   computePeriodChanges,
 } from './marketData.js';
+import { getCompanyFilings, getInstitutionalMoves, INSTITUTIONAL_MANAGERS } from './secData.js';
+import { getMacroCalendar } from './macroCalendar.js';
+import { getMarketIntelligence } from './marketIntelligence.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -253,6 +256,53 @@ app.get('/api/profile', async (req, res) => {
   } catch (err) {
     console.error('[profile] hata:', err.message);
     res.status(404).json({ error: 'Sembol bulunamadı' });
+  }
+});
+
+// ---- Araştırma merkezi ----------------------------------------------------
+
+app.get('/api/sec-filings', async (req, res) => {
+  const symbol = String(req.query.symbol ?? '').trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,14}$/.test(symbol)) {
+    return res.status(400).json({ error: 'Geçerli bir ABD hisse kodu gerekli.' });
+  }
+  try {
+    const forms = String(req.query.forms ?? '10-K,10-Q,8-K').split(',').map((value) => value.trim());
+    res.json(await getCompanyFilings(symbol, { forms, limit: req.query.limit }));
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get('/api/institutional', async (req, res) => {
+  const manager = String(req.query.manager ?? '');
+  if (!manager) return res.json({ managers: INSTITUTIONAL_MANAGERS });
+  try {
+    res.json(await getInstitutionalMoves(manager, { limit: req.query.limit }));
+  } catch (error) {
+    res.status(502).json({ error: error.message, managers: INSTITUTIONAL_MANAGERS });
+  }
+});
+
+app.get('/api/macro-calendar', async (req, res) => {
+  try {
+    res.json(await getMacroCalendar({ days: req.query.days }));
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get('/api/market-intelligence', async (req, res) => {
+  const symbols = parseSymbols(req).slice(0, 20);
+  if (symbols.length === 0) return res.status(400).json({ error: 'symbols parametresi gerekli' });
+  try {
+    res.json(
+      await getMarketIntelligence(yahooFinance, symbols, {
+        includeOptions: String(req.query.options ?? 'true') !== 'false',
+      })
+    );
+  } catch (error) {
+    res.status(502).json({ error: error.message });
   }
 });
 

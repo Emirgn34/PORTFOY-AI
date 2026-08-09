@@ -12,6 +12,8 @@ const AnalysisPage = lazy(() => import('./pages/AnalysisPage.jsx'));
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
 const AdminPage = lazy(() => import('./pages/AdminPage.jsx'));
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
+const ResearchPage = lazy(() => import('./pages/ResearchPage.jsx'));
+const ModelPortfoliosPage = lazy(() => import('./pages/ModelPortfoliosPage.jsx'));
 
 /** Oturum çözümlenirken gösterilen tam ekran yükleme durumu. */
 function FullScreenLoader() {
@@ -47,9 +49,11 @@ export default function App() {
         <Route path="/watchlist" element={<WatchlistPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/opportunities" element={<OpportunitiesPage />} />
+        <Route path="/model-portfolios" element={<ModelPortfoliosPage />} />
         {/* Eski rota geriye dönük uyumluluk için yönlendirilir */}
         <Route path="/short-term" element={<Navigate to="/opportunities" replace />} />
         <Route path="/analysis" element={<AnalysisPage />} />
+        <Route path="/research" element={<ResearchPage />} />
         {/* Hesabım — her giriş yapan kullanıcı kendi ayarlarına erişir */}
         <Route path="/account" element={<AccountPage />} />
         {/* Admin paneli yalnızca yöneticiye; değilse portföye yönlendirilir */}

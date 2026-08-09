@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy, Gauge, Flame, ShieldCheck, Newspaper, SearchX, Clock, Radio, Sparkle, ArrowUpRight, Check, ShieldQuestion, ChevronDown, ChevronRight, Landmark } from 'lucide-react';
+import { Trophy, ShieldCheck, Newspaper, SearchX, Clock, Radio, ArrowUpRight, Check, ShieldQuestion, ChevronDown, ChevronRight, Landmark, Radar, ListFilter } from 'lucide-react';
 import useSyncedState from '../hooks/useSyncedState.js';
 import { MOCK_ENABLED } from '../config.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
-import { formatPercent, formatCurrency, getMarketCurrency } from '../utils/portfolioCalculations.js';
+import { getMarketCurrency } from '../utils/portfolioCalculations.js';
 import { getScoreColor } from '../utils/opportunityScoring.js';
 import {
   MOCK_SHORT_TERM_CANDIDATES,
@@ -13,7 +13,7 @@ import {
   RISK_ORDER,
 } from '../data/mockShortTermCandidates.js';
 import { MOCK_LONG_TERM_CANDIDATES } from '../data/mockLongTermCandidates.js';
-import { scoreAndRankCandidates, HORIZON_CONFIGS } from '../utils/opportunityScoring.js';
+import { scoreAndRankCandidates } from '../utils/opportunityScoring.js';
 import { fetchLiveCandidates } from '../services/liveData.js';
 import ShortTermFilters, { DEFAULT_FILTERS } from '../components/ShortTermFilters.jsx';
 import ShortTermCandidateCard from '../components/ShortTermCandidateCard.jsx';
@@ -36,7 +36,7 @@ const HORIZON_DESCRIPTIONS = {
   short:
     'Yalnızca arkasında SOMUT bir olay olan adaylar listelenir: politika/düzenleyici kararı ' +
     'veya analist yükseltmesi gibi gerçekleşmiş bir gelişme, en az bir teknik teyitle birlikte. ' +
-    'Eşiği geçen aday yoksa liste bilerek boş bırakılır.',
+    'Yüksek kanıtlı fırsatlar için sıkı eşik korunur; daha erken kurulumlar Fırsat Radarı’nda ayrıca gösterilir.',
   long:
     'Temel sağlamlık, değerleme ve büyüme verileriyle sıralanan uzun vadeli adaylar. Vitrine ' +
     'çıkmak için burada da somut bir kanıt (olay + teyit) aranır; skor tek başına yeterli değildir.',
@@ -83,7 +83,7 @@ export default function OpportunitiesPage() {
   });
   // İzleme listesi yazılabilir: kullanıcı bir adayı doğrudan takibe alabilir
   // (WatchlistPage ile aynı bulut tablosu/şema; çok cihaz senkron).
-  const [watchlistItems, setWatchlistItems] = useSyncedState({
+  const [watchlistItems, setWatchlistItems, watchlistState] = useSyncedState({
     table: 'watchlists',
     column: 'items',
     localKey: 'portfoyai_watchlist',
@@ -95,13 +95,13 @@ export default function OpportunitiesPage() {
   const [justAddedSymbol, setJustAddedSymbol] = useState(null);
 
   const watchlistTickers = useMemo(
-    () => new Set(watchlistItems.map((i) => i.ticker)),
-    [watchlistItems]
+    () => new Set(watchlistState.loading ? [] : watchlistItems.map((i) => i.ticker)),
+    [watchlistItems, watchlistState.loading]
   );
 
   /** Bir adayı izleme listesi şemasına çevirip ekler (zaten varsa atlanır). */
   function handleAddToWatchlist(candidate) {
-    if (watchlistTickers.has(candidate.symbol)) return;
+    if (watchlistState.loading || watchlistTickers.has(candidate.symbol)) return;
     const item = {
       id: crypto.randomUUID(),
       ticker: candidate.symbol,
@@ -125,7 +125,8 @@ export default function OpportunitiesPage() {
   // Canlı adaylar bulut tablosundan çekilir; yoksa mock listeye düşülür.
   const [liveShort, setLiveShort] = useState(null);
   const [liveLong, setLiveLong] = useState(null);
-  const [generatedAt, setGeneratedAt] = useState(null);
+  const [generatedAtByHorizon, setGeneratedAtByHorizon] = useState({ short: null, long: null });
+  const [candidateLoading, setCandidateLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,11 +136,13 @@ export default function OpportunitiesPage() {
         fetchLiveCandidates('long'),
       ]);
       if (cancelled) return;
-      if (s?.candidates?.length) setLiveShort(s.candidates);
-      if (l?.candidates?.length) setLiveLong(l.candidates);
-      // En güncel adayın gerçek üretilme zamanı (bayatlık + katalizör tazeliği bununla ölçülür)
-      const times = [s?.generatedAt, l?.generatedAt].filter(Boolean).map((t) => new Date(t).getTime());
-      if (times.length) setGeneratedAt(new Date(Math.max(...times)).toISOString());
+      if (Array.isArray(s?.candidates)) setLiveShort(s.candidates);
+      if (Array.isArray(l?.candidates)) setLiveLong(l.candidates);
+      setGeneratedAtByHorizon({
+        short: s?.generatedAt ?? null,
+        long: l?.generatedAt ?? null,
+      });
+      setCandidateLoading(false);
     }
     load();
     return () => {
@@ -147,23 +150,40 @@ export default function OpportunitiesPage() {
     };
   }, []);
 
-  const isLive = Boolean(liveShort || liveLong);
-  // Katalizör tazeliği ve "son güncelleme" canlıda gerçek üretim anına, mock'ta sabit LAST_UPDATED'a göre.
-  const referenceDate = generatedAt ?? (MOCK_ENABLED ? LAST_UPDATED : new Date().toISOString());
+  const activeLiveCandidates = horizon === 'short' ? liveShort : liveLong;
+  const activeGeneratedAt = generatedAtByHorizon[horizon];
+  const isLive = activeLiveCandidates !== null;
+  const isMock = !candidateLoading && !isLive && MOCK_ENABLED;
+  const dataUnavailable = !candidateLoading && !isLive && !MOCK_ENABLED;
+  // Her vade kendi üretim zamanıyla değerlendirilir; diğer sekmenin daha yeni
+  // zaman damgası bu sekmedeki bayat veriyi yanlışlıkla taze göstermez.
+  const shortReferenceDate = generatedAtByHorizon.short ?? (MOCK_ENABLED ? LAST_UPDATED : null);
+  const longReferenceDate = generatedAtByHorizon.long ?? (MOCK_ENABLED ? LAST_UPDATED : null);
+  const referenceDate = activeGeneratedAt ?? (isMock ? LAST_UPDATED : null);
 
   // Verinin yaşı (saat); bayatlık uyarısı için. Adaylar ~6 saatte bir üretilir.
-  const dataAgeHours = generatedAt
-    ? (Date.now() - new Date(generatedAt).getTime()) / 3_600_000
+  const dataAgeHours = activeGeneratedAt
+    ? (Date.now() - new Date(activeGeneratedAt).getTime()) / 3_600_000
     : null;
 
   // Skor ve sıra her zaman vadeye uygun ağırlık setiyle breakdown'dan türetilir.
   const rankedShort = useMemo(
-    () => scoreAndRankCandidates(liveShort ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []), 'short', referenceDate),
-    [liveShort, referenceDate]
+    () =>
+      scoreAndRankCandidates(
+        candidateLoading ? [] : liveShort ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []),
+        'short',
+        shortReferenceDate
+      ),
+    [candidateLoading, liveShort, shortReferenceDate]
   );
   const rankedLong = useMemo(
-    () => scoreAndRankCandidates(liveLong ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []), 'long', referenceDate),
-    [liveLong, referenceDate]
+    () =>
+      scoreAndRankCandidates(
+        candidateLoading ? [] : liveLong ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []),
+        'long',
+        longReferenceDate
+      ),
+    [candidateLoading, liveLong, longReferenceDate]
   );
 
   const rankedCandidates = horizon === 'short' ? rankedShort : rankedLong;
@@ -173,7 +193,7 @@ export default function OpportunitiesPage() {
    * kanıt olanlar" üzerine kurulu. Skor sıralamayı, kanıt ise vitrine çıkmayı
    * belirler (bkz. src/utils/conviction.js).
    */
-  const { certainCandidates, nearMissCandidates, hasConvictionData } = useMemo(() => {
+  const { certainCandidates, nearMissCandidates, radarCandidates, hasConvictionData } = useMemo(() => {
     const withConviction = rankedCandidates.filter((c) => c.conviction);
     const certain = withConviction
       .filter(
@@ -190,10 +210,29 @@ export default function OpportunitiesPage() {
     const nearMiss = withConviction
       .filter((c) => !passesConvictionGate(c.conviction) && c.conviction.score >= NEAR_MISS_THRESHOLD)
       .sort((a, b) => b.conviction.score - a.conviction.score)
-      .slice(0, 3);
+      .slice(0, 8);
+    const certainIds = new Set(certain.map((candidate) => candidate.id));
+    const radar = rankedCandidates
+      .filter((candidate) => !certainIds.has(candidate.id))
+      // Açıkça negatif/net avantajı olmayan adaylar radara da alınmaz.
+      .filter((candidate) => candidate.expectation?.hasActionableEdge !== false)
+      // En az bir olay kanıtı veya güçlü nicel kurulum aranır; salt düşük skor doldurulmaz.
+      .filter(
+        (candidate) =>
+          (candidate.conviction?.evidence?.length ?? 0) > 0 || candidate.shortTermScore >= 58
+      )
+      .sort((a, b) => {
+        const radarScore = (candidate) =>
+          (candidate.conviction?.score ?? 0) * 0.55 + candidate.shortTermScore * 0.45;
+        return radarScore(b) - radarScore(a);
+      })
+      .slice(0, 12);
     return {
       certainCandidates: certain,
-      nearMissCandidates: nearMiss,
+      nearMissCandidates: nearMiss.filter(
+        (candidate) => !radar.some((radarCandidate) => radarCandidate.id === candidate.id)
+      ),
+      radarCandidates: radar,
       // Aday turu henüz kanıt motoruyla çalışmadıysa liste boş görünür — bu
       // "bugün fırsat yok" DEĞİL "veri henüz üretilmedi" demektir; ikisini
       // birbirine karıştırmamak için ayrı durum tutulur.
@@ -225,6 +264,16 @@ export default function OpportunitiesPage() {
 
   // Özet kartları aktif vadenin tüm listesi üzerinden hesaplanır (filtrelerden bağımsız)
   const summary = useMemo(() => {
+    if (rankedCandidates.length === 0) {
+      return {
+        topScore: 0,
+        avgScore: 0,
+        topConviction: 0,
+        withEvidence: 0,
+        avgReliability: '—',
+        bistCount: 0,
+      };
+    }
     const scores = rankedCandidates.map((c) => c.shortTermScore);
     const convictionScores = rankedCandidates.map((c) => c.conviction?.score ?? 0);
     return {
@@ -236,6 +285,7 @@ export default function OpportunitiesPage() {
         rankedCandidates.reduce((sum, c) => sum + c.averageNewsReliability, 0) /
         rankedCandidates.length
       ).toFixed(1),
+      bistCount: rankedCandidates.filter((candidate) => candidate.market === 'BIST').length,
     };
   }, [rankedCandidates]);
 
@@ -268,12 +318,15 @@ export default function OpportunitiesPage() {
   function handleTabChange(value) {
     setHorizon(value);
     setFilters(DEFAULT_FILTERS); // sektör listeleri vadeye göre değiştiği için filtreler sıfırlanır
+    setSelectedCandidate(null);
   }
 
-  const lastUpdatedText = new Intl.DateTimeFormat('tr-TR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(referenceDate));
+  const lastUpdatedText = referenceDate
+    ? new Intl.DateTimeFormat('tr-TR', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(referenceDate))
+    : null;
 
   return (
     <div className="space-y-5">
@@ -286,6 +339,7 @@ export default function OpportunitiesPage() {
               key={tab.value}
               type="button"
               onClick={() => handleTabChange(tab.value)}
+              aria-pressed={horizon === tab.value}
               className={`flex-1 px-4 py-2 text-xs font-medium transition-colors sm:flex-none ${
                 horizon === tab.value
                   ? 'bg-accent text-white'
@@ -300,7 +354,12 @@ export default function OpportunitiesPage() {
           {HORIZON_DESCRIPTIONS[horizon]}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {isLive ? (
+          {candidateLoading ? (
+            <p className="flex items-center gap-1.5 text-xs text-slate-500" role="status">
+              <Clock size={12} />
+              Aday verileri yükleniyor…
+            </p>
+          ) : isLive ? (
             <p className={`flex items-center gap-1.5 text-xs ${dataAgeHours != null && dataAgeHours > 8 ? 'text-amber-400' : 'text-gain'}`}>
               <Radio size={12} />
               Canlı veri — son güncelleme {lastUpdatedText}
@@ -315,10 +374,15 @@ export default function OpportunitiesPage() {
               {/* İki hız: olaylar 20 dk'da bir, yapısal analiz 6 saatte bir */}
               <span className="text-slate-500">· haber ve olaylar 20 dakikada bir taranır</span>
             </p>
-          ) : (
+          ) : isMock ? (
             <p className="flex items-center gap-1.5 text-xs text-slate-500">
               <Clock size={12} />
               Veriler {lastUpdatedText} itibarıyla — örnek (mock) veri
+            </p>
+          ) : (
+            <p className="flex items-center gap-1.5 text-xs text-amber-400" role="status">
+              <Clock size={12} />
+              Bu vade için canlı aday verisi alınamadı.
             </p>
           )}
           <p className="text-xs text-slate-500">
@@ -329,61 +393,80 @@ export default function OpportunitiesPage() {
       </div>
 
       {/* Özet kartları */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <SummaryCard
           icon={Landmark}
-          label="Kesin Fırsat"
-          value={hasConvictionData ? certainCandidates.length : '—'}
+          label="Yüksek Kanıtlı"
+          value={candidateLoading || dataUnavailable || !hasConvictionData ? '—' : certainCandidates.length}
           iconBg="bg-gain/12 text-gain"
         />
         <SummaryCard
+          icon={Radar}
+          label="Radar Adayı"
+          value={candidateLoading || dataUnavailable ? '—' : radarCandidates.length}
+          iconBg="bg-amber-400/12 text-amber-400"
+        />
+        <SummaryCard
+          icon={ListFilter}
+          label="Derin Analiz Adayı"
+          value={candidateLoading || dataUnavailable ? '—' : rankedCandidates.length}
+          iconBg="bg-navy-800 text-slate-400"
+        />
+        <SummaryCard
+          icon={Newspaper}
+          label="Yayınlanan BIST Adayı"
+          value={candidateLoading || dataUnavailable ? '—' : summary.bistCount}
+          iconBg="bg-navy-800 text-slate-400"
+        />
+        <SummaryCard
           icon={ShieldCheck}
-          label="En Yüksek Kanıt Gücü"
+          label="En Yüksek Kanıt"
           value={hasConvictionData ? `${summary.topConviction}/100` : '—'}
           iconBg="bg-accent/12 text-accent"
         />
         <SummaryCard
-          icon={Newspaper}
-          label="Kanıt Bulunan Aday"
-          value={hasConvictionData ? summary.withEvidence : '—'}
-          iconBg="bg-navy-800 text-slate-400"
-        />
-        <SummaryCard
           icon={Trophy}
           label="En Yüksek Skor"
-          value={`${summary.topScore}/100`}
-        />
-        <SummaryCard
-          icon={Gauge}
-          label={`Ortalama ${HORIZON_CONFIGS[horizon].label} Skoru`}
-          value={`${summary.avgScore}/100`}
+          value={rankedCandidates.length ? `${summary.topScore}/100` : '—'}
         />
       </div>
 
-      {/* KESİN FIRSATLAR — sayfanın ana bölümü */}
+      {/* YÜKSEK KANITLI FIRSATLAR — sayfanın ana bölümü */}
       <section>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Landmark size={15} className="text-accent" />
-          <h3 className="text-sm font-semibold text-ink">Kesin Fırsatlar</h3>
+          <h3 className="text-sm font-semibold text-ink">Yüksek Kanıtlı Fırsatlar</h3>
           <span className="text-xs text-slate-500">
             arkasında somut bir olay olan ve en az iki farklı kanıtın doğruladığı adaylar
           </span>
         </div>
 
-        {!hasConvictionData ? (
+        {candidateLoading ? (
+          <EmptyState
+            icon={Clock}
+            title="Aday verileri yükleniyor"
+            body="Canlı adaylar ve kanıt katmanı getiriliyor."
+          />
+        ) : dataUnavailable ? (
+          <EmptyState
+            icon={ShieldQuestion}
+            title="Canlı aday verisi alınamadı"
+            body="Bu durum fırsat olmadığı anlamına gelmez. Veri bağlantısını kontrol edip daha sonra yeniden deneyin."
+          />
+        ) : !hasConvictionData ? (
           <EmptyState
             icon={Clock}
             title="Kanıt taraması henüz çalışmadı"
             body={
               'Bu vadedeki adaylar kanıt motoru devreye girmeden önce üretilmiş. Bir sonraki ' +
-              'aday turu (6 saatte bir) tamamlandığında kesin fırsatlar burada listelenecek. ' +
+              'aday turu (6 saatte bir) tamamlandığında yüksek kanıtlı fırsatlar burada listelenecek. ' +
               'O zamana kadar aşağıdaki tam listeyi kullanabilirsin.'
             }
           />
         ) : certainCandidates.length === 0 ? (
           <EmptyState
             icon={ShieldQuestion}
-            title="Bugün kesinlik eşiğini geçen fırsat yok"
+            title="Bugün yüksek kanıt eşiğini geçen fırsat yok"
             body={
               `Taranan adayların hiçbirinde, kanıt gücü ${CONVICTION_THRESHOLD}/100 eşiğini geçen ve ` +
               'en az iki farklı türden kanıtla desteklenen bir kurulum bulunamadı. Bu normal bir ' +
@@ -400,7 +483,47 @@ export default function OpportunitiesPage() {
                 horizon={horizon}
                 isInPortfolio={portfolioTickers.has(candidate.symbol)}
                 isInWatchlist={watchlistTickers.has(candidate.symbol)}
-                onAddToWatchlist={handleAddToWatchlist}
+                onAddToWatchlist={watchlistState.loading ? null : handleAddToWatchlist}
+                onShowDetail={setSelectedCandidate}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Erken uyarı katmanı: kesinlik kapısını gevşetmeden daha geniş görünürlük. */}
+      <section>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Radar size={15} className="text-amber-400" />
+          <h3 className="text-sm font-semibold text-ink">Fırsat Radarı</h3>
+          <span className="text-xs text-slate-500">
+            net avantajı açıkça negatif olmayan, fakat yüksek kanıt eşiğini henüz tamamlamayan erken kurulumlar
+          </span>
+        </div>
+        {candidateLoading ? (
+          <EmptyState icon={Clock} title="Radar verileri yükleniyor" body="Aday havuzu hazırlanıyor." />
+        ) : dataUnavailable ? (
+          <EmptyState
+            icon={ShieldQuestion}
+            title="Radar verisi alınamadı"
+            body="Bu boşluk fırsat olmadığı anlamına gelmez; canlı veri bağlantısı şu anda doğrulanamadı."
+          />
+        ) : radarCandidates.length === 0 ? (
+          <EmptyState
+            icon={Radar}
+            title="Radar ölçütlerine uyan erken kurulum yok"
+            body="Bu bölüm düşük kaliteli adaylarla doldurulmaz. Yeni olay, hacim veya fiyat teyidi geldikçe adaylar otomatik olarak burada görünür."
+          />
+        ) : (
+          <div className="space-y-3">
+            {radarCandidates.map((candidate) => (
+              <ShortTermCandidateCard
+                key={`radar-${candidate.id}`}
+                candidate={candidate}
+                horizon={horizon}
+                isInPortfolio={portfolioTickers.has(candidate.symbol)}
+                isInWatchlist={watchlistTickers.has(candidate.symbol)}
+                onAddToWatchlist={watchlistState.loading ? null : handleAddToWatchlist}
                 onShowDetail={setSelectedCandidate}
               />
             ))}
@@ -440,11 +563,12 @@ export default function OpportunitiesPage() {
         </section>
       )}
 
-      {/* Tüm taranan adaylar — katlanmış; skor odaklı eski liste burada yaşar */}
+      {/* Tüm taranan adaylar — kalite kapısından bağımsız araştırma havuzu. */}
       <section>
         <button
           type="button"
           onClick={() => setShowAllCandidates((v) => !v)}
+          aria-expanded={showAllCandidates}
           className="flex w-full items-center gap-2 rounded-lg border border-navy-700 bg-navy-900 px-4 py-3 text-left transition-colors hover:bg-navy-850"
         >
           {showAllCandidates ? (
@@ -453,7 +577,7 @@ export default function OpportunitiesPage() {
             <ChevronRight size={15} className="text-slate-400" />
           )}
           <span className="text-sm font-medium text-slate-300">
-            Taranan tüm adaylar ({rankedCandidates.length})
+            Tam tarama havuzu ({rankedCandidates.length})
           </span>
           <span className="ml-auto text-xs text-slate-500">
             kanıt filtresi olmadan, yalnızca skora göre
@@ -493,7 +617,7 @@ export default function OpportunitiesPage() {
                   horizon={horizon}
                   isInPortfolio={portfolioTickers.has(candidate.symbol)}
                   isInWatchlist={watchlistTickers.has(candidate.symbol)}
-                  onAddToWatchlist={handleAddToWatchlist}
+                  onAddToWatchlist={watchlistState.loading ? null : handleAddToWatchlist}
                   onShowDetail={setSelectedCandidate}
                 />
               ))
@@ -511,7 +635,7 @@ export default function OpportunitiesPage() {
 
       {/* Takibe alma onayı (kısa süreli bildirim) */}
       {justAddedSymbol && (
-        <div className="shadow-pop fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-navy-700 bg-navy-900 px-4 py-2.5 text-sm text-ink">
+        <div role="status" aria-live="polite" className="shadow-pop fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-navy-700 bg-navy-900 px-4 py-2.5 text-sm text-ink">
           <Check size={15} className="text-gain" />
           <span className="font-medium">{justAddedSymbol}</span> takip listesine eklendi.
         </div>
