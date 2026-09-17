@@ -228,7 +228,7 @@ function PortfolioContent({ stocks, setStocks }) {
                 onClick={() => setPeriod(option.value)}
                 className={`px-3 py-2 text-xs font-medium transition-colors ${
                   period === option.value
-                    ? 'bg-accent text-white'
+                    ? 'bg-accent text-on-accent'
                     : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200'
                 }`}
               >
@@ -240,7 +240,7 @@ function PortfolioContent({ stocks, setStocks }) {
             type="button"
             data-tour="add-stock"
             onClick={openAddModal}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft"
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-on-accent transition-colors hover:bg-accent-soft"
           >
             <Plus size={16} />
             Hisse Ekle

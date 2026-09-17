@@ -6,6 +6,18 @@
     <link rel="apple-touch-icon" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#F6F7F4" />
+    <script>
+      // Kaydedilen temayı ilk çizimden önce uygula.
+      (() => {
+        let theme = 'light';
+        try {
+          if (localStorage.getItem('portfoyai_theme') === 'dark') theme = 'dark';
+        } catch { /* Depolama kapalıysa açık tema kullanılır. */ }
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === 'dark' ? '#101815' : '#f6f7f4';
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

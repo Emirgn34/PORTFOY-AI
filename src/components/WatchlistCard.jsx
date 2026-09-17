@@ -206,7 +206,7 @@ export default function WatchlistCard({
           <button
             type="button"
             onClick={() => onMoveToPortfolio(item)}
-            className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+            className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
             title="Bu hisseyi portföyüne ekle ve izlemeden çıkar"
           >
             <Briefcase size={13} />

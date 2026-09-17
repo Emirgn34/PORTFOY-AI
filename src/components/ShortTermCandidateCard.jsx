@@ -300,7 +300,7 @@ export default function ShortTermCandidateCard({
           <button
             type="button"
             onClick={() => onShowDetail(candidate)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
           >
             <HelpCircle size={13} />
             Neden bu sırada?

@@ -142,7 +142,7 @@ export default function AdminPage() {
         <button
           type="submit"
           disabled={creating}
-          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {creating ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
           {creating ? 'Oluşturuluyor…' : 'Kullanıcı Oluştur'}

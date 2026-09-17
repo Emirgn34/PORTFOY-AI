@@ -229,7 +229,7 @@ export default function NewsPage() {
   const chipClass = (active) =>
     `rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
       active
-        ? 'border-accent bg-accent text-white'
+        ? 'border-accent bg-accent text-on-accent'
         : 'border-navy-700 bg-navy-900 text-slate-300 hover:bg-navy-800'
     }`;
 
@@ -465,7 +465,7 @@ export default function NewsPage() {
                 onClick={() => setActiveTab(tab.index)}
                 className={`px-4 py-2 text-xs font-medium transition-colors ${
                   activeTab === tab.index
-                    ? 'bg-accent text-white'
+                    ? 'bg-accent text-on-accent'
                     : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200'
                 }`}
               >

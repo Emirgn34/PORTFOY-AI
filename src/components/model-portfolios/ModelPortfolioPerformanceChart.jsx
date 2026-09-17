@@ -799,14 +799,14 @@ export default function ModelPortfolioPerformanceChart({
             >
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke="#28322d" strokeDasharray="3 4" vertical={false} />
+                  <CartesianGrid stroke="var(--color-navy-700)" strokeDasharray="3 4" vertical={false} />
                   <XAxis
                     dataKey="date"
                     tickFormatter={formatShortDate}
                     axisLine={false}
                     tickLine={false}
                     minTickGap={28}
-                    tick={{ fill: '#828a82', fontSize: 11 }}
+                    tick={{ fill: 'var(--color-slate-500)', fontSize: 11 }}
                   />
                   <YAxis
                     width={54}
@@ -817,11 +817,11 @@ export default function ModelPortfolioPerformanceChart({
                     tickFormatter={formatAxisPercent}
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: '#828a82', fontSize: 11 }}
+                    tick={{ fill: 'var(--color-slate-500)', fontSize: 11 }}
                   />
-                  <ReferenceLine y={0} stroke="#566159" strokeWidth={1.25} />
+                  <ReferenceLine y={0} stroke="var(--color-slate-600)" strokeWidth={1.25} />
                   <Tooltip
-                    cursor={{ stroke: '#566159', strokeDasharray: '3 3' }}
+                    cursor={{ stroke: 'var(--color-slate-600)', strokeDasharray: '3 3' }}
                     content={<PerformanceTooltip seriesMeta={seriesMeta} />}
                   />
 

@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Eye, Newspaper, TrendingUp, LineChart, X, Shield, LogOut, Database, WalletCards } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { signOut } from '../services/auth.js';
+import ThemeToggle from './ThemeToggle.jsx';
 
 const NAV_ITEMS = [
   { to: '/portfolio', label: 'Portföy Özeti', icon: LayoutDashboard },
@@ -52,7 +53,7 @@ export default function Sidebar({ isOpen, onClose }) {
           </button>
         </div>
 
-        <nav data-tour="sidebar-nav" className="flex-1 space-y-0.5 px-3 py-4">
+        <nav data-tour="sidebar-nav" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
           <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             Menü
           </p>
@@ -79,7 +80,8 @@ export default function Sidebar({ isOpen, onClose }) {
           ))}
         </nav>
 
-        <div className="border-t border-navy-700 px-4 py-4">
+        <div className="shrink-0 border-t border-navy-700 px-4 py-4">
+          <ThemeToggle />
           {configured && isAuthenticated && (
             <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-navy-700 bg-navy-950 p-2">
               <NavLink

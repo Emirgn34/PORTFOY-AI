@@ -544,7 +544,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
                           ? 'Mevcut pozisyon + kademeler birleştirilip toplam adet ve ağırlıklı ortalama forma yazılır'
                           : 'Toplam adet ve ağırlıklı ortalama forma yazılır'
                       }
-                      className="rounded-lg bg-accent/15 px-3 py-1.5 text-[11px] font-semibold text-accent-soft transition-colors hover:bg-accent hover:text-white"
+                      className="rounded-lg bg-accent/15 px-3 py-1.5 text-[11px] font-semibold text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
                     >
                       {hasExisting ? 'Mevcuda ekle: ' : 'Uygula: '}
                       {Number(combinedPurchase.totalQty.toFixed(6)).toLocaleString('tr-TR')} adet
@@ -617,7 +617,7 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
             </button>
             <button
               type="submit"
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft"
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-colors hover:bg-accent-soft"
             >
               {isEdit ? 'Güncelle' : 'Ekle'}
             </button>

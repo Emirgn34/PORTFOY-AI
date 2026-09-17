@@ -138,7 +138,7 @@ export default function AccountPage() {
         <button
           type="submit"
           disabled={usernameSaving || usernameValue.trim().toLowerCase() === username}
-          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60"
         >
           {usernameSaving && <Loader2 size={16} className="animate-spin" />}
           {usernameSaving ? 'Güncelleniyor…' : 'Kullanıcı Adını Güncelle'}
@@ -192,7 +192,7 @@ export default function AccountPage() {
         <button
           type="submit"
           disabled={passwordSaving}
-          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60"
         >
           {passwordSaving && <Loader2 size={16} className="animate-spin" />}
           {passwordSaving ? 'Kaydediliyor…' : 'Parolayı Güncelle'}

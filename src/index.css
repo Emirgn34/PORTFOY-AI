@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * PortföyAI — Açık, premium, kurumsal finans teması.
+ * PortföyAI — Açık ve karanlık kurumsal finans temaları.
  *
  * Tasarım tokenları tek kaynak burada tutulur. Mevcut bileşenler hâlâ
  * `bg-navy-900`, `text-slate-400`, `text-accent-soft` gibi sınıf adları
@@ -10,8 +10,7 @@
  *   - slate-* → metin tonları (koyu → açık zemin için)
  *   - accent  → kurumsal koyu yeşil vurgu
  *   - gain/loss/amber → finansal pozitif/negatif/uyarı
- * Böylece tüm uygulama tek noktadan açık temaya geçer; ileride dark mode
- * eklemek için bu blok bir [data-theme] altında çoğaltılabilir.
+ * Karanlık tema aynı tokenları html[data-theme="dark"] altında değiştirir.
  */
 @theme {
   /* Tipografi */
@@ -38,6 +37,7 @@
   /* Kurumsal vurgu — koyu yeşil */
   --color-accent: #244c3a;
   --color-accent-soft: #1b3b2d; /* hem koyu yeşil metin hem buton hover tonu */
+  --color-on-accent: #ffffff;
 
   /* Finansal renkler */
   --color-gain: #287a50; /* pozitif */
@@ -56,6 +56,31 @@ html {
   color-scheme: light;
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-navy-950: #101815;
+  --color-navy-900: #18231e;
+  --color-navy-850: #1d2b24;
+  --color-navy-800: #25352c;
+  --color-navy-700: #34483c;
+  --color-navy-600: #47604f;
+  --color-slate-200: #e2ece5;
+  --color-slate-300: #cbd8cf;
+  --color-slate-400: #adbdaf;
+  --color-slate-500: #96a899;
+  --color-slate-600: #859a89;
+  --color-ink: #f0f5f1;
+  --color-accent: #78cba4;
+  --color-accent-soft: #96ddba;
+  --color-on-accent: #10251a;
+  --color-gain: #71d69c;
+  --color-loss: #f18b8b;
+  --color-amber-400: #e5b86d;
+  --color-amber-300: #efca8a;
+  --color-violet-400: #78cba4;
+  --color-violet-300: #96ddba;
+}
+
 body {
   background-color: var(--color-navy-950);
   color: var(--color-ink);
@@ -71,7 +96,7 @@ table,
   font-variant-numeric: tabular-nums;
 }
 
-/* İnce, açık temaya uygun kaydırma çubuğu */
+/* Her iki temaya uyumlu kaydırma çubuğu */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -80,12 +105,12 @@ table,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d5dad2;
+  background: var(--color-navy-600);
   border: 2px solid var(--color-navy-950);
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #c1c8bd;
+  background: var(--color-slate-600);
 }
 
 /* Belirgin ama abartısız klavye odak halkası (erişilebilirlik) */

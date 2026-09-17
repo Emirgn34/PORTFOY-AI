@@ -73,7 +73,7 @@ export default function NewsDetailModal({ news, onClose }) {
                 href={news.link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
               >
                 <ExternalLink size={13} />
                 Haberin kaynağına git

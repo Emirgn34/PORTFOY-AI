@@ -204,7 +204,7 @@ function ResearchContent({ stocks, watchlist }) {
             onClick={() => setTab(id)}
             aria-pressed={tab === id}
             className={`flex min-w-max flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
-              tab === id ? 'bg-accent text-white' : 'text-slate-400 hover:bg-navy-800 hover:text-ink'
+              tab === id ? 'bg-accent text-on-accent' : 'text-slate-400 hover:bg-navy-800 hover:text-ink'
             }`}
           >
             <Icon size={14} />
@@ -529,7 +529,7 @@ function FilingsPanel({ defaultScope }) {
           <form onSubmit={loadFilings} className="flex gap-2">
             <label className="sr-only" htmlFor="sec-symbol">ABD hisse kodu</label>
             <input id="sec-symbol" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} className="w-32 rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-sm font-semibold text-ink" />
-            <button type="submit" disabled={filingLoading || !symbol.trim()} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Search size={14} />Getir</button>
+            <button type="submit" disabled={filingLoading || !symbol.trim()} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"><Search size={14} />Getir</button>
           </form>
         </div>
         {filingLoading ? (

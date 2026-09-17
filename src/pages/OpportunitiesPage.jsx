@@ -342,7 +342,7 @@ export default function OpportunitiesPage() {
               aria-pressed={horizon === tab.value}
               className={`flex-1 px-4 py-2 text-xs font-medium transition-colors sm:flex-none ${
                 horizon === tab.value
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent text-on-accent'
                   : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200'
               }`}
             >
@@ -604,7 +604,7 @@ export default function OpportunitiesPage() {
                 <button
                   type="button"
                   onClick={() => setFilters(DEFAULT_FILTERS)}
-                  className="mt-4 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent-soft transition-colors hover:bg-accent hover:text-white"
+                  className="mt-4 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
                 >
                   Filtreleri Sıfırla
                 </button>

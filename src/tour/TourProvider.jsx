@@ -160,18 +160,18 @@ export function TourProvider({ children }) {
         styles={{
           options: {
             zIndex: 10000,
-            primaryColor: '#244c3a',
-            backgroundColor: '#ffffff',
-            arrowColor: '#ffffff',
-            textColor: '#2f352f',
+            primaryColor: 'var(--color-accent)',
+            backgroundColor: 'var(--color-navy-900)',
+            arrowColor: 'var(--color-navy-900)',
+            textColor: 'var(--color-slate-300)',
             overlayColor: 'rgba(23, 26, 23, 0.45)',
           },
-          tooltip: { borderRadius: 14, border: '1px solid #e2e5df', padding: 18 },
-          tooltipTitle: { fontSize: 16, fontWeight: 700, color: '#171a17' },
+          tooltip: { borderRadius: 14, border: '1px solid var(--color-navy-700)', padding: 18 },
+          tooltipTitle: { fontSize: 16, fontWeight: 700, color: 'var(--color-ink)' },
           tooltipContent: { fontSize: 13.5, lineHeight: 1.6, padding: '12px 4px' },
-          buttonNext: { borderRadius: 8, fontSize: 13, fontWeight: 600 },
-          buttonBack: { color: '#687069', fontSize: 13 },
-          buttonSkip: { color: '#828a82', fontSize: 13 },
+          buttonNext: { color: 'var(--color-on-accent)', borderRadius: 8, fontSize: 13, fontWeight: 600 },
+          buttonBack: { color: 'var(--color-slate-400)', fontSize: 13 },
+          buttonSkip: { color: 'var(--color-slate-500)', fontSize: 13 },
         }}
       />
       {children}

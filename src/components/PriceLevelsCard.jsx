@@ -77,7 +77,7 @@ export default function PriceLevelsCard({ structure, price, currency }) {
           ))}
 
           <div className="absolute -top-8 flex flex-col items-center" style={{ left: `${pos(price)}%` }}>
-            <span className="-translate-x-1/2 whitespace-nowrap rounded bg-ink px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            <span className="-translate-x-1/2 whitespace-nowrap rounded bg-ink px-1.5 py-0.5 text-[10px] font-semibold text-navy-900">
               şimdi {fmt(price)}
             </span>
             <div className="h-4 w-0.5 -translate-x-1/2 bg-ink" />

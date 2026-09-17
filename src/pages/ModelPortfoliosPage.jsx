@@ -387,7 +387,7 @@ function ModelPortfoliosContent({
             onClick={() => addHoldings(orderedHoldings)}
             disabled={!active.holdings.length || entryPlanStale}
             title={entryPlanStale ? 'Giriş seviyeleri altı saatten eski; yeni aday turundaki seviyeleri kontrol edin.' : undefined}
-            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus size={15} />
             Tümünü Takibe Ekle
