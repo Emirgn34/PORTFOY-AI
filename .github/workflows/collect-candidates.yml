@@ -7,6 +7,12 @@
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (+ AI için ANTHROPIC_API_KEY opsiyonel)
 name: Aday Ureticisi
 
+# Aynı anda iki aylık yayın kararının yarışmasını engeller. Planlı tur
+# sürerken elle tetiklenen tur iptal edilmez; sıraya girer.
+concurrency:
+  group: collect-candidates-monthly-publisher
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: '0 */6 * * *' # her 6 saatte bir (00:00, 06:00, 12:00, 18:00 UTC)
@@ -39,3 +45,6 @@ jobs:
           ANTHROPIC_USE_BATCH: 'true'
           AI_DAILY_BUDGET_USD: ${{ vars.AI_DAILY_BUDGET_USD || '1.00' }}
           CONVICTION_THRESHOLD: ${{ vars.CONVICTION_THRESHOLD || '78' }}
+          # Tek taramanın aylık sepet belirlemesini engelleyen asgari konsensüs kapsamı.
+          MODEL_PORTFOLIO_MIN_GENERATIONS: ${{ vars.MODEL_PORTFOLIO_MIN_GENERATIONS || '20' }}
+          MODEL_PORTFOLIO_MIN_SPAN_DAYS: ${{ vars.MODEL_PORTFOLIO_MIN_SPAN_DAYS || '7' }}

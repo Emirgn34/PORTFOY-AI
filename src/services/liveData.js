@@ -39,6 +39,32 @@ async function sbGet(pathAndQuery) {
   }
 }
 
+/**
+ * PostgREST'in sunucu tarafındaki satır sınırına takılmadan tüm sayfaları okur.
+ * Her sayfa başarılı olmadan sonuç döndürmez; böylece ağ hatası sessizce eksik
+ * bir performans geçmişi gibi gösterilmez.
+ */
+async function sbGetAll(pathAndQuery, { pageSize = 1000 } = {}) {
+  const rows = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const separator = pathAndQuery.includes('?') ? '&' : '?';
+    const page = await sbGet(
+      `${pathAndQuery}${separator}limit=${pageSize}&offset=${offset}`
+    );
+    if (!Array.isArray(page)) return null;
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
+function chunked(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
 /** PostgREST in.(...) filtresi için sembol listesi hazırlar. */
 function sbInFilter(symbols) {
   return `in.(${symbols.map((s) => `"${s}"`).join(',')})`;
@@ -55,7 +81,7 @@ async function sbRegisterSymbols(symbols) {
       method: 'POST',
       headers: await sbHeaders({
         'Content-Type': 'application/json',
-        Prefer: 'resolution=ignore-duplicates',
+        Prefer: 'resolution=ignore-duplicates,missing=default',
       }),
       body: JSON.stringify(symbols.map((symbol) => ({ symbol }))),
     });
@@ -221,6 +247,86 @@ export async function fetchLiveModelPortfolios() {
   if (!rows?.length) return null;
   const portfolios = rows.map((row) => row.data).filter(Boolean);
   return portfolios.length ? portfolios : null;
+}
+
+/**
+ * Aylık, değişmez model portföy sürümleri ile günlük TL NAV noktalarını getirir.
+ * Migration uygulanmamışsa null döner ve çağıran current snapshot'a düşer.
+ */
+export async function fetchLiveModelPortfolioTracking() {
+  if (!HAS_SUPABASE) return null;
+  const rows = await sbGetAll(
+    'model_portfolio_versions?' +
+      'select=version_key,slug,risk_tier,source_generation,cycle_start,cycle_end,status,data' +
+      '&order=cycle_start.asc,risk_tier.asc,version_key.asc'
+  );
+  if (rows === null) {
+    return { error: 'Model portföy performans geçmişi şu an okunamadı.' };
+  }
+  if (!rows?.length) return null;
+
+  const latestCycleStart = rows.reduce(
+    (latest, row) =>
+      String(row?.cycle_start ?? '').localeCompare(String(latest ?? '')) > 0
+        ? row.cycle_start
+        : latest,
+    null
+  );
+  const currentRows = rows
+    .filter((row) => row.cycle_start === latestCycleStart)
+    .sort((a, b) => a.risk_tier - b.risk_tier);
+  if (!currentRows.length) return null;
+  const currentSlugs = new Set(currentRows.map((row) => row.slug).filter(Boolean));
+  const currentRiskTiers = new Set(
+    currentRows.map((row) => Number(row.risk_tier)).filter(Number.isFinite)
+  );
+  if (currentRows.length !== 4 || currentSlugs.size !== 4 || currentRiskTiers.size !== 4) {
+    return {
+      error: 'En güncel aylık model portföy sürümü dört benzersiz profil içermiyor.',
+    };
+  }
+
+  const versionKeys = [...new Set(rows.map((row) => row.version_key).filter(Boolean))].sort();
+  const navRows = [];
+  // URL uzunluğunu makul tutarken her parçayı ayrıca sayfala. Herhangi bir
+  // parça başarısızsa kısmi geçmiş döndürmek yerine tüm tracking isteğini düşür.
+  for (const versionKeyChunk of chunked(versionKeys, 50)) {
+    const chunkRows = await sbGetAll(
+      `model_portfolio_nav?version_key=${sbInFilter(versionKeyChunk)}` +
+        '&select=version_key,nav_date,observed_at,nav_value,return_pct,coverage_pct,benchmarks' +
+        '&order=version_key.asc,nav_date.asc'
+    );
+    if (!Array.isArray(chunkRows)) {
+      return { error: 'Model portföy NAV geçmişinin bir bölümü okunamadı.' };
+    }
+    navRows.push(...chunkRows);
+  }
+  navRows.sort(
+    (a, b) =>
+      String(a.version_key).localeCompare(String(b.version_key)) ||
+      String(a.nav_date).localeCompare(String(b.nav_date)) ||
+      String(a.observed_at).localeCompare(String(b.observed_at))
+  );
+
+  return {
+    portfolios: currentRows.map((row) => ({
+      ...row.data,
+      versionKey: row.version_key,
+      cycleStart: row.cycle_start,
+      cycleEnd: row.cycle_end,
+      cycleStatus: row.status,
+    })),
+    versions: rows.map((row) => ({
+      versionKey: row.version_key,
+      slug: row.slug,
+      riskTier: row.risk_tier,
+      cycleStart: row.cycle_start,
+      cycleEnd: row.cycle_end,
+      status: row.status,
+      data: row.data,
+    })),
+    navRows,
+  };
 }
 
 /**

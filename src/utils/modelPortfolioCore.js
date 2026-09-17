@@ -1,6 +1,7 @@
 import { scoreAndRankCandidates } from './opportunityScoringCore.js';
 import { buildEntryPlan } from './priceLevels.js';
 import { getThemeTags } from './researchInsights.js';
+import { buildMonthlyConsensusSelection } from './modelPortfolioConsensus.js';
 
 export const MODEL_PORTFOLIO_PROFILES = [
   {
@@ -65,10 +66,31 @@ export const MODEL_PORTFOLIO_PROFILES = [
   },
 ];
 
+export const MODEL_PORTFOLIO_TERM_MONTHS = 1;
+export const MODEL_PORTFOLIO_DATA_FRESH_HOURS = 6;
+
+/**
+ * Takvim ayı eklerken ay sonunu güvenli biçimde sıkıştırır.
+ * Örn. 31 Ocak + 1 ay = 28/29 Şubat; saat ve UTC dakikası korunur.
+ */
+export function addUtcMonths(iso, months = MODEL_PORTFOLIO_TERM_MONTHS) {
+  const source = new Date(iso);
+  if (!Number.isFinite(source.getTime())) return null;
+  const result = new Date(source);
+  const wantedDay = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  result.setUTCDate(Math.min(wantedDay, lastDay));
+  return result.toISOString();
+}
+
 const riskValue = { Düşük: 24, Orta: 52, Yüksek: 82 };
 const value = (candidate, key) => Number(candidate?.scoreBreakdown?.[key] ?? 0);
 
-function eligible(candidate, profile) {
+export function isModelPortfolioCandidateEligible(candidate, profile) {
   if (!candidate || !candidate.currentPrice || !candidate.priceStructure) return false;
   if (candidate.analysisDepth && candidate.analysisDepth !== 'deep') return false;
   if (candidate.liquidityLevel === 'Düşük' && profile.riskTier <= 3) return false;
@@ -105,7 +127,7 @@ function eligible(candidate, profile) {
   return false;
 }
 
-function profileRank(candidate, profile) {
+export function getModelPortfolioProfileScore(candidate, profile) {
   if (profile.slug === 'quality-defense') {
     return (
       value(candidate, 'fundamentalHealthScore') * 0.3 +
@@ -155,6 +177,61 @@ function selectDiversified(ranked, profile) {
   return chosen;
 }
 
+function candidateSourceSymbol(candidate) {
+  const displaySymbol = String(candidate?.symbol ?? candidate?.ticker ?? '').trim().toUpperCase();
+  return String(
+    candidate?.sourceSymbol ??
+      candidate?.source_symbol ??
+      candidate?.provenance?.sourceSymbol ??
+      (candidate?.market === 'BIST' && displaySymbol && !displaySymbol.endsWith('.IS')
+        ? `${displaySymbol}.IS`
+        : displaySymbol)
+  ).trim().toUpperCase();
+}
+
+function previousPortfolioFor(previousPortfolios, slug) {
+  if (!Array.isArray(previousPortfolios)) return null;
+  const match = previousPortfolios.find(
+    (portfolio) => (portfolio?.slug ?? portfolio?.data?.slug) === slug
+  );
+  return match?.data ?? match ?? null;
+}
+
+function selectProfileCandidates(
+  ranked,
+  profile,
+  { generatedAt, analysisHistory = null, previousPortfolio = null }
+) {
+  if (!Array.isArray(analysisHistory) || analysisHistory.length === 0) {
+    return {
+      selected: selectDiversified(ranked, profile).map((candidate, index) => ({
+        ...candidate,
+        modelImportanceRank: index + 1,
+        selectionReason: 'latest-generation-rank',
+      })),
+      selectionMethod: 'latest-generation-v1',
+    };
+  }
+
+  const { selectedCandidates } = buildMonthlyConsensusSelection({
+    profile,
+    horizon: profile.horizon,
+    currentCandidates: ranked,
+    observations: analysisHistory,
+    previousPortfolio,
+    asOf: generatedAt,
+    scoreCandidate: (candidate) => candidate.modelRankScore,
+    isCurrentEligible: () => true,
+    selectionGroup: (candidate) => candidate.sector ?? 'Diğer',
+    maxPerGroup: profile.maxPerSector,
+  });
+
+  return {
+    selected: selectedCandidates,
+    selectionMethod: 'rolling-30d-consensus-v1',
+  };
+}
+
 function rationaleFor(candidate, profile) {
   const reasons = [];
   if (profile.horizon === 'long') {
@@ -171,11 +248,14 @@ function rationaleFor(candidate, profile) {
   return reasons.slice(0, 2);
 }
 
-function buildHolding(candidate, profile, weightPct, sourceGeneration) {
+function buildHolding(candidate, profile, weightPct, sourceGeneration, modelImportanceRank) {
   const entryPlan = buildEntryPlan(candidate.priceStructure, candidate.currentPrice);
   if (!entryPlan) return null;
+  const displaySymbol = String(candidate.symbol ?? '').trim().toUpperCase();
+  const sourceSymbol = candidateSourceSymbol(candidate);
   return {
-    ticker: candidate.symbol,
+    ticker: displaySymbol,
+    sourceSymbol,
     companyName: candidate.companyName,
     market: candidate.market,
     sector: candidate.sector,
@@ -194,27 +274,68 @@ function buildHolding(candidate, profile, weightPct, sourceGeneration) {
     convictionScore: candidate.conviction?.score ?? null,
     riskLevel: candidate.riskLevel,
     liquidityLevel: candidate.liquidityLevel,
+    modelImportanceRank,
+    modelImportanceScore: Number.isFinite(
+      Number(candidate.consensusScore ?? candidate.modelRankScore)
+    )
+      ? Number(Number(candidate.consensusScore ?? candidate.modelRankScore).toFixed(2))
+      : null,
+    consensusScore: Number.isFinite(Number(candidate.consensusScore))
+      ? Number(Number(candidate.consensusScore).toFixed(2))
+      : null,
+    carriedFromPrevious: Boolean(candidate.carriedFromPrevious),
+    selectionReason: candidate.selectionReason ?? 'profile-rank',
     rationale: rationaleFor(candidate, profile),
     risks: candidate.riskWarnings?.slice?.(0, 2) ?? [],
     provenance: {
       candidateId: candidate.id,
+      sourceSymbol,
       horizon: profile.horizon,
       sourceGeneration,
     },
   };
 }
 
-function portfolioFor(profile, allCandidates, { generatedAt, sourceGeneration }) {
+function portfolioFor(
+  profile,
+  allCandidates,
+  {
+    generatedAt,
+    sourceGeneration,
+    cycleStart = generatedAt,
+    cycleEnd = addUtcMonths(cycleStart),
+    tracking = null,
+    analysisHistory = null,
+    previousPortfolio = null,
+  }
+) {
+  const profileAnalysisHistory = Array.isArray(analysisHistory)
+    ? analysisHistory.filter(
+        (observation) => !observation?.horizon || observation.horizon === profile.horizon
+      )
+    : null;
   const ranked = scoreAndRankCandidates(allCandidates, profile.horizon, generatedAt)
-    .filter((candidate) => eligible(candidate, profile))
-    .map((candidate) => ({ ...candidate, modelRankScore: profileRank(candidate, profile) }))
+    .filter((candidate) => isModelPortfolioCandidateEligible(candidate, profile))
+    .map((candidate) => ({
+      ...candidate,
+      horizon: candidate.horizon ?? profile.horizon,
+      generation: candidate.generation ?? sourceGeneration,
+      capturedAt: candidate.capturedAt ?? generatedAt,
+      modelRankScore: getModelPortfolioProfileScore(candidate, profile),
+    }))
     .sort((a, b) => b.modelRankScore - a.modelRankScore || a.symbol.localeCompare(b.symbol));
-  const selected = selectDiversified(ranked, profile);
+  const { selected, selectionMethod } = selectProfileCandidates(ranked, profile, {
+    generatedAt,
+    analysisHistory: profileAnalysisHistory,
+    previousPortfolio,
+  });
   const investable = 100 - profile.cashReservePct;
   const rawWeight = selected.length ? investable / selected.length : 0;
   const weight = Number(Math.min(profile.maxPositionPct, rawWeight).toFixed(1));
   const holdings = selected
-    .map((candidate) => buildHolding(candidate, profile, weight, sourceGeneration))
+    .map((candidate, index) =>
+      buildHolding(candidate, profile, weight, sourceGeneration, index + 1)
+    )
     .filter(Boolean);
   const invested = Number(holdings.reduce((sum, holding) => sum + holding.weightPct, 0).toFixed(1));
   const cashWeightPct = Number(Math.max(0, 100 - invested).toFixed(1));
@@ -265,8 +386,9 @@ function portfolioFor(profile, allCandidates, { generatedAt, sourceGeneration })
     warnings.push(`Bu sepet toplam yatırım sermayesinin en fazla %${profile.sleeveLimitPct}'lik uydu bölümü için tasarlanmıştır.`);
   }
   return {
-    schemaVersion: 1,
-    methodologyVersion: 'model-portfolio-v1',
+    schemaVersion: 3,
+    methodologyVersion: 'model-portfolio-v3-consensus',
+    versionKey: `${profile.slug}--${cycleStart}`,
     slug: profile.slug,
     name: profile.name,
     shortName: profile.shortName,
@@ -277,8 +399,34 @@ function portfolioFor(profile, allCandidates, { generatedAt, sourceGeneration })
     horizon: profile.horizon,
     sourceGeneration,
     generatedAt,
-    validUntil: new Date(new Date(generatedAt).getTime() + 6 * 60 * 60 * 1000).toISOString(),
-    refreshIntervalHours: 6,
+    cycleStart,
+    cycleEnd,
+    termMonths: MODEL_PORTFOLIO_TERM_MONTHS,
+    rebalanceFrequency: 'monthly',
+    cycleStatus: 'active',
+    dataFreshUntil: new Date(
+      new Date(generatedAt).getTime() + MODEL_PORTFOLIO_DATA_FRESH_HOURS * 60 * 60 * 1000
+    ).toISOString(),
+    // Geriye dönük uyumluluk: validUntil giriş planının/verinin tazeliğidir;
+    // portföy vadesi cycleEnd ile ayrıca izlenir.
+    validUntil: new Date(
+      new Date(generatedAt).getTime() + MODEL_PORTFOLIO_DATA_FRESH_HOURS * 60 * 60 * 1000
+    ).toISOString(),
+    refreshIntervalHours: MODEL_PORTFOLIO_DATA_FRESH_HOURS,
+    tracking,
+    selection: {
+      method: selectionMethod,
+      analysisWindowDays: selectionMethod === 'rolling-30d-consensus-v1' ? 30 : null,
+      observationCount: profileAnalysisHistory?.length ?? 0,
+      generationCount: profileAnalysisHistory
+        ? new Set(
+          profileAnalysisHistory.map(
+              (observation) => observation.generation ?? observation.source_generation
+            ).filter((generation) => generation != null)
+          ).size
+        : 0,
+      carriedHoldingCount: holdings.filter((holding) => holding.carriedFromPrevious).length,
+    },
     sleeveLimitPct: profile.sleeveLimitPct,
     cashWeightPct,
     metrics: {
@@ -297,11 +445,21 @@ export function buildModelPortfolios({
   longCandidates = [],
   generatedAt = new Date().toISOString(),
   sourceGeneration = Date.parse(generatedAt),
+  cycleStart = generatedAt,
+  cycleEnd = addUtcMonths(cycleStart),
+  tracking = null,
+  analysisHistory = null,
+  previousPortfolios = null,
 } = {}) {
   return MODEL_PORTFOLIO_PROFILES.map((profile) =>
     portfolioFor(profile, profile.horizon === 'short' ? shortCandidates : longCandidates, {
       generatedAt,
       sourceGeneration,
+      cycleStart,
+      cycleEnd,
+      tracking,
+      analysisHistory,
+      previousPortfolio: previousPortfolioFor(previousPortfolios, profile.slug),
     })
   );
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModelPortfolios } from '../src/utils/modelPortfolioCore.js';
+import { addUtcMonths, buildModelPortfolios } from '../src/utils/modelPortfolioCore.js';
 
 function candidate(index, horizon, overrides = {}) {
   const tech = overrides.tech ?? false;
@@ -58,3 +58,79 @@ test('uygun aday azsa eşik gevşetmek yerine nakit ve uyarı bırakır', () => 
   assert.ok(balanced.warnings.length > 0);
 });
 
+test('aylık vade ile altı saatlik veri tazeliğini birbirinden ayırır', () => {
+  const generatedAt = '2026-01-31T12:30:00.000Z';
+  const [portfolio] = buildModelPortfolios({
+    longCandidates: [candidate(1, 'long')],
+    generatedAt,
+    sourceGeneration: 42,
+  });
+
+  assert.equal(addUtcMonths(generatedAt), '2026-02-28T12:30:00.000Z');
+  assert.equal(portfolio.cycleStart, generatedAt);
+  assert.equal(portfolio.cycleEnd, '2026-02-28T12:30:00.000Z');
+  assert.equal(portfolio.dataFreshUntil, '2026-01-31T18:30:00.000Z');
+  assert.equal(portfolio.validUntil, portfolio.dataFreshUntil);
+  assert.equal(portfolio.rebalanceFrequency, 'monthly');
+  assert.match(portfolio.versionKey, /^quality-defense--2026-01-31/);
+});
+
+test('30 günlük analiz geçmişini kullanır, uygun önceki hisseyi taşır ve önem sırasını yazar', () => {
+  const generatedAt = '2026-09-01T00:00:00.000Z';
+  const longCandidates = Array.from({ length: 6 }, (_, index) =>
+    candidate(index + 1, 'long')
+  );
+  const analysisHistory = longCandidates.flatMap((item, index) => [
+    {
+      generation: 1,
+      source_symbol: item.market === 'BIST' ? `${item.symbol}.IS` : item.symbol,
+      symbol: item.symbol,
+      market: item.market,
+      horizon: 'long',
+      captured_at: '2026-08-20T00:00:00.000Z',
+      profile_scores: { 'balanced-growth': 82 - index },
+      eligibility: { 'balanced-growth': true },
+    },
+    {
+      generation: 2,
+      source_symbol: item.market === 'BIST' ? `${item.symbol}.IS` : item.symbol,
+      symbol: item.symbol,
+      market: item.market,
+      horizon: 'long',
+      captured_at: '2026-08-27T00:00:00.000Z',
+      profile_scores: { 'balanced-growth': 84 - index },
+      eligibility: { 'balanced-growth': true },
+    },
+  ]);
+
+  const balanced = buildModelPortfolios({
+    longCandidates,
+    generatedAt,
+    analysisHistory,
+    previousPortfolios: [
+      { slug: 'balanced-growth', holdings: [{ ticker: 'S1', market: 'BIST' }] },
+    ],
+  }).find((portfolio) => portfolio.slug === 'balanced-growth');
+
+  assert.equal(balanced.selection.method, 'rolling-30d-consensus-v1');
+  assert.equal(balanced.selection.carriedHoldingCount, 1);
+  assert.equal(
+    balanced.holdings.find((holding) => holding.ticker === 'S1')?.carriedFromPrevious,
+    true
+  );
+  assert.equal(balanced.holdings.find((holding) => holding.ticker === 'S1')?.sourceSymbol, 'S1.IS');
+  assert.equal(
+    balanced.holdings.find((holding) => holding.ticker === 'S1')?.provenance?.sourceSymbol,
+    'S1.IS'
+  );
+  assert.deepEqual(
+    balanced.holdings.map((holding) => holding.modelImportanceRank),
+    balanced.holdings.map((_, index) => index + 1)
+  );
+  assert.ok(
+    balanced.holdings.every(
+      (holding, index, rows) =>
+        index === 0 || rows[index - 1].modelImportanceScore >= holding.modelImportanceScore
+    )
+  );
+});
