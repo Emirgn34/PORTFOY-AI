@@ -20,7 +20,7 @@ async function authedFetch(path, options = {}) {
   return body;
 }
 
-/** Tüm kullanıcıları getirir: [{ id, username, role, created_at }]. */
+/** Yöneticiye kullanıcıları ve son başarılı giriş zamanlarını döndürür. */
 export async function listUsers() {
   const { users } = await authedFetch('/api/admin/users');
   return users;

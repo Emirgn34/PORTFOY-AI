@@ -99,7 +99,7 @@ export const TOUR_STEPS = [
   {
     route: '/admin', target: '[data-tour="admin-panel"]', adminOnly: true,
     title: 'Kullanıcı yönetimi',
-    content: 'Yönetici hesabında bu bölüm de görünür. Kullanıcı oluşturabilir, mevcut hesapları ve rollerini görebilir, gerektiğinde kullanıcı silebilirsin.',
+    content: 'Yönetici hesabında bu bölüm de görünür. Kullanıcı oluşturabilir; hesapların rollerini, kayıt ve son giriş tarihlerini görebilirsin. Hiç giriş yapmayan hesapları ve son 7 günde giriş yapan kullanıcı sayısını da burada takip edebilirsin.',
   },
   {
     route: '/portfolio', target: '[data-tour="help-button"]', global: true,
