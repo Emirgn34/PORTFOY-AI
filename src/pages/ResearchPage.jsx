@@ -196,7 +196,7 @@ function ResearchContent({ stocks, watchlist }) {
         </p>
       </div>
 
-      <div className="flex overflow-x-auto rounded-lg border border-navy-700 bg-navy-900 p-1">
+      <div data-tour="research-tabs" className="flex overflow-x-auto rounded-lg border border-navy-700 bg-navy-900 p-1">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}

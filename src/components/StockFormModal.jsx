@@ -268,10 +268,12 @@ export default function StockFormModal({ isOpen, stock, onSave, onClose, tourOpe
 
   return (
     <div
+      data-tour="stock-modal-backdrop"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={onClose}
     >
       <div
+        data-tour="stock-modal"
         className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-navy-700 bg-navy-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >

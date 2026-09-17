@@ -22,6 +22,7 @@ export default function ThemeToggle() {
   return (
     <button
       type="button"
+      data-tour="theme-toggle"
       onClick={toggleTheme}
       aria-label="Karanlık tema"
       aria-pressed={isDark}

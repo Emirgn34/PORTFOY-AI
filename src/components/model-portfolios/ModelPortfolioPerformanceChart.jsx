@@ -708,6 +708,7 @@ export default function ModelPortfolioPerformanceChart({
   return (
     <div className="space-y-4">
       <section
+        data-tour="model-performance"
         className="rounded-xl border border-navy-700 bg-navy-900"
         aria-label="Portföy getiri karşılaştırması"
       >

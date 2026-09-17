@@ -17,6 +17,7 @@ import {
   PERIOD_OPTIONS,
 } from '../utils/portfolioCalculations.js';
 import { fetchPeriodChanges } from '../services/liveData.js';
+import { useTourAction } from '../tour/TourProvider.jsx';
 
 const STORAGE_KEY = 'portfoyai_stocks';
 // Sakin, finansa uygun kategorik palet (neon/AI tonları yerine yeşil–kum–nötr)
@@ -62,25 +63,9 @@ function PortfolioContent({ stocks, setStocks }) {
   const [editingStock, setEditingStock] = useState(null);
   const [period, setPeriod] = useState('day');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
-  const [tourAdvanced, setTourAdvanced] = useState(false);
+  const tourAction = useTourAction();
+  const tourModalOpen = tourAction === 'openModal' || tourAction === 'openModalAdvanced';
   const live = useLivePrices(stocks, setStocks, { autoRefreshMs: 5 * 60 * 1000 });
-
-  // Site eğitimi (tur) "Hisse Ekle" formunu açıp kapatabilsin
-  useEffect(() => {
-    const handler = (e) => {
-      const action = e.detail;
-      if (action === 'openModal' || action === 'openModalAdvanced') {
-        setEditingStock(null);
-        setModalOpen(true);
-        setTourAdvanced(action === 'openModalAdvanced');
-      } else {
-        setModalOpen(false);
-        setTourAdvanced(false);
-      }
-    };
-    window.addEventListener('tour:action', handler);
-    return () => window.removeEventListener('tour:action', handler);
-  }, []);
 
   const summary = useMemo(() => getPortfolioSummary(stocks), [stocks]);
 
@@ -346,11 +331,12 @@ function PortfolioContent({ stocks, setStocks }) {
       )}
 
       <StockFormModal
-        isOpen={modalOpen}
-        stock={editingStock}
+        key={tourAction || 'manual'}
+        isOpen={modalOpen || tourModalOpen}
+        stock={tourModalOpen ? null : editingStock}
         onSave={handleSave}
         onClose={() => setModalOpen(false)}
-        tourOpenAdvanced={tourAdvanced}
+        tourOpenAdvanced={tourAction === 'openModalAdvanced'}
       />
     </div>
   );

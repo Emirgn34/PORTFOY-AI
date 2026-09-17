@@ -302,7 +302,7 @@ function ModelPortfoliosContent({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div data-tour="model-portfolios-types" className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {portfolios.map((portfolio) => {
           const latestNav = comparableCurrentNav.byVersion.get(portfolio.versionKey);
           const periodReturn = latestNav?.return_pct;

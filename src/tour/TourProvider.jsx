@@ -1,180 +1,119 @@
-/**
- * Site eğitimi orkestratörü.
- *
- * react-joyride'ı KONTROLLÜ modda kullanır: adımlar arası geçerken turu
- * duraklatır, gerekiyorsa sayfayı değiştirir (router), "Hisse Ekle" formunu
- * açar/kapatır (CustomEvent 'tour:action') ve hedef öğe DOM'da belirene kadar
- * bekler — böylece sayfa/aşağı kayma/otomatik ekran açma sorunsuz olur.
- *
- * Kullanıcı ilk girişte tur otomatik başlar (kişi başına bir kez, localStorage).
- * Sağ üstteki ampul ikonu useTour().startTour ile turu yeniden başlatır.
- */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import Joyride, { ACTIONS, EVENTS, STATUS } from 'react-joyride';
 import { TOUR_STEPS } from './tourSteps.js';
+import TourOverlay from './TourOverlay.jsx';
+import { findTourTarget } from './tourGeometry.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 const TourContext = createContext(null);
+const TARGET_TIMEOUT = 12000;
 
-/** Hedef öğe DOM'da belirene kadar bekler (yoksa zaman aşımıyla yine de devam). */
-function waitForTarget(selector, timeout = 3000) {
-  return new Promise((resolve) => {
-    if (!selector || selector === 'body') return resolve();
-    const start = Date.now();
-    const tick = () => {
-      if (document.querySelector(selector)) return resolve();
-      if (Date.now() - start > timeout) return resolve();
-      setTimeout(tick, 80);
-    };
-    tick();
-  });
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** "Hisse Ekle" formunu açma/kapatma sinyali (PortfolioPage dinler). */
-function dispatchAction(action) {
-  window.dispatchEvent(new CustomEvent('tour:action', { detail: action || 'closeModal' }));
-}
-
-export function TourProvider({ children }) {
+export function TourProvider({ children, onSidebarChange }) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { user, isAdmin } = useAuth();
-
-  const steps = useMemo(
-    () => TOUR_STEPS.filter((s) => !s.adminOnly || isAdmin),
-    [isAdmin]
-  );
-
-  const [run, setRun] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
-
-  // Geçişlerde güncel route'u okumak için ref (memoize'lu fonksiyonlarda taze kalsın)
-  const locRef = useRef(location.pathname);
-  locRef.current = location.pathname;
-  const stepsRef = useRef(steps);
-  stepsRef.current = steps;
+  const { pathname } = useLocation();
+  const { user, isAdmin, isAuthenticated } = useAuth();
+  const steps = useMemo(() => TOUR_STEPS.filter((step) =>
+    (!step.adminOnly || isAdmin) && (!step.authOnly || isAuthenticated)), [isAdmin, isAuthenticated]);
+  const [index, setIndex] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  const [prepared, setPrepared] = useState(null);
+  const autoTimer = useRef(null);
+  const started = useRef(false);
+  const active = index !== null;
+  const step = active ? steps[index] : null;
+  const completionKey = `portfoyai_tour_done_v1_${user?.id || 'guest'}`;
 
   const finish = useCallback(() => {
-    setRun(false);
-    setStepIndex(0);
-    dispatchAction('closeModal');
-  }, []);
-
-  const goToStep = useCallback(
-    async (index) => {
-      const list = stepsRef.current;
-      if (index < 0) index = 0;
-      if (index >= list.length) {
-        finish();
-        return;
-      }
-      const step = list[index];
-      setRun(false); // hedef hazırlanırken turu duraklat
-
-      const routeChanged = locRef.current !== step.route;
-      if (routeChanged) navigate(step.route);
-      dispatchAction(step.action);
-
-      if (routeChanged) await sleep(150); // yeni sayfanın boyanması için
-      await waitForTarget(step.target);
-      await sleep(80); // form/modal animasyonu otursun
-
-      setStepIndex(index);
-      setRun(true);
-    },
-    [navigate, finish]
-  );
+    clearTimeout(autoTimer.current);
+    setIndex(null);
+    setPrepared(null);
+    onSidebarChange?.(false);
+    try { localStorage.setItem(completionKey, '1'); } catch { /* Depolama isteğe bağlı. */ }
+  }, [completionKey, onSidebarChange]);
 
   const startTour = useCallback(() => {
-    goToStep(0);
-  }, [goToStep]);
+    clearTimeout(autoTimer.current);
+    started.current = true;
+    setPrepared(null);
+    setAttempt((value) => value + 1);
+    setIndex(0);
+  }, []);
 
-  const handleCallback = useCallback(
-    (data) => {
-      const { action, index, status, type } = data;
-      if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
-        finish();
-        return;
-      }
-      if (action === ACTIONS.CLOSE) {
-        finish();
-        return;
-      }
-      if (type === EVENTS.STEP_AFTER) {
-        goToStep(index + (action === ACTIONS.PREV ? -1 : 1));
-      } else if (type === EVENTS.TARGET_NOT_FOUND) {
-        goToStep(index + 1); // hedef bulunamazsa atla
-      }
-    },
-    [finish, goToStep]
-  );
+  const goToStep = useCallback((nextIndex) => {
+    if (nextIndex >= steps.length) return finish();
+    setPrepared(null);
+    setIndex(Math.max(0, nextIndex));
+  }, [steps.length, finish]);
 
-  // İlk girişte otomatik başlat (kişi başına bir kez)
-  const autoStartedRef = useRef(false);
+  // Sayfa değiştikten SONRA hedefi ara. Önceki adımın bekleyicisi cleanup ile iptal olur.
   useEffect(() => {
-    if (autoStartedRef.current) return;
-    const key = `portfoyai_tour_done_v1_${user?.id || 'guest'}`;
-    let done = false;
-    try {
-      done = localStorage.getItem(key) === '1';
-    } catch {
-      /* erişilemezse turu yine de göster */
+    if (!step) return undefined;
+    setPrepared(null);
+    onSidebarChange?.(step.action === 'openSidebar');
+    if (pathname !== step.route) {
+      navigate(step.route);
+      return undefined;
     }
-    if (done) return;
-    autoStartedRef.current = true;
-    try {
-      localStorage.setItem(key, '1');
-    } catch {
-      /* yok say */
-    }
-    // Sayfaların mount olması için kısa gecikme
-    setTimeout(() => startTour(), 800);
-  }, [user?.id, startTour]);
 
-  const value = useMemo(() => ({ startTour, isRunning: run }), [startTour, run]);
+    const startedAt = Date.now();
+    let previousTarget = null;
+    let previousBounds = '';
+    let timer;
+    const check = () => {
+      const scope = step.global
+        ? document
+        : document.querySelector(`[data-tour-page="${step.route}"]`);
+      const target = findTourTarget(scope, step.target);
+      const modalClosed = step.action?.startsWith('openModal') ||
+        !document.querySelector('[data-tour="stock-modal"]');
+      const rect = target?.getBoundingClientRect();
+      const bounds = rect ? [rect.x, rect.y, rect.width, rect.height].join(',') : '';
+      if (target && modalClosed && target === previousTarget && bounds === previousBounds) {
+        setPrepared({ index, attempt, target, status: 'ready' });
+        return;
+      }
+      if (Date.now() - startedAt >= TARGET_TIMEOUT) {
+        setPrepared({ index, attempt, target: null, status: 'missing' });
+        return;
+      }
+      previousTarget = target;
+      previousBounds = bounds;
+      timer = setTimeout(check, 80);
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, [step, index, attempt, pathname, navigate, onSidebarChange]);
+
+  useEffect(() => {
+    if (started.current) return undefined;
+    try {
+      if (localStorage.getItem(completionKey) === '1') return undefined;
+    } catch { /* Depolama kapalıysa da tanıtım çalışır. */ }
+    autoTimer.current = setTimeout(startTour, 800);
+    return () => clearTimeout(autoTimer.current);
+  }, [completionKey, startTour]);
+
+  const action = pathname === step?.route ? step.action ?? null : null;
+  const value = useMemo(() => ({ startTour, isRunning: active, action }), [startTour, active, action]);
+  const current = prepared?.index === index && prepared?.attempt === attempt && pathname === step?.route
+    ? prepared : null;
 
   return (
     <TourContext.Provider value={value}>
-      <Joyride
-        steps={steps}
-        run={run}
-        stepIndex={stepIndex}
-        continuous
-        showProgress
-        showSkipButton
-        disableOverlayClose
-        spotlightClicks={false}
-        scrollToFirstStep
-        callback={handleCallback}
-        locale={{
-          back: 'Geri',
-          close: 'Kapat',
-          last: 'Bitir',
-          next: 'Anladım',
-          nextLabelWithProgress: 'Anladım ({step}/{steps})',
-          skip: 'Geç',
-        }}
-        styles={{
-          options: {
-            zIndex: 10000,
-            primaryColor: 'var(--color-accent)',
-            backgroundColor: 'var(--color-navy-900)',
-            arrowColor: 'var(--color-navy-900)',
-            textColor: 'var(--color-slate-300)',
-            overlayColor: 'rgba(23, 26, 23, 0.45)',
-          },
-          tooltip: { borderRadius: 14, border: '1px solid var(--color-navy-700)', padding: 18 },
-          tooltipTitle: { fontSize: 16, fontWeight: 700, color: 'var(--color-ink)' },
-          tooltipContent: { fontSize: 13.5, lineHeight: 1.6, padding: '12px 4px' },
-          buttonNext: { color: 'var(--color-on-accent)', borderRadius: 8, fontSize: 13, fontWeight: 600 },
-          buttonBack: { color: 'var(--color-slate-400)', fontSize: 13 },
-          buttonSkip: { color: 'var(--color-slate-500)', fontSize: 13 },
-        }}
-      />
       {children}
+      {step && (
+        <TourOverlay
+          step={step}
+          index={index}
+          total={steps.length}
+          target={current?.target ?? null}
+          status={current?.status ?? 'waiting'}
+          onNext={() => goToStep(index + 1)}
+          onBack={() => goToStep(index - 1)}
+          onClose={finish}
+          onRetry={() => { setPrepared(null); setAttempt((value) => value + 1); }}
+        />
+      )}
     </TourContext.Provider>
   );
 }
@@ -183,4 +122,8 @@ export function useTour() {
   const ctx = useContext(TourContext);
   if (!ctx) throw new Error('useTour, TourProvider içinde kullanılmalı');
   return ctx;
+}
+
+export function useTourAction() {
+  return useContext(TourContext)?.action ?? null;
 }

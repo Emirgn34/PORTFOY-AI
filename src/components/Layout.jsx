@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar.jsx';
 import Header from './Header.jsx';
@@ -10,18 +10,20 @@ export default function Layout() {
   const { pathname } = useLocation();
 
   return (
-    <TourProvider>
+    <TourProvider onSidebarChange={setSidebarOpen}>
     <div className="min-h-screen bg-navy-950">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="flex min-h-screen flex-col lg:pl-64">
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main data-tour-page={pathname} className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1400px]">
             {/* key: sayfa değişince hata sınırı sıfırlanır */}
             <ErrorBoundary key={pathname}>
-              <Outlet />
+              <Suspense fallback={<div role="status" className="py-16 text-center text-sm text-slate-400">Sayfa yükleniyor…</div>}>
+                <Outlet />
+              </Suspense>
             </ErrorBoundary>
           </div>
         </main>
