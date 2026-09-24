@@ -1,5 +1,5 @@
 import { automationDb, checked } from './automationDb.js';
-import { pushConfigured, validatePushSubscription, sendTestNotification } from './pushNotifications.js';
+import { pushConfigured, validatePushSubscription } from './pushNotifications.js';
 import { validatePortfolioPreferences } from '../src/utils/valueSelection.js';
 
 export default async function handler(req, res) {
@@ -39,19 +39,6 @@ export default async function handler(req, res) {
     }
     if (req.method === 'GET' && action === 'push') return res.json({ configured: pushConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY ?? null,
       subscriptions:checked(await sb.from('push_subscriptions').select('endpoint,topics').eq('user_id',userId)) });
-    if (req.method === 'POST' && action === 'push-test') {
-      if (!pushConfigured()) return res.status(503).json({error:'Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.'});
-      const stored=checked(await sb.from('push_subscriptions').select('user_id,subscription').eq('user_id',userId).eq('endpoint',String(req.body?.endpoint ?? '')).maybeSingle());
-      if (!stored || stored.user_id!==userId) return res.status(404).json({error:'Bu cihaz için hesabınıza bağlı bildirim aboneliği bulunamadı.'});
-      try { await sendTestNotification(stored.subscription); }
-      catch (error) {
-        console.error('[push-test]',error.statusCode ?? error.message);
-        return res.status(502).json({error:[404,410].includes(error.statusCode)
-          ? 'Cihaz aboneliğinin süresi dolmuş. Bildirimleri kapatıp tekrar etkinleştirin.'
-          : 'Test bildirimi gönderilemedi. Bildirim anahtarları ve sağlayıcı bağlantısı kontrol edilmeli.'});
-      }
-      return res.json({ok:true});
-    }
     if (req.method === 'POST' && action === 'push') {
       if (!pushConfigured()) return res.status(503).json({ error: 'Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.' });
       let subscription;

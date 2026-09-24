@@ -50,7 +50,7 @@ test('hesap API yönlendirmesi JWT sahibini kullanır; sahte kullanıcı ve baş
     const conflict=await request('POST',{feature:'automation',action:'push'},{topics:['catalyst'],subscription:{endpoint:'https://web.push.apple.com/test',keys:{p256dh:'A'.repeat(87),auth:'B'.repeat(22)}}});
     assert.equal(conflict.statusCode,409);
     const otherDevice=await request('POST',{feature:'automation',action:'push-test'},{endpoint:'https://web.push.apple.com/test',user_id:other});
-    assert.equal(otherDevice.statusCode,404);
+    assert.equal(otherDevice.statusCode,400); // Geçici test gönderim ucu kaldırıldı.
   } finally {
     globalThis.fetch=originalFetch;
     for(const key of keys) { if(previous[key]===undefined) delete process.env[key]; else process.env[key]=previous[key]; }

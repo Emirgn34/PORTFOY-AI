@@ -230,20 +230,20 @@ export async function computePeriodChanges(yahooFinance, symbols, range) {
  * Metni Türkçe'ye çevirir (ücretsiz Google Translate ucu, anahtarsız).
  * Başarısız olursa null döner; arayan orijinal metinle devam eder.
  */
-export async function translateToTurkish(text) {
+export async function translateToTurkish(text, { timeoutMs = 5000 } = {}) {
   if (!text) return null;
   try {
     const url =
       'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=tr&dt=t&q=' +
       encodeURIComponent(text);
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     const data = await res.json();
     const translated = (data?.[0] ?? [])
       .map((seg) => seg?.[0] ?? '')
       .join('')
       .trim();
-    return translated && translated !== text ? translated : null;
+    return translated && (translated !== text || data?.[2] === 'tr') ? translated : null;
   } catch {
     return null;
   }

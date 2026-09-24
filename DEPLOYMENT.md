@@ -67,6 +67,11 @@ sayısı mevcut 12 adette kalır. Ücretsiz plan için ek fonksiyon gerektirmez.
   tutulur; geçici hata en fazla 4 kez denenir, 404/410 abonelikleri kaldırılır.
   Teslim sonrası veritabanı kesintisinde tekrar olasılığı vardır; telefon aynı `tag`
   ile bildirimi değiştirir. Telefonun odak/enerji/ağ ayarları teslimi geciktirebilir.
+- Hızlı haber başlıkları mevcut ücretsiz çeviri servisiyle Türkçeleştirilir; özgün
+  başlık açılabilir alanda korunur. Yeni haber için çeviri en fazla 1,5 saniye beklenir.
+  Çeviri alınamazsa Türkçe olay özeti kullanılır ve daha sonra tekrar denenir.
+  Eski haber metinleri arka planda güncellenir; kimlik, algılama/son kullanım zamanı
+  ve bildirim teslim kayıtları değişmediği için eski haber yeniden bildirilmez.
 
 ### Canlı doğrulama
 

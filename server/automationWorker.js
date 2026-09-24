@@ -1,6 +1,6 @@
 import { automationDb, recordMonitor, checked } from './automationDb.js';
 import { processValuePortfolioJob } from './valuePortfolioWorker.js';
-import { scanStoredCatalysts } from './catalystNews.js';
+import { scanStoredCatalysts, translateStoredCatalysts } from './catalystNews.js';
 import { refreshSourcePortfolios } from './sourcePortfolios.js';
 import { scanFreeNews } from './freeNews.js';
 
@@ -21,6 +21,7 @@ if (mode==='sources') {
     catch (error) { console.error('[free-news]',error.message); process.exitCode=1; }
     try { await scanStoredCatalysts(sb,{reportStatus:false}); }
     catch (error) { console.error('[catalysts]',error.message); }
+    console.log('[catalyst-translations]',JSON.stringify(await translateStoredCatalysts(sb)));
   }
   if (mode !== 'news') {
     for (let i=0;i<3;i++) { if (!await processValuePortfolioJob(sb)) break; }

@@ -29,6 +29,7 @@ export default function CatalystNewsPanel() {
     {!data ? <p className="text-sm text-slate-400">Haber akışı yükleniyor…</p> : !data.events.length ? <p className="rounded-xl border border-dashed border-navy-700 p-8 text-center text-sm text-slate-400">Henüz bu koşullarda kaydedilmiş bir haber yok.</p> : data.events.map((event) => <article id={event.id} key={event.id} className="rounded-xl border border-navy-700 bg-navy-900 p-5">
       <div className="flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-accent/10 px-2 py-1 text-accent">{event.data.label}</span><span className="text-slate-500">{event.data.symbols.join(', ')} {event.data.timing && `· ${event.data.timing}`}</span></div>
       <h3 className="mt-3 font-semibold text-ink">{event.body}</h3><p className="mt-2 text-xs text-slate-500">{event.data.source} · Yayın: {new Date(event.published_at).toLocaleString('tr-TR')} · Algılama gecikmesi: {event.data.latencySeconds} sn</p>
+      {event.data.originalTitle && event.data.originalTitle !== event.body && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">{event.data.translationStatus === 'pending' ? 'Türkçe olay özeti · özgün başlığı göster' : 'Otomatik çeviri · özgün başlığı göster'}</summary><p className="mt-2 text-slate-400">{event.data.originalTitle}</p></details>}
       <a href={event.data.sourceUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-sm text-accent">Kaynak haberi aç ↗</a>
     </article>)}
   </div>;

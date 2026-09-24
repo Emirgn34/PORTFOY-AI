@@ -4,6 +4,10 @@ import { checked } from './automationDb.js';
 export function pushConfigured() {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
 }
+export function notificationBody(event) {
+  if(event.topic!=='catalyst') return event.body;
+  return event.data?.titleTr || `${event.data?.symbols?.join(', ') || 'Şirket'}: ${event.data?.label || 'Yeni şirket gelişmesi'}. Ayrıntılar kaynak haberde.`;
+}
 export function validatePushSubscription(subscription) {
   let url;
   try { url = new URL(subscription?.endpoint); } catch { throw new Error('Bildirim adresi geçersiz.'); }
@@ -18,13 +22,6 @@ export function validatePushSubscription(subscription) {
     throw new Error('Bildirim anahtarları geçersiz.');
   }
   return { endpoint: url.href, keys: { p256dh: keys.p256dh, auth: keys.auth } };
-}
-export async function sendTestNotification(subscription) {
-  const validated=validatePushSubscription(subscription);
-  webpush.setVapidDetails(process.env.VAPID_SUBJECT,process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
-  await webpush.sendNotification(validated,JSON.stringify({title:'PortföyAI · Bildirim testi',
-    body:'Bu bir test bildirimidir. Telefon bildirim bağlantınız çalışıyor.',url:'/news?tab=catalysts',tag:'portfoyai-push-test'}),
-    {TTL:60,urgency:'high',timeout:10000});
 }
 export async function deliverNotifications(sb) {
   if (!pushConfigured()) return { configured: false, sent: 0 };
@@ -41,7 +38,7 @@ export async function deliverNotifications(sb) {
         try {
           validatePushSubscription(subscription.subscription);
           await webpush.sendNotification(subscription.subscription, JSON.stringify({
-            title: event.title.slice(0, 120), body: event.body.slice(0, 250), url: event.url, tag: event.id,
+            title: event.title.slice(0, 120), body: notificationBody(event).slice(0, 250), url: event.url, tag: event.id,
           }), { TTL: Math.max(0, Math.floor((Date.parse(event.expires_at) - Date.now()) / 1000)), urgency: 'high', timeout: 10000 });
           checked(await sb.from('push_deliveries').update({ status: 'sent', delivered_at: new Date().toISOString() }).eq('event_id', event.id).eq('subscription_id', subscription.id));
           sent++;

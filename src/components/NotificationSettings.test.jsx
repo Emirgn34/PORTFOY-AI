@@ -18,9 +18,6 @@ test('izin kendiliğinden istenmez; düğme tıklamasıyla abonelik sunucuya kay
   expect(permission).toHaveBeenCalledOnce();
   await waitFor(() => expect(automationRequest).toHaveBeenCalledWith('push',{method:'POST',body:{subscription:subscription.toJSON(),topics:['catalyst','source-portfolios']}}));
   expect(await screen.findByRole('status')).toHaveTextContent('kaydedildi');
-  registration.pushManager.getSubscription.mockResolvedValue(subscription);
-  fireEvent.click(screen.getByRole('button',{name:'Test bildirimi gönder'}));
-  await waitFor(() => expect(automationRequest).toHaveBeenCalledWith('push-test',{method:'POST',body:{endpoint:subscription.endpoint}}));
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Test bildirimi gönderildi'));
+  expect(screen.queryByRole('button',{name:'Test bildirimi gönder'})).not.toBeInTheDocument();
   delete navigator.serviceWorker;
 });
