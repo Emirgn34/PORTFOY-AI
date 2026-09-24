@@ -52,6 +52,16 @@ export default function NotificationSettings() {
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
   }
+  async function testNotification() {
+    setBusy(true); setMessage('');
+    try {
+      const subscription=await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+      if (!subscription) throw new Error('Önce bu cihazda bildirimleri etkinleştirin.');
+      await automationRequest('push-test',{method:'POST',body:{endpoint:subscription.endpoint}});
+      setMessage('Test bildirimi gönderildi. Telefonunun bildirim merkezini kontrol et.');
+    } catch(error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  }
   return <section className="rounded-xl border border-navy-700 bg-navy-900 p-4 space-y-3" aria-label="Telefon bildirimleri">
     <h3 className="flex items-center gap-2 font-semibold text-ink"><Bell size={17} /> Telefon bildirimleri</h3>
     <p className="text-xs text-slate-400">Site kapalıyken de bildirim al. iPhone’da ana ekrana eklediğin uygulamadan aç (iOS 16.4 ve sonrası).</p>
@@ -62,7 +72,8 @@ export default function NotificationSettings() {
     </div>
     {!supported ? <p className="text-xs text-amber-400">Bu tarayıcıda telefon bildirimi kullanılamıyor. HTTPS üzerinden, desteklenen tarayıcı veya ana ekran uygulamasını açın.</p>
       : config && !config.configured ? <p className="text-xs text-amber-400">Bildirim hizmetinin sunucu kurulumu bekleniyor.</p>
-        : <div className="flex gap-3"><button disabled={busy || !config?.configured || !topics.length} onClick={subscribe} className="rounded-lg bg-accent px-4 py-2 text-sm text-on-accent disabled:opacity-50">{busy ? 'Kaydediliyor…' : enabled ? 'Bildirim tercihlerini kaydet' : 'Bildirimleri etkinleştir'}</button>
+        : <div className="flex flex-wrap gap-3"><button disabled={busy || !config?.configured || !topics.length} onClick={subscribe} className="rounded-lg bg-accent px-4 py-2 text-sm text-on-accent disabled:opacity-50">{busy ? 'Kaydediliyor…' : enabled ? 'Bildirim tercihlerini kaydet' : 'Bildirimleri etkinleştir'}</button>
+          {enabled && <button disabled={busy} onClick={testNotification} className="rounded-lg border border-accent px-3 py-2 text-sm text-accent disabled:opacity-50">Test bildirimi gönder</button>}
           {enabled && <button disabled={busy} onClick={unsubscribe} className="text-sm text-slate-400">Bildirimleri kapat</button>}</div>}
     {message && <p role="status" className="text-xs text-amber-400">{message}</p>}
   </section>;

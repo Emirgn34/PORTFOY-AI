@@ -19,6 +19,13 @@ export function validatePushSubscription(subscription) {
   }
   return { endpoint: url.href, keys: { p256dh: keys.p256dh, auth: keys.auth } };
 }
+export async function sendTestNotification(subscription) {
+  const validated=validatePushSubscription(subscription);
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT,process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
+  await webpush.sendNotification(validated,JSON.stringify({title:'PortföyAI · Bildirim testi',
+    body:'Bu bir test bildirimidir. Telefon bildirim bağlantınız çalışıyor.',url:'/news?tab=catalysts',tag:'portfoyai-push-test'}),
+    {TTL:60,urgency:'high',timeout:10000});
+}
 export async function deliverNotifications(sb) {
   if (!pushConfigured()) return { configured: false, sent: 0 };
   webpush.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
