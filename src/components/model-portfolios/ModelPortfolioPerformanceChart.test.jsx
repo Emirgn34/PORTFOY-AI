@@ -1,11 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { afterEach, vi } from 'vitest';
 import ModelPortfolioPerformanceChart, {
   buildContinuousPerformanceData,
   buildPerformanceDetails,
   filterPerformanceRange,
   rebasePerformanceWindow,
 } from './ModelPortfolioPerformanceChart.jsx';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const portfolios = [
   {
@@ -19,6 +22,34 @@ const portfolios = [
     versionKey: 'balanced-growth--2026-09-16',
   },
 ];
+
+test('ilk gerçek NAV kaydıyla grafik açılır ve bir hafta dolunca haftalık aralık seçilir', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  const user = userEvent.setup();
+  const initial = portfolios.map((p) => ({ version_key: p.versionKey, nav_date: '2026-09-16', nav_value: 100, return_pct: 0 }));
+  const { rerender } = render(<ModelPortfolioPerformanceChart portfolios={portfolios} navRows={initial} activeSlug="quality-defense" trackingStarted />);
+  expect(screen.getByRole('img', { name: /kümülatif getiri çizgi grafiği/ })).toBeInTheDocument();
+  expect(screen.queryByText('Takip başladı; ilk kapanış verisi bekleniyor.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '1H' })).toBeDisabled();
+
+  rerender(<ModelPortfolioPerformanceChart portfolios={portfolios} navRows={[...initial, ...initial.map((row) => ({ ...row, nav_date: '2026-09-23', nav_value: 103, return_pct: 3 }))]} activeSlug="quality-defense" trackingStarted />);
+  const weekly = screen.getByRole('button', { name: '1H' });
+  expect(weekly).toBeEnabled();
+  await user.click(weekly);
+  expect(weekly).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('haftalık aralık son gerçek NAV gününün yedi gün öncesinden başlar', () => {
+  const filtered = filterPerformanceRange([
+    { date: '2026-09-15', portfolio: 0 },
+    { date: '2026-09-16', portfolio: 10 },
+    { date: '2026-09-20', portfolio: 15 },
+    { date: '2026-09-23', portfolio: 21 },
+  ], '1w');
+  expect(filtered.map((row) => row.date)).toEqual(['2026-09-16', '2026-09-20', '2026-09-23']);
+  expect(filtered[0].portfolio).toBe(0);
+  expect(filtered[2].portfolio).toBeCloseTo(10);
+});
 
 test('gerçek kapanış noktaları yetersizken dürüst takip başlangıcı durumunu gösterir', () => {
   render(

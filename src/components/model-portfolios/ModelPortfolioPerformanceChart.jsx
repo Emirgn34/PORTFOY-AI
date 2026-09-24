@@ -26,6 +26,7 @@ const BENCHMARK_META = {
 };
 
 export const PERFORMANCE_RANGES = Object.freeze([
+  Object.freeze({ key: '1w', label: '1H', days: 7 }),
   Object.freeze({ key: '1m', label: '1A', months: 1 }),
   Object.freeze({ key: '3m', label: '3A', months: 3 }),
   Object.freeze({ key: '6m', label: '6A', months: 6 }),
@@ -374,6 +375,7 @@ function rangeCutoff(latestDate, rangeKey) {
   if (option.max) return null;
   if (option.ytd) return new Date(Date.UTC(latestDate.getUTCFullYear(), 0, 1));
   if (option.months) return shiftUtcMonths(latestDate, -option.months);
+  if (option.days) return new Date(latestDate.getTime() - option.days * 86400000);
   if (option.years) return shiftUtcMonths(latestDate, -option.years * 12);
   return null;
 }
@@ -681,7 +683,7 @@ export default function ModelPortfolioPerformanceChart({
     [benchmarkSeries, portfolioSeries]
   );
 
-  const renderable = chartData.length >= 2;
+  const renderable = chartData.length >= 1;
   const orderedPortfolioLines = [
     ...portfolioSeries.filter((series) => !series.isActive),
     ...portfolioSeries.filter((series) => series.isActive),
@@ -852,7 +854,7 @@ export default function ModelPortfolioPerformanceChart({
                       name={portfolio.label}
                       stroke={portfolio.color}
                       strokeWidth={portfolio.isActive ? 3 : 2}
-                      dot={false}
+                      dot={chartData.length === 1 ? { r: 4 } : false}
                       activeDot={{ r: portfolio.isActive ? 4 : 3 }}
                       connectNulls={false}
                       isAnimationActive={false}
@@ -881,7 +883,7 @@ export default function ModelPortfolioPerformanceChart({
                     ? 'Güncel sepetler kullanılabilir; geçmiş veriyi daha sonra yeniden deneyin.'
                     : trackingLoading
                       ? 'Güncel sepet gösterilirken aylık sürümler ve NAV kayıtları arka planda okunuyor.'
-                      : 'Karşılaştırma grafiği, en az iki tarihli gerçek kapanış kaydı oluştuğunda gösterilir.'}
+                      : 'Takip başlangıcından itibaren kaydedilen değerler gösterilir; kapanışlar geldikçe grafik uzar.'}
                 </p>
               </div>
             </div>

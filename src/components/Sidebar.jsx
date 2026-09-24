@@ -8,6 +8,8 @@ const NAV_ITEMS = [
   { to: '/portfolio', label: 'Portföy Özeti', icon: LayoutDashboard },
   { to: '/opportunities', label: 'Fırsatlar', icon: TrendingUp },
   { to: '/model-portfolios', label: 'Hazır Portföyler', icon: WalletCards },
+  { to: '/value-portfolios', label: 'Manuel Değer Portföyleri', icon: TrendingUp },
+  { to: '/source-portfolios', label: 'Yatırımcı Portföyleri', icon: Database },
   { to: '/analysis', label: 'Portföy Analizi', icon: LineChart },
   { to: '/research', label: 'Araştırma Merkezi', icon: Database },
   { to: '/news', label: 'Haberler', icon: Newspaper },

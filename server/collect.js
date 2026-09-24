@@ -33,6 +33,7 @@ import {
   buildModelPortfolios,
   getModelPortfolioProfileScore,
   isModelPortfolioCandidateEligible,
+  isUsEquity,
 } from '../src/utils/modelPortfolioCore.js';
 import { assessMonthlyConsensusCoverage } from '../src/utils/modelPortfolioConsensus.js';
 import {
@@ -1072,7 +1073,10 @@ async function collectCandidates(trackedSymbols) {
   async function publishModelPortfolios() {
     const decisionAt = new Date().toISOString();
     const activeVersions = await getActiveModelPortfolioVersions(decisionAt);
-    if (activeVersions?.length) {
+    const activeSetIsUS = activeVersions?.length && activeVersions.every((version) =>
+      version.data?.marketScope === 'US' && (version.data?.holdings ?? []).every(isUsEquity)
+    );
+    if (activeSetIsUS) {
       assertCompleteModelPortfolioSet(activeVersions, 'Aktif aylık sürüm kümesi');
       // Current pointer eksik/bozuksa aktif sürümlerden kendini iyileştir; sepet
       // içeriği ve dönem başlangıcı hiçbir şekilde yeniden üretilmez.

@@ -1,0 +1,66 @@
+name: Portfoy ve Bildirim Otomasyonu
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [quick, sources]
+        default: quick
+permissions:
+  contents: read
+jobs:
+  quick:
+    if: github.event.schedule != '17 4 * * *' && inputs.mode != 'sources'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: news
+            timeout: 5
+          - mode: value
+            timeout: 25
+    concurrency:
+      group: automation-${{ matrix.mode }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node server/automationWorker.js
+        env:
+          AUTOMATION_MODE: ${{ matrix.mode }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+  sources:
+    if: github.event.schedule == '17 4 * * *' || inputs.mode == 'sources'
+    concurrency:
+      group: automation-sources
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node server/automationWorker.js
+        env:
+          AUTOMATION_MODE: sources
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}

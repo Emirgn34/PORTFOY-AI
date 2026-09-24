@@ -9,3 +9,4 @@ dist
 
 # Canlı veri sunucusunun çalışma anında ürettiği dosyalar
 server/data/
+.tmp/

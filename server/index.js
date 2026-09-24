@@ -14,6 +14,7 @@
  * haber kaçmaz). Çalıştırma: `npm run server`
  */
 import express from 'express';
+import accountHandler from '../api/account.js';
 import cors from 'cors';
 import cron from 'node-cron';
 import fs from 'fs';
@@ -133,6 +134,8 @@ async function fetchNewsForSymbol(symbol, { force = false } = {}) {
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '64kb' }));
+app.all('/api/account', accountHandler);
 
 function parseSymbols(req) {
   return String(req.query.symbols ?? '')

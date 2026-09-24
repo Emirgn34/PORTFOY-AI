@@ -10,6 +10,8 @@ import { detectCatalyst } from '../utils/newsSignals.js';
 import { withNewsImportance } from '../utils/newsImportance.js';
 import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
+import { useSearchParams } from 'react-router-dom';
+import CatalystNewsPanel from '../components/CatalystNewsPanel.jsx';
 
 
 /** Haber kapsamı: hangi hisselerin haberleri gösterilsin? */
@@ -42,6 +44,17 @@ const selectClass =
   'rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-accent';
 
 export default function NewsPage() {
+  const [params, setParams] = useSearchParams();
+  const catalysts = params.get('tab') === 'catalysts';
+  return <div className="space-y-5">
+    <div className="flex gap-2" role="tablist" aria-label="Haber akışı">
+      {[['all','Tüm Haberler'],['catalysts','Hızlı Şirket Haberleri']].map(([key,label]) => <button key={key} role="tab" aria-selected={catalysts === (key === 'catalysts')} onClick={() => setParams(key === 'catalysts' ? {tab:key} : {})} className={`rounded-lg border px-4 py-2 text-sm ${catalysts === (key === 'catalysts') ? 'border-accent bg-accent/10 text-accent' : 'border-navy-700 text-slate-400'}`}>{label}</button>)}
+    </div>
+    {catalysts ? <CatalystNewsPanel /> : <AllNews />}
+  </div>;
+}
+
+function AllNews() {
   const [scope, setScope] = useState('all');
   const [tickerFilter, setTickerFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');

@@ -90,7 +90,14 @@ export function addUtcMonths(iso, months = MODEL_PORTFOLIO_TERM_MONTHS) {
 const riskValue = { Düşük: 24, Orta: 52, Yüksek: 82 };
 const value = (candidate, key) => Number(candidate?.scoreBreakdown?.[key] ?? 0);
 
+export function isUsEquity(candidate) {
+  return ['NASDAQ', 'NYSE', 'AMEX', 'NYSEARCA', 'NYSEAMERICAN', 'ABD', 'US'].includes(String(candidate?.market ?? '').toUpperCase())
+    && (!candidate?.quoteType || candidate.quoteType === 'EQUITY')
+    && !candidateSourceSymbol(candidate).endsWith('.IS');
+}
+
 export function isModelPortfolioCandidateEligible(candidate, profile) {
+  if (!isUsEquity(candidate)) return false;
   if (!candidate || !candidate.currentPrice || !candidate.priceStructure) return false;
   if (candidate.analysisDepth && candidate.analysisDepth !== 'deep') return false;
   if (candidate.liquidityLevel === 'Düşük' && profile.riskTier <= 3) return false;
@@ -272,6 +279,7 @@ function buildHolding(candidate, profile, weightPct, sourceGeneration, modelImpo
     },
     opportunityScore: candidate.shortTermScore,
     convictionScore: candidate.conviction?.score ?? null,
+    valuation: candidate.valuation ?? null,
     riskLevel: candidate.riskLevel,
     liquidityLevel: candidate.liquidityLevel,
     modelImportanceRank,
@@ -307,6 +315,7 @@ function portfolioFor(
     tracking = null,
     analysisHistory = null,
     previousPortfolio = null,
+    valueFocus = false,
   }
 ) {
   const profileAnalysisHistory = Array.isArray(analysisHistory)
@@ -316,12 +325,14 @@ function portfolioFor(
     : null;
   const ranked = scoreAndRankCandidates(allCandidates, profile.horizon, generatedAt)
     .filter((candidate) => isModelPortfolioCandidateEligible(candidate, profile))
+    .filter((candidate) => !valueFocus || candidate.valuation?.eligible === true)
     .map((candidate) => ({
       ...candidate,
       horizon: candidate.horizon ?? profile.horizon,
       generation: candidate.generation ?? sourceGeneration,
       capturedAt: candidate.capturedAt ?? generatedAt,
-      modelRankScore: getModelPortfolioProfileScore(candidate, profile),
+      modelRankScore: getModelPortfolioProfileScore(candidate, profile) * (valueFocus ? 0.75 : 1)
+        + (valueFocus ? candidate.valuation.score * 0.25 : 0),
     }))
     .sort((a, b) => b.modelRankScore - a.modelRankScore || a.symbol.localeCompare(b.symbol));
   const { selected, selectionMethod } = selectProfileCandidates(ranked, profile, {
@@ -387,6 +398,8 @@ function portfolioFor(
   }
   return {
     schemaVersion: 3,
+    marketScope: 'US',
+    valueFocus,
     methodologyVersion: 'model-portfolio-v3-consensus',
     versionKey: `${profile.slug}--${cycleStart}`,
     slug: profile.slug,
@@ -450,6 +463,7 @@ export function buildModelPortfolios({
   tracking = null,
   analysisHistory = null,
   previousPortfolios = null,
+  valueFocus = false,
 } = {}) {
   return MODEL_PORTFOLIO_PROFILES.map((profile) =>
     portfolioFor(profile, profile.horizon === 'short' ? shortCandidates : longCandidates, {
@@ -460,6 +474,7 @@ export function buildModelPortfolios({
       tracking,
       analysisHistory,
       previousPortfolio: previousPortfolioFor(previousPortfolios, profile.slug),
+      valueFocus,
     })
   );
 }

@@ -61,10 +61,14 @@ export default function ModelPortfoliosPage() {
 
   useEffect(() => {
     let active = true;
+    let loading = false;
     async function load() {
+      if (loading) return;
+      loading = true;
+      try {
       // Güncel snapshot hızlıca ekrana gelsin; uzun tarihçe sayfaları arka
       // planda okunurken Hazır Portföyler sayfası gereksiz yere bloklanmasın.
-      const trackingPromise = fetchLiveModelPortfolioTracking();
+      const trackingPromise = fetchLiveModelPortfolioTracking().catch(() => ({ error: 'Performans geçmişi şu an okunamadı.' }));
       const snapshots = await fetchLiveModelPortfolios();
       if (!active) return;
       const hasSnapshot = snapshots?.length === 4;
@@ -105,13 +109,22 @@ export default function ModelPortfoliosPage() {
       });
       setSource(usesMock ? 'demo' : hasCompleteLiveSet ? 'derived' : 'unavailable');
       setPortfolios(fallback);
+      } catch {
+        if (active) setTrackingError('Portföy verisi alınamadı. Bir dakika içinde yeniden denenecek.');
+      } finally {
+        loading = false;
+        if (active) setTrackingLoading(false);
+      }
     }
     load();
+    const timer = setInterval(load, 60_000);
     return () => {
       active = false;
+      clearInterval(timer);
     };
   }, []);
 
+  if (!portfolios && trackingError) return <div role="alert" className="rounded-xl border border-navy-700 bg-navy-900 p-6 text-sm text-amber-400">{trackingError}</div>;
   if (watchState.loading || !portfolios) return <LoadingState />;
   return (
     <ModelPortfoliosContent
@@ -287,11 +300,18 @@ function ModelPortfoliosContent({
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-ink">Hazır Model Portföyler</h2>
           <p className="mt-1 max-w-4xl text-sm leading-relaxed text-slate-400">
-            Dört risk profili, dönem başında sabitlenen ağırlıklarla bir ay boyunca izlenir.
+            Yeni sepetler yalnızca ABD hisselerinden seçilir. Dört risk profili, dönem başında sabitlenen ağırlıklarla bir ay boyunca izlenir.
             Yeni dönem; son 30 gündeki 6 saatlik analizlerin konsensüsüyle oluşturulur ve hâlâ
             güçlü kalan hisseler kontrollü biçimde sonraki aya taşınabilir. Dönem içindeki yeni
             taramalar mevcut sepeti değiştirmez.
           </p>
+          {source === 'tracked' && active.cycleStart && (
+            <p className="mt-2 text-xs text-accent" role="status">
+              Takip başladı: {new Date(active.cycleStart).toLocaleString('tr-TR')}.
+              {' '}Bir haftalık hazırlık tamamlandı. Başlangıç değeri 100; kapanış kayıtları geldikçe grafik güncellenir.
+              {' '}Önceki dönemlerin performans kayıtları arşivde korunur.
+            </p>
+          )}
         </div>
         <div className="text-right">
           <span className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs ${cycleIsActive && source === 'tracked' ? 'border-gain/30 bg-gain/10 text-gain' : 'border-amber-400/30 bg-amber-400/10 text-amber-400'}`}>

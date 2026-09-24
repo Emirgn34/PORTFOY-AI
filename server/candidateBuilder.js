@@ -719,6 +719,7 @@ function buildCandidatePair(symbol, quote, summary, newsRows, referenceMs, tech,
     industry,
     currency,
     currentPrice: m.price,
+    quoteType: quote.quoteType ?? null,
     dailyChangePercent: m.chg != null ? Number(m.chg.toFixed(2)) : 0,
     // 'deep' = 2 yıllık geçmiş grafikten gerçek teknik/analog; 'light' = yalnızca
     // quote alanlarından fiyat-temelli proxy. Vitrindeki ilk 30 her zaman 'deep' olmalı.

@@ -1,0 +1,6 @@
+{
+  "id": "/", "name": "PortföyAI", "short_name": "PortföyAI", "lang": "tr",
+  "start_url": "/portfolio", "scope": "/", "display": "standalone",
+  "background_color": "#f6f7f4", "theme_color": "#f6f7f4",
+  "icons": [{ "src": "/logo.png", "sizes": "any", "type": "image/png", "purpose": "any" }]
+}

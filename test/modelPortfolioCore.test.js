@@ -108,20 +108,20 @@ test('30 günlük analiz geçmişini kullanır, uygun önceki hisseyi taşır ve
     generatedAt,
     analysisHistory,
     previousPortfolios: [
-      { slug: 'balanced-growth', holdings: [{ ticker: 'S1', market: 'BIST' }] },
+      { slug: 'balanced-growth', holdings: [{ ticker: 'S2', market: 'NASDAQ' }] },
     ],
   }).find((portfolio) => portfolio.slug === 'balanced-growth');
 
   assert.equal(balanced.selection.method, 'rolling-30d-consensus-v1');
   assert.equal(balanced.selection.carriedHoldingCount, 1);
   assert.equal(
-    balanced.holdings.find((holding) => holding.ticker === 'S1')?.carriedFromPrevious,
+    balanced.holdings.find((holding) => holding.ticker === 'S2')?.carriedFromPrevious,
     true
   );
-  assert.equal(balanced.holdings.find((holding) => holding.ticker === 'S1')?.sourceSymbol, 'S1.IS');
+  assert.equal(balanced.holdings.find((holding) => holding.ticker === 'S2')?.sourceSymbol, 'S2');
   assert.equal(
-    balanced.holdings.find((holding) => holding.ticker === 'S1')?.provenance?.sourceSymbol,
-    'S1.IS'
+    balanced.holdings.find((holding) => holding.ticker === 'S2')?.provenance?.sourceSymbol,
+    'S2'
   );
   assert.deepEqual(
     balanced.holdings.map((holding) => holding.modelImportanceRank),

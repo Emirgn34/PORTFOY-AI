@@ -14,6 +14,8 @@ const AdminPage = lazy(() => import('./pages/AdminPage.jsx'));
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
 const ResearchPage = lazy(() => import('./pages/ResearchPage.jsx'));
 const ModelPortfoliosPage = lazy(() => import('./pages/ModelPortfoliosPage.jsx'));
+const ValuePortfoliosPage = lazy(() => import('./pages/ValuePortfoliosPage.jsx'));
+const SourcePortfoliosPage = lazy(() => import('./pages/SourcePortfoliosPage.jsx'));
 
 /** Oturum çözümlenirken gösterilen tam ekran yükleme durumu. */
 function FullScreenLoader() {
@@ -50,6 +52,8 @@ export default function App() {
         <Route path="/news" element={<NewsPage />} />
         <Route path="/opportunities" element={<OpportunitiesPage />} />
         <Route path="/model-portfolios" element={<ModelPortfoliosPage />} />
+        <Route path="/value-portfolios" element={<ValuePortfoliosPage />} />
+        <Route path="/source-portfolios" element={<SourcePortfoliosPage />} />
         {/* Eski rota geriye dönük uyumluluk için yönlendirilir */}
         <Route path="/short-term" element={<Navigate to="/opportunities" replace />} />
         <Route path="/analysis" element={<AnalysisPage />} />

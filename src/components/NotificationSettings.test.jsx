@@ -1,0 +1,22 @@
+import { render,screen,waitFor,fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
+import NotificationSettings from './NotificationSettings.jsx';
+import { automationRequest } from '../services/automation.js';
+vi.mock('../services/automation.js',() => ({automationRequest:vi.fn()}));
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+test('izin kendiliğinden istenmez; düğme tıklamasıyla abonelik sunucuya kaydedilir',async () => {
+  const subscription={endpoint:'https://web.push.apple.com/test',toJSON:() => ({endpoint:'https://web.push.apple.com/test',keys:{}})};
+  const registration={pushManager:{getSubscription:vi.fn().mockResolvedValue(null),subscribe:vi.fn().mockResolvedValue(subscription)}};
+  vi.stubGlobal('isSecureContext',true); vi.stubGlobal('PushManager',function(){});
+  const permission=vi.fn().mockResolvedValue('granted'); vi.stubGlobal('Notification',{requestPermission:permission});
+  Object.defineProperty(navigator,'serviceWorker',{configurable:true,value:{register:vi.fn().mockResolvedValue(registration),ready:Promise.resolve(registration)}});
+  automationRequest.mockResolvedValue({configured:true,publicKey:'YQ',subscriptions:[]});
+  render(<NotificationSettings />);
+  const button=screen.getByRole('button',{name:'Bildirimleri etkinleştir'});
+  await waitFor(() => expect(button).toBeEnabled());
+  expect(permission).not.toHaveBeenCalled(); fireEvent.click(button);
+  expect(permission).toHaveBeenCalledOnce();
+  await waitFor(() => expect(automationRequest).toHaveBeenCalledWith('push',{method:'POST',body:{subscription:subscription.toJSON(),topics:['catalyst','source-portfolios']}}));
+  expect(await screen.findByRole('status')).toHaveTextContent('kaydedildi');
+  delete navigator.serviceWorker;
+});

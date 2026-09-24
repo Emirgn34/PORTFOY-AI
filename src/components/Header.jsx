@@ -8,6 +8,8 @@ const PAGE_TITLES = {
   '/news': 'Haberler ve Araştırma',
   '/opportunities': 'Fırsatlar',
   '/model-portfolios': 'Hazır Model Portföyler',
+  '/value-portfolios': 'Manuel Değer Portföyleri',
+  '/source-portfolios': 'Yatırımcı Portföyleri',
   '/analysis': 'Portföy Analizi',
   '/research': 'Araştırma Merkezi',
   '/account': 'Hesabım',
