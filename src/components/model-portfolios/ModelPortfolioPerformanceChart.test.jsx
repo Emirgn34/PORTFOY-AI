@@ -8,7 +8,7 @@ import ModelPortfolioPerformanceChart, {
   rebasePerformanceWindow,
 } from './ModelPortfolioPerformanceChart.jsx';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const portfolios = [
   {
@@ -22,6 +22,30 @@ const portfolios = [
     versionKey: 'balanced-growth--2026-09-16',
   },
 ];
+
+test('Momentum son noktası boşluk olsa da görünür; onarım sonrası çizgi 24 Ekime kesintisiz ulaşır', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    width:900,height:320,x:0,y:0,top:0,left:0,right:900,bottom:320,toJSON() {},
+  });
+  const models=[...portfolios,{slug:'short-momentum',shortName:'Momentum',versionKey:'momentum-v1'}];
+  const dates=Array.from({length:9},(_,i)=>`2026-10-${16+i}`);
+  const rows=models.flatMap((model)=>dates
+    .filter(d=>model.slug!=='short-momentum'||d.endsWith('16')||d.endsWith('24'))
+    .map((nav_date)=>({version_key:model.versionKey,nav_date,nav_value:95,return_pct:-5})));
+  const {container,rerender}=render(<ModelPortfolioPerformanceChart portfolios={models} navRows={rows} />);
+  const lastDot=container.querySelector('[data-portfolio-latest="short-momentum"]');
+  expect(lastDot).toBeInTheDocument();
+  expect(Number(lastDot.getAttribute('cx'))).toBeGreaterThan(800);
+  const repaired=dates.slice(1,-1).map(nav_date=>({version_key:'momentum-v1',nav_date,nav_value:94,return_pct:-6,
+    benchmarks:{_valuation:{method:'historical-close-reconstruction-v1'}}}));
+  rerender(<ModelPortfolioPerformanceChart portfolios={models} navRows={[...rows,...repaired]} />);
+  expect(screen.getByText(/Eksik günlük kayıtlar tarihsel kapanış/)).toBeInTheDocument();
+  const path=container.querySelector('path.recharts-line-curve[stroke="#ef4444"]');
+  expect(path).toBeInTheDocument();
+  expect(path.getAttribute('d').match(/M/g)).toHaveLength(1);
+  expect(container.querySelector('[data-portfolio-latest="short-momentum"]')).toHaveAttribute('cx',lastDot.getAttribute('cx'));
+});
 
 test('eksik portföyün ortak tarihi geride tuttuğunu açıklar ve yeni NAV gelince karşılaştırmayı ilerletir', () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });

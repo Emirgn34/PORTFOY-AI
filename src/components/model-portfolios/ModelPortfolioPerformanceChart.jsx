@@ -794,6 +794,11 @@ export default function ModelPortfolioPerformanceChart({
         </div>
 
         <div className="p-5">
+          {navRows.some((row) => benchmarkObject(row.benchmarks)?._valuation?.method === 'historical-close-reconstruction-v1') && (
+            <p className="mb-4 text-xs text-slate-500">
+              Eksik günlük kayıtlar tarihsel kapanış fiyatları ve kurlarla tamamlandı.
+            </p>
+          )}
           {continuous.data.at(-1)?.date > comparableEndDate && comparableEndDate && (
             <p role="status" className="mb-4 text-xs text-amber-400">
               Bazı portföylerin değerleme verileri eksik. Karşılaştırma son ortak tarih olan {formatShortDate(comparableEndDate)} itibarıyla gösteriliyor.
@@ -859,7 +864,11 @@ export default function ModelPortfolioPerformanceChart({
                       name={portfolio.label}
                       stroke={portfolio.color}
                       strokeWidth={portfolio.isActive ? 3 : 2}
-                      dot={chartData.length === 1 ? { r: 4 } : false}
+                      dot={({ cx, cy, index }) => index === chartData.length - 1 &&
+                        Number.isFinite(cx) && Number.isFinite(cy) ? (
+                          <circle key={`${portfolio.key}-latest`} cx={cx} cy={cy} r={3} fill={portfolio.color}
+                            data-portfolio-latest={portfolio.key} />
+                        ) : null}
                       activeDot={{ r: portfolio.isActive ? 4 : 3 }}
                       connectNulls={false}
                       isAnimationActive={false}

@@ -20,7 +20,12 @@ name: Veri Toplayici
 on:
   schedule:
     - cron: '*/20 * * * *'
-  workflow_dispatch: {} # Actions sekmesinden elle de tetiklenebilir
+  workflow_dispatch:
+    inputs:
+      repair_nav_gaps:
+        description: 'Eksik model portföy NAV günlerini tarihsel kapanışlarla tamamla'
+        type: boolean
+        default: false
 
 jobs:
   collect:
@@ -38,6 +43,13 @@ jobs:
       # Tüm projeyi değil, yalnızca toplayıcının ihtiyacı olan paketleri kur (hız + dakika tasarrufu)
       - name: Bağımlılık kur
         run: npm install yahoo-finance2 @anthropic-ai/sdk --no-save --no-audit --no-fund
+
+      - name: Eksik model portföy NAV günlerini tamamla
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_nav_gaps
+        run: node server/backfillModelPortfolioNav.js --apply
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Veri topla, olay nöbetini çalıştır ve Supabase'e yaz
         run: node server/collect.js
