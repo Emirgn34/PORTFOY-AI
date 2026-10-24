@@ -1,0 +1,38 @@
+name: Akilli Portfoy Kalkani
+on:
+  schedule:
+    - cron: '30 13 * * 1-5'
+    - cron: '0,30 14-20 * * 1-5'
+    - cron: '0,5 21 * * 1-5'
+    - cron: '45 19,20 * * 1-5'
+    - cron: '5 20 * * 1-5'
+    # Early-close sessions (13:00 ET), gated by the exchange calendar.
+    - cron: '45 16,17 * * 1-5'
+    - cron: '5 17,18 * * 1-5'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: hedge-radar-single-row
+  cancel-in-progress: false
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Finansal kurallari test et
+        run: python -m unittest discover -s test -p 'test_hedge*.py'
+      - name: Kalkan durumunu guncelle
+        run: python scripts/hedge_engine.py --apply ${{ github.event_name == 'workflow_dispatch' && '--manual' || '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HEDGE_RADAR_USER_ID: ${{ secrets.HEDGE_RADAR_USER_ID }}
+          HEDGE_APP_URL: ${{ vars.HEDGE_APP_URL || 'https://portfoy-ai-ukyt.vercel.app' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

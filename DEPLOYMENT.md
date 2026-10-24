@@ -1,5 +1,12 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 24 Ekim 2026: Portföy Kalkanı
+
+SQL migration, hesap UUID'si, CRON secret, manuel analiz bağlantısı ve telefon
+testi adımları `HEDGE_SHIELD_SETUP.md` dosyasındadır. Mevcut React/Vite uygulaması,
+Vercel fonksiyon sayısı ve mevcut push abonelikleri korunur. Bu kurulum
+tamamlanmadan kalkan otomasyonu canlıda etkin kabul edilmez.
+
 ## 24 Eylül 2026: değer portföyleri, hızlı haberler ve kaynak takibi
 
 Mevcut yayın Vercel + Supabase + GitHub Actions üzerinde kalır. Yeni bir Sites/Cloudflare

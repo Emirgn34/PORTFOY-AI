@@ -6,6 +6,7 @@ import useLivePrices from '../hooks/useLivePrices.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import PortfolioSummaryCards from '../components/PortfolioSummaryCards.jsx';
 import PortfolioTable from '../components/PortfolioTable.jsx';
+import HedgeShieldDashboard from '../components/HedgeShieldDashboard.tsx';
 import StockFormModal from '../components/StockFormModal.jsx';
 import {
   getPortfolioSummary,
@@ -169,6 +170,8 @@ function PortfolioContent({ stocks, setStocks }) {
           periodAvailable={periodProfit.covered}
         />
       </div>
+
+      <HedgeShieldDashboard />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">

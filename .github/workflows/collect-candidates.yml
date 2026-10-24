@@ -6,6 +6,8 @@
 # Gerekli secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (+ AI için ANTHROPIC_API_KEY opsiyonel)
 name: Aday Ureticisi
+permissions:
+  contents: read
 
 # Aynı anda iki aylık yayın kararının yarışmasını engeller. Planlı tur
 # sürerken elle tetiklenen tur iptal edilmez; sıraya girer.

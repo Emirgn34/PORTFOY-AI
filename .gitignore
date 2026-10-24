@@ -10,3 +10,5 @@ dist
 # Canlı veri sunucusunun çalışma anında ürettiği dosyalar
 server/data/
 .tmp/
+__pycache__/
+*.pyc

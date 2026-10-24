@@ -1,5 +1,10 @@
 {
   "rewrites": [
+    { "source": "/api/hedge-radar", "destination": "/api/account?feature=hedge&action=state" },
+    { "source": "/api/hedge-radar/refresh", "destination": "/api/account?feature=hedge&action=refresh" },
+    { "source": "/api/notifications/subscribe", "destination": "/api/account?feature=automation&action=push" },
+    { "source": "/api/notifications/trigger", "destination": "/api/account?feature=hedge&action=trigger" },
+    { "source": "/manifest.json", "destination": "/manifest.webmanifest" },
     { "source": "/((?!api/|sw\\.js$|manifest\\.webmanifest$).*)", "destination": "/index.html" }
   ],
   "headers": [

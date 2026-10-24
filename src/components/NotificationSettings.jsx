@@ -56,7 +56,7 @@ export default function NotificationSettings() {
     <h3 className="flex items-center gap-2 font-semibold text-ink"><Bell size={17} /> Telefon bildirimleri</h3>
     <p className="text-xs text-slate-400">Site kapalıyken de bildirim al. iPhone’da ana ekrana eklediğin uygulamadan aç (iOS 16.4 ve sonrası).</p>
     <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri']].map(([key, label]) => <label key={key} className="flex items-center gap-2">
+      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>key!=='hedge-radar'||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
         <input type="checkbox" checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}
       </label>)}
     </div>

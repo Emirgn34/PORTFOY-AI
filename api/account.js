@@ -9,6 +9,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { validateUsername } from '../server/accountSettings.js';
 import automationHandler from '../server/automationApi.js';
+import hedgeRadarHandler from '../server/hedgeRadarApi.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -31,6 +32,7 @@ function isDuplicate(error) {
 }
 
 export default async function handler(req, res) {
+  if (req.query?.feature === 'hedge') return hedgeRadarHandler(req, res);
   // Aynı kullanıcı API'sini paylaşarak ayrı bir Vercel fonksiyonu gerektirmez.
   if (req.query?.feature === 'automation') return automationHandler(req, res);
   res.setHeader('Cache-Control', 'no-store');

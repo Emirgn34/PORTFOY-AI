@@ -32,6 +32,7 @@ export async function deliverNotifications(sb) {
     const subscriptions = checked(await sb.from('push_subscriptions').select('*').order('id').range(offset, offset + 499));
     for (const subscription of subscriptions) {
       for (const event of events) {
+        if (event.topic === 'hedge-radar' && (!event.data?.userId || event.data.userId !== subscription.user_id)) continue;
         if (Date.parse(event.expires_at) <= Date.now()) continue;
         if (!subscription.topics.includes(event.topic) || Date.parse(subscription.created_at) > Date.parse(event.detected_at)) continue;
         if (!checked(await sb.rpc('claim_push_delivery', { p_event_id: event.id, p_subscription_id: subscription.id }))) continue;

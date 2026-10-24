@@ -24,3 +24,12 @@ jobs:
         run: npm run test:ui
       - name: Production build
         run: npm run build
+      - name: Kalkan TypeScript denetimi
+        run: npx tsc -p tsconfig.hedge.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Kalkan algoritma testleri
+        run: python -m unittest discover -s test -p 'test_hedge*.py'

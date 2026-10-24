@@ -7,6 +7,9 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(data.title || 'PortföyAI', {
     body: data.body || 'Yeni bir gelişme var.', icon: '/logo.png', badge: '/logo.png',
     tag: data.tag || 'portfoyai', data: { url: data.url || '/news?tab=catalysts' },
+    // A new hedge state replaces the same tagged notification on the device;
+    // clicks are still restricted to this site's origin below.
+    renotify: Boolean(data.tag?.startsWith('hedge-')),
   }));
 });
 self.addEventListener('notificationclick', (event) => {

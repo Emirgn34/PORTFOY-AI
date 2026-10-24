@@ -16,6 +16,11 @@
 #   ANTHROPIC_API_KEY (opsiyonel — yoksa kanıt yine bulunur, yalnızca AI'ın
 #                      yazdığı gerekçe cümlesi olmaz)
 name: Veri Toplayici
+permissions:
+  contents: read
+concurrency:
+  group: collect-data-single-writer
+  cancel-in-progress: false
 
 on:
   schedule:
