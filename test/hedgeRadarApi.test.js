@@ -38,6 +38,23 @@ test('kalkan yenileme JWT sahibini kullanır, beş dakika sınırını uygular v
   const throttled=response();await handler(req,throttled);assert.equal(throttled.statusCode,429);
 });
 
+test('canlı kurulum denetimi bildirim üretmez; hesap, VAPID veya manuel analiz ayarı eksikse başarısız olur',async()=>{
+  let queued=0,sent=0;
+  const sb={rpc:async()=>{queued++;return {data:'event'};},from(){return {
+    select(){return this;},eq(){return this;},maybeSingle:async()=>({data:{owner_user_id:owner,updated_at:'2026-10-24',market_regime:'SAFE'}}),
+  };}};
+  const env={CRON_SECRET:'a'.repeat(40),HEDGE_RADAR_USER_ID:owner,VAPID_PUBLIC_KEY:'public',VAPID_PRIVATE_KEY:'private',
+    VAPID_SUBJECT:'mailto:test@example.com',HEDGE_GITHUB_TOKEN:'private-token'};
+  const handler=createHedgeRadarHandler({getDb:()=>sb,env,send:async()=>{sent++;return {sent:0};}});
+  const req={method:'POST',query:{action:'trigger'},headers:{'x-cron-secret':env.CRON_SECRET},body:{checkOnly:true}};
+  let res=response();await handler(req,res);
+  assert.equal(res.statusCode,200);assert.equal(res.body.ok,true);assert.equal(queued,0);assert.equal(sent,0);
+  delete env.HEDGE_GITHUB_TOKEN;
+  res=response();await handler(req,res);
+  assert.equal(res.statusCode,503);assert.equal(res.body.checks.manualRefreshConfigured,false);
+  assert.equal(queued,0);assert.equal(sent,0);
+});
+
 test('kalkan bildirimi yalnız radar sahibinin abone cihazına gider; başka hesap bildirim almaz',async()=>{
   const vapid=webpush.generateVAPIDKeys();
   const old={VAPID_PUBLIC_KEY:process.env.VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY:process.env.VAPID_PRIVATE_KEY,VAPID_SUBJECT:process.env.VAPID_SUBJECT};

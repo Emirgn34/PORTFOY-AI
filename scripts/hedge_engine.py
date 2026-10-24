@@ -322,14 +322,14 @@ class SupabaseRest:
         return retry(send)
 
 
-def trigger_notifications():
+def trigger_notifications(check_only=False):
     app = os.environ['HEDGE_APP_URL'].rstrip('/')
     if not app.startswith('https://'):
         raise DataError('HEDGE_APP_URL HTTPS olmalı.')
     secret = os.environ['CRON_SECRET']
     def send():
         response = requests.post(f'{app}/api/notifications/trigger', headers={'x-cron-secret': secret},
-                                 json={}, timeout=60, allow_redirects=False)
+                                 json={'checkOnly': True} if check_only else {}, timeout=60, allow_redirects=False)
         if not response.ok:
             raise DataError(f'Bildirim tetiklenemedi ({response.status_code}); bekleyen olay korunuyor.')
         return response.json()
@@ -339,9 +339,13 @@ def trigger_notifications():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--check-api', action='store_true', help='Bildirim göndermeden canlı API yapılandırmasını doğrula.')
     parser.add_argument('--manual', action='store_true', help='Seans dışında son kapanışı analiz et; bildirim gönderme.')
     parser.add_argument('--portfolio-file', type=Path, help='Salt okunur doğrulama için stocks JSON dizisi.')
     args = parser.parse_args()
+    if args.check_api:
+        print(json.dumps({'api_check': trigger_notifications(check_only=True)}))
+        return
     if args.apply and args.portfolio_file:
         raise DataError('Dosya portföyü canlı veritabanına yazılamaz.')
     now = datetime.now(UTC)

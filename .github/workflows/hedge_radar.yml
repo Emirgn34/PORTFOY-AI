@@ -29,7 +29,9 @@ jobs:
       - name: Finansal kurallari test et
         run: python -m unittest discover -s test -p 'test_hedge*.py'
       - name: Kalkan durumunu guncelle
-        run: python scripts/hedge_engine.py --apply ${{ github.event_name == 'workflow_dispatch' && '--manual' || '' }}
+        run: |
+          python scripts/hedge_engine.py --apply ${{ github.event_name == 'workflow_dispatch' && '--manual' || '' }}
+          python scripts/hedge_engine.py --check-api
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

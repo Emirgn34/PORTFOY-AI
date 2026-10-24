@@ -22,6 +22,20 @@ export function createHedgeRadarHandler({ getDb = automationDb, send = deliverNo
     try { sb = getDb(); } catch { return res.status(503).json({error:'Radar sunucu bağlantısı kurulmamış.'}); }
     try {
       if (action === 'trigger') {
+        // Deployment probe: authenticate the real cron secret and inspect
+        // configuration without creating or delivering any notifications.
+        if (req.body?.checkOnly === true) {
+          const state = checked(await sb.from('hedge_radar_state')
+            .select('owner_user_id,updated_at,market_regime').eq('id',1).maybeSingle());
+          const checks = {
+            stateReady: Boolean(state?.updated_at && state?.market_regime),
+            ownerMatches: Boolean(env.HEDGE_RADAR_USER_ID && state?.owner_user_id === env.HEDGE_RADAR_USER_ID),
+            pushConfigured: Boolean(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT),
+            manualRefreshConfigured: Boolean(env.HEDGE_GITHUB_TOKEN),
+          };
+          const ok = Object.values(checks).every(Boolean);
+          return res.status(ok ? 200 : 503).json({ok,checks});
+        }
         const eventId = checked(await sb.rpc('queue_hedge_radar_notification'));
         const delivery = await send(sb);
         return res.json({ok:true,eventId,...delivery});
