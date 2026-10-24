@@ -4,6 +4,8 @@
  * aynı hesaplama kurallarını kullanabilir.
  */
 
+import { getModelPortfolioCashAcquisition } from './modelPortfolioCorporateActions.js';
+
 export const MODEL_PORTFOLIO_BENCHMARKS = Object.freeze([
   Object.freeze({ key: 'bist100', label: 'BIST 100', symbol: 'XU100.IS', currency: 'TRY' }),
   Object.freeze({ key: 'sp500', label: 'S&P 500', symbol: '^GSPC', currency: 'USD' }),
@@ -91,6 +93,7 @@ export function calculateModelPortfolioSnapshot(
     fxByCurrency = {},
     benchmarkPriceByKey = {},
     splitFactorBySymbol = {},
+    observedAt = null,
   } = {}
 ) {
   const holdings = Array.isArray(portfolio?.holdings) ? portfolio.holdings : [];
@@ -113,7 +116,12 @@ export function calculateModelPortfolioSnapshot(
   for (const { holding, weight } of validHoldings) {
     const symbol = toModelPortfolioMarketSymbol(holding);
     const basePrice = positiveNumber(holding?.currentPriceAtGeneration);
-    const currentPrice = priceFrom(lookup(priceBySymbol, symbol));
+    const acquisition = getModelPortfolioCashAcquisition(
+      symbol, tracking.startedAt ?? portfolio?.cycleStart ?? portfolio?.generatedAt, observedAt
+    );
+    const currentPrice = acquisition?.currency === currencyCode(holding?.currency)
+      ? acquisition.cashPerShare
+      : priceFrom(lookup(priceBySymbol, symbol));
     const splitFactor = positiveNumber(lookup(splitFactorBySymbol, symbol)) ?? 1;
     const currency = currencyCode(holding?.currency);
     const holdingFxRatio = fxRatio(currency, baseFxByCurrency, fxByCurrency);

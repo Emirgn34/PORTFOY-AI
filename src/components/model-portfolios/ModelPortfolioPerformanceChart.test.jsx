@@ -23,6 +23,22 @@ const portfolios = [
   },
 ];
 
+test('eksik portföyün ortak tarihi geride tuttuğunu açıklar ve yeni NAV gelince karşılaştırmayı ilerletir', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  const initial = portfolios.map((p) => ({
+    version_key: p.versionKey, nav_date: '2026-10-16', nav_value: 100, return_pct: 0,
+  }));
+  const fresh = { ...initial[0], nav_date: '2026-10-24', nav_value: 110, return_pct: 10 };
+  const { rerender } = render(<ModelPortfolioPerformanceChart portfolios={portfolios} navRows={[...initial, fresh]} />);
+  expect(screen.getByText(/Bazı portföylerin değerleme verileri eksik/)).toBeInTheDocument();
+  expect(screen.getByText(/Ortak karşılaştırma dönemi:/)).toHaveTextContent('16 Eki – 16 Eki');
+  rerender(<ModelPortfolioPerformanceChart portfolios={portfolios} navRows={[
+    ...initial, fresh, { ...initial[1], nav_date: '2026-10-24', nav_value: 105, return_pct: 5 },
+  ]} />);
+  expect(screen.queryByText(/Bazı portföylerin değerleme verileri eksik/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Ortak karşılaştırma dönemi:/)).toHaveTextContent('16 Eki – 24 Eki');
+});
+
 test('ilk gerçek NAV kaydıyla grafik açılır ve bir hafta dolunca haftalık aralık seçilir', async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   const user = userEvent.setup();

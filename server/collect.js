@@ -36,6 +36,7 @@ import {
   isUsEquity,
 } from '../src/utils/modelPortfolioCore.js';
 import { assessMonthlyConsensusCoverage } from '../src/utils/modelPortfolioConsensus.js';
+import { getModelPortfolioCashAcquisition } from '../src/utils/modelPortfolioCorporateActions.js';
 import {
   MODEL_PORTFOLIO_BENCHMARKS,
   calculateModelPortfolioSnapshot,
@@ -426,7 +427,7 @@ function assertCompleteModelPortfolioSet(rows, label) {
   }
 }
 
-function assertIncumbentAnalysisCoverage(previousPortfolios, candidateRows) {
+function assertIncumbentAnalysisCoverage(previousPortfolios, candidateRows, observedAt) {
   if (!previousPortfolios?.length) return;
   const available = new Set(
     (candidateRows ?? [])
@@ -438,6 +439,11 @@ function assertIncumbentAnalysisCoverage(previousPortfolios, candidateRows) {
     const horizon = portfolio?.horizon;
     if (!horizon) continue;
     for (const holding of portfolio?.holdings ?? []) {
+      if (getModelPortfolioCashAcquisition(
+        toModelPortfolioMarketSymbol(holding),
+        portfolio.tracking?.startedAt ?? portfolio.cycleStart ?? portfolio.generatedAt,
+        observedAt
+      )) continue;
       const symbol = String(
         holding?.sourceSymbol ??
           holding?.source_symbol ??
@@ -469,6 +475,16 @@ async function getModelPortfolioTrackingBaseline(startedAt, portfolios) {
   const requiredFxSymbols = FX_SYMBOLS.filter((symbol) =>
     requiredCurrencies.has(String(symbol).slice(0, 3))
   );
+  const cashAcquisitions = new Map();
+  for (const portfolio of portfolios ?? []) {
+    for (const holding of portfolio.holdings ?? []) {
+      const symbol = toModelPortfolioMarketSymbol(holding);
+      const action = getModelPortfolioCashAcquisition(
+        symbol, portfolio.tracking?.startedAt ?? portfolio.cycleStart ?? portfolio.generatedAt, startedAt
+      );
+      if (action) cashAcquisitions.set(symbol, action);
+    }
+  }
   const holdingSymbols = [
     ...new Set(
       (portfolios ?? []).flatMap((portfolio) =>
@@ -482,9 +498,12 @@ async function getModelPortfolioTrackingBaseline(startedAt, portfolios) {
     ...FX_SYMBOLS,
   ];
   try {
-    const response = await yahooFinance.quote([...new Set(symbols)]);
+    const response = await yahooFinance.quote([...new Set(symbols)].filter((symbol) => !cashAcquisitions.has(symbol)));
     const quotes = (Array.isArray(response) ? response : [response]).map(mapQuote);
     const bySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
+    for (const [symbol, action] of cashAcquisitions) {
+      bySymbol.set(symbol, { symbol, price: action.cashPerShare, currency: action.currency });
+    }
     const baseFxByCurrency = {
       TRY: 1,
       USD: bySymbol.get('USDTRY=X')?.price ?? null,
@@ -572,6 +591,7 @@ function buildPreviousModelPortfolioClosingRows(
       fxByCurrency,
       benchmarkPriceByKey,
       splitFactorBySymbol,
+      observedAt,
     });
     if (!snapshot || snapshot.coveragePct < 99.99) {
       throw new Error(
@@ -645,6 +665,9 @@ async function getModelPortfolioSplitFactors(portfolios, observedAt) {
     for (const holding of portfolio?.holdings ?? []) {
       const symbol = toModelPortfolioMarketSymbol(holding);
       if (!symbol) continue;
+      // WBD's verified cash conversion has no split in the tracked period;
+      // querying the removed Yahoo chart would block every portfolio's NAV.
+      if (getModelPortfolioCashAcquisition(symbol, startedAt, observedAt)) continue;
       const previous = startBySymbol.get(symbol);
       if (previous == null || startedMs < previous) startBySymbol.set(symbol, startedMs);
     }
@@ -758,6 +781,7 @@ async function snapshotModelPortfolioPerformance(versions, quoteMap) {
       fxByCurrency,
       benchmarkPriceByKey,
       splitFactorBySymbol,
+      observedAt,
     });
     if (!snapshot || snapshot.coveragePct < 99.99) {
       console.warn(
@@ -904,6 +928,11 @@ async function collectCandidates(trackedSymbols) {
   const latestModelPortfolios = await getLatestModelPortfolioData();
   const incumbentSymbols = latestModelPortfolios.flatMap((portfolio) =>
     (portfolio?.holdings ?? [])
+      .filter((holding) => !getModelPortfolioCashAcquisition(
+        toModelPortfolioMarketSymbol(holding),
+        portfolio.tracking?.startedAt ?? portfolio.cycleStart ?? portfolio.generatedAt,
+        new Date(referenceMs).toISOString()
+      ))
       .map((holding) =>
         String(
           holding?.sourceSymbol ??
@@ -1125,7 +1154,7 @@ async function collectCandidates(trackedSymbols) {
         );
       }
     }
-    assertIncumbentAnalysisCoverage(previousPortfolios, effectiveRows);
+    assertIncumbentAnalysisCoverage(previousPortfolios, effectiveRows, decisionAt);
     const currentCandidates = officialModelRows(effectiveRows)
       .map((row) => ({
         ...row.data,

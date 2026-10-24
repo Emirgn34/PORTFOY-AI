@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getModelPortfolioCashAcquisition } from '../src/utils/modelPortfolioCorporateActions.js';
 import {
   MODEL_PORTFOLIO_BENCHMARKS,
   buildModelPortfolioChartData,
@@ -20,6 +21,36 @@ function portfolio(overrides = {}) {
     ...overrides,
   };
 }
+
+test('WBD nakit birleşmesi fiyat olmadan kapsamı tamamlar ve USD nakdin kur getirisini korur', () => {
+  const model = portfolio({ cashWeightPct: 0,
+    tracking: { startedAt: '2026-09-24T21:17:33Z', baseFxByCurrency: { USD: 30 } },
+    holdings: [{ ticker: 'WBD', currency: 'USD', weightPct: 100, currentPriceAtGeneration: 30 }],
+  });
+  const result = calculateModelPortfolioSnapshot(model, {
+    observedAt: '2026-10-24T02:00:00Z', fxByCurrency: { USD: 33 },
+    priceBySymbol: { WBD: 30.95 }, // stale Yahoo quote cannot override the cash consideration
+  });
+  assert.equal(result.coveragePct, 100);
+  assert.equal(result.navValue, 113.73);
+  const missingQuote = calculateModelPortfolioSnapshot(model, {
+    observedAt: '2026-10-24T02:00:00Z', fxByCurrency: { USD: 33 },
+  });
+  assert.deepEqual(missingQuote, result);
+  assert.equal(calculateModelPortfolioSnapshot(model, {
+    observedAt: '2026-10-05T02:00:00Z', fxByCurrency: { USD: 33 },
+  }).coveragePct, 0);
+  assert.equal(calculateModelPortfolioSnapshot(model, {
+    observedAt: '2026-10-24T02:00:00Z',
+  }).coveragePct, 0); // FX remains required
+});
+
+test('bilinmeyen sembol, eksik tarih ve birleşme sonrası açılan pozisyon nakde çevrilmez', () => {
+  assert.equal(getModelPortfolioCashAcquisition('UNKNOWN', '2026-09-24', '2026-10-24'), null);
+  assert.equal(getModelPortfolioCashAcquisition('WBD', null, '2026-10-24'), null);
+  assert.equal(getModelPortfolioCashAcquisition('WBD', '2026-09-24', null), null);
+  assert.equal(getModelPortfolioCashAcquisition('WBD', '2026-10-07', '2026-10-24'), null);
+});
 
 test('benchmark tanımları ve BIST sembol dönüşümü sabittir', () => {
   assert.deepEqual(MODEL_PORTFOLIO_BENCHMARKS, [

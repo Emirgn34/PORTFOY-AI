@@ -794,6 +794,11 @@ export default function ModelPortfolioPerformanceChart({
         </div>
 
         <div className="p-5">
+          {continuous.data.at(-1)?.date > comparableEndDate && comparableEndDate && (
+            <p role="status" className="mb-4 text-xs text-amber-400">
+              Bazı portföylerin değerleme verileri eksik. Karşılaştırma son ortak tarih olan {formatShortDate(comparableEndDate)} itibarıyla gösteriliyor.
+            </p>
+          )}
           {renderable ? (
             <div
               className="h-80 w-full"
