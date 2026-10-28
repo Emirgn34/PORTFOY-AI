@@ -1,5 +1,20 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 28 Ekim 2026: ücretsiz haberleri hızlandırma
+
+Kurulum sırası ve doğrulama sorguları `NEWS_SCAN_SETUP.md` dosyasındadır.
+Önce `supabase/migrations/20261028_news_scan.sql`, sonra kod yayını, ardından Vault
+ayarları ve `supabase/news-cron-setup.sql` uygulanır. Bu son dosya dakikalık işi
+pasif bırakır; bildirim göndermeyen bağlantı kontrolü başarılı olduktan sonra
+`supabase/news-cron-enable.sql` ile etkinleştirilir.
+
+Mevcut dört ücretsiz RSS akışı paralel okunur, uygun yeni haberler toplu kaydedilir
+ve diğer kaynaklar/çeviri beklenmeden bildirim gönderimi tetiklenir. İlk gönderimde
+Türkçe olay özeti, sonrasında tam başlık çevirisi kullanılır. Dakikalık çağrı Supabase
+Cron'dan mevcut Vercel fonksiyonuna yapılır; ek sunucu hesabı veya ek Vercel
+fonksiyonu gerekmez. Ücretsiz platform kotaları geçerlidir. Ortak kilit, GitHub
+fallback ve daemon ile aynı anda ikinci bir RSS taraması yapılmasını önler.
+
 ## 28 Ekim 2026: bildirim gönderimi ve cihaz abonelikleri
 
 Önce mevcut kurulumda `supabase/migrations/20261028_push_delivery_retries.sql`
@@ -25,8 +40,8 @@ gösterir; telefonda görüntülenme teyidi değildir. Canlı doğrulamada aynı
 anahtarlarının uygulama ve işçilerde bulunduğunu, gerçek yeni haber için teslim
 kaydını ve ekran kapalıyken telefonda görünmesini ayrı ayrı kontrol edin.
 
-Bu aşama haber kaynaklarının tarama sıklığını veya 15 dakikalık bildirim ömrünü
-değiştirmez. Ücretsiz kaynakların hızlandırılması sonraki aşamadır.
+Bildirim gönderimi düzeltmesi tek başına tarama sıklığını değiştirmez. Dakikalık
+toplama ayrı kurulumla yukarıda açıklanmıştır; 15 dakikalık bildirim ömrü korunur.
 
 ## 24 Ekim 2026: Portföy Kalkanı
 
@@ -103,8 +118,8 @@ sayısı mevcut 12 adette kalır. Ücretsiz plan için ek fonksiyon gerektirmez.
   Teslim sonrası veritabanı kesintisinde tekrar olasılığı vardır; telefon aynı `tag`
   ile bildirimi değiştirir. Telefonun odak/enerji/ağ ayarları teslimi geciktirebilir.
 - Hızlı haber başlıkları mevcut ücretsiz çeviri servisiyle Türkçeleştirilir; özgün
-  başlık açılabilir alanda korunur. Yeni haber için çeviri en fazla 1,5 saniye beklenir.
-  Çeviri alınamazsa Türkçe olay özeti kullanılır ve daha sonra tekrar denenir.
+  başlık açılabilir alanda korunur. RSS ve arşiv taraması çeviri beklemeden Türkçe
+  olay özeti kaydeder ve bildirimi tetikler; tam başlık daha sonra çevrilir.
   Eski haber metinleri arka planda güncellenir; kimlik, algılama/son kullanım zamanı
   ve bildirim teslim kayıtları değişmediği için eski haber yeniden bildirilmez.
 

@@ -1,5 +1,7 @@
 {
+  "functions": { "api/account.js": { "maxDuration": 60 } },
   "rewrites": [
+    { "source": "/api/news/scan", "destination": "/api/account?feature=news-scan" },
     { "source": "/api/hedge-radar", "destination": "/api/account?feature=hedge&action=state" },
     { "source": "/api/hedge-radar/refresh", "destination": "/api/account?feature=hedge&action=refresh" },
     { "source": "/api/notifications/subscribe", "destination": "/api/account?feature=automation&action=push" },

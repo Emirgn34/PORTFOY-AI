@@ -42,6 +42,7 @@ test('hesap API yönlendirmesi JWT sahibini kullanır; sahte kullanıcı ve baş
     }
     assert.equal((await request('GET',{})).statusCode,405);
     assert.equal((await request('GET',{feature:'automation',action:'value'},undefined,false)).statusCode,401);
+    assert.equal((await request('POST',{feature:'news-scan'},{url:'http://127.0.0.1'})).statusCode,401);
     assert.equal(calls.length,0);
     const read=await request('GET',{feature:'automation',action:'value',user_id:other});
     assert.equal(read.statusCode,200); assert.deepEqual(read.body.versions,[]);

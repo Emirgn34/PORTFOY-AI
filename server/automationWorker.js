@@ -16,7 +16,7 @@ if (mode==='sources') {
     try {
       const result=await scanFreeNews(sb);
       console.log('[free-news]',JSON.stringify(result));
-      if (!result.feeds.length) process.exitCode=1;
+      if (!result.skipped && !result.feeds.length) process.exitCode=1;
     }
     catch (error) { console.error('[free-news]',error.message); process.exitCode=1; }
     try { await scanStoredCatalysts(sb,{reportStatus:false}); }

@@ -35,17 +35,18 @@ export function catalystEvent(article, now = new Date()) {
       timing: /after.hours|post.market|piyasa sonrası|seans sonrası/i.test(article.title) ? 'Piyasa sonrası' : null },
   };
 }
-export async function localizeCatalystEvent(event, { translate = translateToTurkish, titleTr = null, timeoutMs = 1500, now = new Date() } = {}) {
+export async function localizeCatalystEvent(event, { translate = translateToTurkish, titleTr = null, timeoutMs = 1500, now = new Date(), deferTranslation = false } = {}) {
   if (event.data.titleTr) return event;
   const originalTitle=event.data.originalTitle || event.body;
   let translated=titleTr;
-  if (!translated) {
+  if (!translated && !deferTranslation) {
     try { translated=await translate(originalTitle,{timeoutMs}); } catch { translated=null; }
   }
   translated=typeof translated==='string' ? translated.trim() : '';
   return {...event,
     body:translated ? translated.slice(0,400) : `${event.data.symbols.join(', ')}: ${event.data.label}. Ayrıntılar kaynak haberde.`,
-    data:{...event.data,originalTitle,titleTr:translated || null,translationStatus:translated?'translated':'pending',translationAttemptedAt:now.toISOString()},
+    data:{...event.data,originalTitle,titleTr:translated || null,translationStatus:translated?'translated':'pending',
+      ...(!deferTranslation || translated ? {translationAttemptedAt:now.toISOString()} : {})},
   };
 }
 export async function ingestCatalyst(sb, article, options = {}) {
@@ -58,9 +59,26 @@ export async function ingestCatalyst(sb, article, options = {}) {
   checked(await sb.from('notification_events').upsert(localized, { onConflict: 'id', ignoreDuplicates: true }));
   return true;
 }
-export async function translateStoredCatalysts(sb, { translate = translateToTurkish, now = new Date() } = {}) {
+// Batch database I/O and store a Turkish summary without waiting for translation.
+export async function ingestCatalystBatch(sb, articles, { now = new Date() } = {}) {
+  const events = new Map();
+  for (const article of articles) {
+    const event = catalystEvent(article, now);
+    if (event) events.set(event.id, { event, titleTr: article.titleTr });
+  }
+  if (!events.size) return { matches: 0, inserted: 0 };
+  const existing = checked(await sb.from('notification_events').select('id').in('id', [...events.keys()]));
+  for (const row of existing) events.delete(row.id);
+  const fresh = await Promise.all([...events.values()].map(({ event, titleTr }) =>
+    localizeCatalystEvent(event, { titleTr, now, deferTranslation: true })));
+  const inserted = fresh.length ? checked(await sb.from('notification_events')
+    .upsert(fresh, { onConflict: 'id', ignoreDuplicates: true }).select('id')) : [];
+  return { matches: existing.length + fresh.length, inserted: inserted.length };
+}
+
+export async function translateStoredCatalysts(sb, { translate = translateToTurkish, now = new Date(), limit = 100 } = {}) {
   const rows=checked(await sb.from('notification_events').select('*').eq('topic','catalyst').is('data->>titleTr',null).order('published_at',{ascending:false}).limit(100));
-  const pending=rows.filter((row)=>!row.data.translationAttemptedAt || now.getTime()-Date.parse(row.data.translationAttemptedAt)>=15*60_000);
+  const pending=rows.filter((row)=>!row.data.translationAttemptedAt || now.getTime()-Date.parse(row.data.translationAttemptedAt)>=15*60_000).slice(0,limit);
   let translated=0;
   await mapLimit(pending,3,async (row)=>{
     const localized=await localizeCatalystEvent(row,{translate,timeoutMs:2500,now});
@@ -78,7 +96,7 @@ export async function scanStoredCatalysts(sb, { reportStatus = true } = {}) {
   for (const article of articles) {
     if (String(article.symbol).endsWith('.IS')) continue;
     if (await ingestCatalyst(sb, { id: article.id, symbols: [article.symbol], title: article.title, titleTr:article.title_tr,
-      url: article.link, publishedAt: article.published_at, provider: article.publisher || 'Haber arşivi' })) matches++;
+      url: article.link, publishedAt: article.published_at, provider: article.publisher || 'Haber arşivi' }, {deferTranslation:true})) matches++;
   }
   const status = checked(await sb.from('monitor_status').select('*').eq('id','news').maybeSingle());
   if (reportStatus && !(status?.data?.mode === 'stream' && status.data.connected && Date.now()-Date.parse(status.updated_at)<90000)) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {catalystEvent,localizeCatalystEvent,ingestCatalyst,translateStoredCatalysts} from '../server/catalystNews.js';
+import {catalystEvent,localizeCatalystEvent,ingestCatalyst,ingestCatalystBatch,translateStoredCatalysts} from '../server/catalystNews.js';
 import {translateToTurkish} from '../server/marketData.js';
 import {notificationBody} from '../server/pushNotifications.js';
 
@@ -11,15 +11,16 @@ function memoryDb(initial=[]) {
   const rows=new Map(initial.map((row)=>[row.id,structuredClone(row)])), updates=[];
   return {rows,updates,from(table) {
     assert.equal(table,'notification_events');
-    const filters=[]; let patch,limit=Infinity;
+    const filters=[]; let patch,limit=Infinity,inserted;
     const matches=()=>[...rows.values()].filter((row)=>filters.every((predicate)=>predicate(row))).slice(0,limit);
     return {select(){return this;},order(){return this;},limit(n){limit=n;return this;},
       eq(key,value){filters.push((row)=>row[key]===value);return this;},
+      in(key,values){filters.push((row)=>values.includes(row[key]));return this;},
       is(key,value){assert.equal(key,'data->>titleTr');assert.equal(value,null);filters.push((row)=>row.data?.titleTr==null);return this;},
       maybeSingle(){return Promise.resolve({data:matches()[0]??null,error:null});},
-      upsert(row){if(!rows.has(row.id)) rows.set(row.id,structuredClone(row));return Promise.resolve({data:null,error:null});},
+      upsert(input){inserted=[];for(const row of Array.isArray(input)?input:[input]){if(!rows.has(row.id)){rows.set(row.id,structuredClone(row));inserted.push(row);}}return this;},
       update(value){patch=value;return this;},
-      then(resolve,reject){const selected=matches();if(patch) for(const row of selected){updates.push(patch);rows.set(row.id,{...row,...patch});}return Promise.resolve({data:patch?null:selected,error:null}).then(resolve,reject);},
+      then(resolve,reject){const selected=matches();if(patch) for(const row of selected){updates.push(patch);rows.set(row.id,{...row,...patch});}return Promise.resolve({data:patch?null:inserted??selected,error:null}).then(resolve,reject);},
     };
   }};
 }
@@ -72,4 +73,40 @@ test('zaten Türkçe olan çeviri sonucu kabul edilir ve ağ isteği süreyle s�
     };
     assert.equal(await translateToTurkish(turkish),turkish);
   } finally {globalThis.fetch=originalFetch;}
+});
+
+test('hızlı kayıtta çeviri beklenmez; Türkçe özet hemen yazılır ve sonraki turda çeviriye uygundur', async () => {
+  const event = catalystEvent(article);
+  const result = await localizeCatalystEvent(event, { deferTranslation: true,
+    translate: async () => assert.fail('Hızlı kayıt çeviri beklememeli') });
+  assert.equal(result.data.translationStatus, 'pending');
+  assert.equal(result.data.translationAttemptedAt, undefined);
+  assert.match(result.body, /VICR: Gelir \/ kâr tahmini yükseldi/);
+  const db = memoryDb([result]);
+  assert.equal((await translateStoredCatalysts(db, { translate: async () => turkish })).translated, 1);
+  assert.equal(db.rows.get(result.id).body, turkish);
+  assert.equal(db.rows.get(result.id).detected_at, event.detected_at);
+});
+
+test('toplu haber kaydı tekrarları ve önemsiz haberleri eler; mevcut kimlik ve zamanlar değişmez', async () => {
+  const db = memoryDb();
+  const now = new Date('2026-09-24T18:00:01Z');
+  const batch = [article, article, { ...article, id: 'irrelevant', title: 'Vicor announces upcoming investor conference' },
+    { ...article, id: 'no-symbol', symbols: [] }];
+  assert.deepEqual(await ingestCatalystBatch(db, batch, { now }), { matches: 1, inserted: 1 });
+  const saved = structuredClone([...db.rows.values()][0]);
+  assert.equal(saved.data.translationStatus, 'pending');
+  assert.equal(saved.detected_at, now.toISOString());
+  assert.deepEqual(await ingestCatalystBatch(db, batch, { now: new Date('2026-09-24T18:01:00Z') }), { matches: 1, inserted: 0 });
+  assert.deepEqual([...db.rows.values()][0], saved);
+});
+
+test('çeviri sınırı en yeni başlıklardan yalnızca ayrılan kadarını işler', async () => {
+  const events = [1, 2, 3].map((id) => catalystEvent({ ...article, id }));
+  const db = memoryDb(events);
+  let calls = 0;
+  assert.deepEqual(await translateStoredCatalysts(db, { limit: 2, translate: async () => { calls++; return turkish; } }),
+    { checked: 2, translated: 2, pending: 0 });
+  assert.equal(calls, 2);
+  assert.equal([...db.rows.values()].filter((row) => row.data.titleTr).length, 2);
 });

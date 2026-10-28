@@ -1,12 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
 import { automationDb, checked } from './automationDb.js';
 import { deliverNotifications } from './pushNotifications.js';
+import { validCronSecret } from './cronAuth.js';
 
-export function validCronSecret(value, expected) {
-  if (typeof value !== 'string' || !expected || expected.length < 32) return false;
-  const a = Buffer.from(value), b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+export { validCronSecret } from './cronAuth.js';
 
 export function createHedgeRadarHandler({ getDb = automationDb, send = deliverNotifications,
   fetcher = fetch, env = process.env } = {}) {

@@ -13,15 +13,27 @@ export default function CatalystNewsPanel() {
     load(); const timer = setInterval(load, 15000);
     return () => { active = false; clearInterval(timer); };
   }, []);
-  const fresh = data?.status && Date.now() - Date.parse(data.status.updated_at) < 90000;
-  const live = fresh && data.status.data.mode === 'stream' && data.status.data.connected;
-  const stale = data?.status && Date.now() - Date.parse(data.status.updated_at) > Math.max(90000, (data.status.data.intervalSeconds || 300) * 3000);
+  const status = data?.status;
+  const lastSuccess = status?.data?.mode === 'rss' ? status.data.lastSuccessfulCheckAt || status.updated_at : status?.updated_at;
+  const ageMs = Date.now() - Date.parse(lastSuccess);
+  const fresh = status && ageMs < 90000;
+  const live = fresh && status.data.mode === 'stream' && status.data.connected;
+  const stale = status && ageMs > Math.max(90000, (status.data.intervalSeconds || 300) * 3000);
+  const feedChecks = status?.data?.feedChecks || [];
+  const successfulFeeds = feedChecks.filter((feed) => feed.ok).length;
+  const partial = successfulFeeds > 0 && successfulFeeds < feedChecks.length;
   return <div className="space-y-4">
     <div className="rounded-xl border border-navy-700 bg-navy-900 p-5">
       <h2 className="text-xl font-semibold text-ink">Hızlı Şirket Haberleri</h2>
       <p className="mt-2 text-sm text-slate-400">Gelir tahmini artışı, beklenti üstü bilanço, onay ve büyük sözleşme haberleri. ABD hisseleri; piyasa öncesi ve sonrası dahil.</p>
-      <p className={`mt-3 text-xs ${live ? 'text-gain' : 'text-amber-400'}`}>{live ? 'Canlı haber bağlantısı etkin' : stale ? 'Haber kontrolü gecikti · son bağlantı güncel değil' : data?.status?.data?.mode === 'rss' ? data.status.data.connected ? 'Ücretsiz basın açıklamaları · aralıklı kontrol' : 'Ücretsiz haber kaynağına bağlantı kurulamadı' : data?.status?.data?.mode === 'scheduled' ? 'Zamanlanmış haber kontrolü · gerçek zamanlı bağlantı kapalı' : 'Haber bağlantısı kurulumu bekleniyor'}</p>
-      {data?.status && <p className="mt-1 text-xs text-slate-500">Son kontrol: {new Date(data.status.updated_at).toLocaleString('tr-TR')}. {data.status.data.note}</p>}
+      <p className={`mt-3 text-xs ${live ? 'text-gain' : 'text-amber-400'}`}>{live ? 'Canlı haber bağlantısı etkin' : status?.data?.mode === 'rss' && !status.data.connected ? 'Ücretsiz haber kaynaklarına bağlantı kurulamadı' : stale ? 'Haber kontrolü gecikti · son başarılı bağlantı güncel değil' : partial ? 'Bazı haber kaynaklarına ulaşılamadı · diğer kaynaklar izleniyor' : status?.data?.mode === 'rss' ? 'Ücretsiz basın açıklamaları · aralıklı kontrol' : status?.data?.mode === 'scheduled' ? 'Zamanlanmış haber kontrolü · gerçek zamanlı bağlantı kapalı' : 'Haber bağlantısı kurulumu bekleniyor'}</p>
+      {status && <p className="mt-1 text-xs text-slate-500">Son kontrol: {new Date(status.updated_at).toLocaleString('tr-TR')}. {status.data.note}</p>}
+      {status?.data?.mode === 'rss' && <p className="mt-1 text-xs text-slate-500">
+        Planlı kontrol aralığı: {status.data.intervalSeconds || 300} sn
+        {Number.isFinite(status.data.durationMs) && ` · Son tarama: ${(status.data.durationMs / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} sn`}
+        {feedChecks.length > 0 && ` · ${successfulFeeds}/${feedChecks.length} kaynak yanıt verdi`}
+      </p>}
+      {status?.data?.lastSuccessfulCheckAt && !status.data.connected && <p className="mt-1 text-xs text-amber-400">Son başarılı bağlantı: {new Date(status.data.lastSuccessfulCheckAt).toLocaleString('tr-TR')}</p>}
       <p className="mt-2 text-xs text-slate-500">Bildirim, haber kaynağından alındığında gönderilir; fiyat hareketinden önce ulaşacağı garanti edilemez. Başlık sınıflandırmasıdır, işlem sinyali değildir. 15 dakikadan eski haberler geçmişte görünür; yeni bildirim gönderilmez.</p>
     </div>
     <NotificationSettings />
