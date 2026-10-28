@@ -8,12 +8,17 @@ ayarları ve `supabase/news-cron-setup.sql` uygulanır. Bu son dosya dakikalık 
 pasif bırakır; bildirim göndermeyen bağlantı kontrolü başarılı olduktan sonra
 `supabase/news-cron-enable.sql` ile etkinleştirilir.
 
-Mevcut dört ücretsiz RSS akışı paralel okunur, uygun yeni haberler toplu kaydedilir
+Beş ücretsiz RSS akışı en fazla dört eşzamanlı istekle okunur, uygun yeni haberler toplu kaydedilir
 ve diğer kaynaklar/çeviri beklenmeden bildirim gönderimi tetiklenir. İlk gönderimde
 Türkçe olay özeti, sonrasında tam başlık çevirisi kullanılır. Dakikalık çağrı Supabase
 Cron'dan mevcut Vercel fonksiyonuna yapılır; ek sunucu hesabı veya ek Vercel
 fonksiyonu gerekmez. Ücretsiz platform kotaları geçerlidir. Ortak kilit, GitHub
 fallback ve daemon ile aynı anda ikinci bir RSS taraması yapılmasını önler.
+
+Canlı kontroldeki GlobeNewswire 403 yanıtı sonrasında resmi `rss.globenewswire.com`
+bilanço adresi (kategori 13) kullanıldı, sözleşme akışı (kategori 7) eklendi ve
+RSS kategori alanındaki ABD hisse kodları da okunmaya başlandı. Bu kaynak
+düzeltmesi kod yayını gerektirir; yeni SQL veya anahtar ayarı gerektirmez.
 
 ## 28 Ekim 2026: bildirim gönderimi ve cihaz abonelikleri
 

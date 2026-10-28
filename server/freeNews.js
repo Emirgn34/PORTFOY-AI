@@ -7,7 +7,8 @@ export const FREE_NEWS_FEEDS = [
   {provider:'PR Newswire',url:'https://www.prnewswire.com/rss/news-releases-list.rss'},
   {provider:'PR Newswire',url:'https://www.prnewswire.com/rss/financial-services-latest-news/earnings-list.rss'},
   {provider:'PR Newswire',url:'https://www.prnewswire.com/rss/financial-services-latest-news/earnings-forecasts-projections-list.rss'},
-  {provider:'GlobeNewswire',url:'https://www.globenewswire.com/RssFeed/subjectcode/1-Earnings%20Releases%20and%20Operating%20Results/feedTitle/GlobeNewswire%20-%20Earnings%20Releases%20and%20Operating%20Results'},
+  {provider:'GlobeNewswire',label:'GlobeNewswire · Bilanço',url:'https://rss.globenewswire.com/en/RssFeed/subjectcode/13-Earnings%20Releases%20and%20Operating%20Results/feedTitle/GlobeNewswire%20-%20Earnings%20Releases%20and%20Operating%20Results'},
+  {provider:'GlobeNewswire',label:'GlobeNewswire · Sözleşme',url:'https://rss.globenewswire.com/en/RssFeed/subjectcode/7-Business%20Contracts/feedTitle/GlobeNewswire%20-%20Business%20Contracts'},
 ];
 
 export async function scanFreeNews(sb, { intervalSeconds = 300, runner = 'github', fetchImpl = fetch,
@@ -32,11 +33,14 @@ export async function scanFreeNews(sb, { intervalSeconds = 300, runner = 'github
     const feedChecks = await mapLimit(FREE_NEWS_FEEDS, 4, async (feed) => {
       const started = now();
       const cached = previous?.data?.feedChecks?.find((item) => item.url === feed.url);
-      const headers = { Accept: 'application/rss+xml, application/xml, text/xml' };
+      const headers = { Accept: 'application/rss+xml, application/xml, text/xml',
+        'User-Agent': 'PortfoyAI/1.0 (RSS reader)' };
       if (cached?.cacheReady && cached.etag) headers['If-None-Match'] = cached.etag;
       if (cached?.cacheReady && cached.lastModified) headers['If-Modified-Since'] = cached.lastModified;
+      let httpStatus = null;
       try {
         const response = await fetchImpl(feed.url, { headers, signal: AbortSignal.timeout(8000) });
+        httpStatus = response.status;
         let result = { matches: 0, inserted: 0 }, items = [];
         if (response.status === 304) {
           if (!cached?.cacheReady) throw new Error('Önceki başarılı kayıt olmadan 304 yanıtı alındı.');
@@ -50,7 +54,8 @@ export async function scanFreeNews(sb, { intervalSeconds = 300, runner = 'github
         }
         feeds.push(feed.url);
         const dates = items.map((item) => Date.parse(item.publishedAt)).filter(Number.isFinite);
-        return { url: feed.url, provider: feed.provider, ok: true, cacheReady: true,
+        return { url: feed.url, provider: feed.provider, label: feed.label || feed.provider,
+          httpStatus, ok: true, cacheReady: true,
           checkedAt: now().toISOString(), durationMs: now() - started, notModified: response.status === 304,
           etag: response.headers.get('etag') || (response.status === 304 ? cached.etag : null),
           lastModified: response.headers.get('last-modified') || (response.status === 304 ? cached.lastModified : null),
@@ -58,8 +63,9 @@ export async function scanFreeNews(sb, { intervalSeconds = 300, runner = 'github
           articles: items.length, inserted: result.inserted };
       } catch (error) {
         const message = error.name === 'TimeoutError' ? 'Kaynak 8 saniyede yanıt vermedi.' : error.message;
-        errors.push(`${feed.provider}: ${message}`);
-        return { ...cached, url: feed.url, provider: feed.provider, ok: false,
+        errors.push(`${feed.label || feed.provider}: ${message}`);
+        return { ...cached, url: feed.url, provider: feed.provider, label: feed.label || feed.provider,
+          httpStatus, ok: false,
           checkedAt: now().toISOString(), durationMs: now() - started, error: message };
       }
     });

@@ -113,7 +113,14 @@ export function parsePressReleaseFeed(xml, provider) {
   return (Array.isArray(entries) ? entries : [entries]).map((entry) => {
     const title = String(entry.title ?? '');
     const description = String(entry.description ?? '').replace(/<[^>]+>/g, ' ');
-    const symbols = [...`${title} ${description}`.matchAll(/(?:NASDAQ|NYSE|AMEX)\s*[:：]\s*([A-Z][A-Z0-9.-]{0,9})/gi)].map((m) => m[1].replace('.', '-'));
+    // GlobeNewswire often puts exchange-qualified tickers only in categories.
+    // Never infer a ticker from an ISIN, OTC/foreign listing or a company name.
+    const categories = (Array.isArray(entry.category) ? entry.category : [entry.category])
+      .map((category) => typeof category === 'object' && category ? category['#text'] : category)
+      .filter((category) => typeof category === 'string').join(' ');
+    const symbols = [...new Set([...`${title} ${description} ${categories}`
+      .matchAll(/\b(?:NASDAQ|NYSE|AMEX)\s*[:：]\s*([A-Z][A-Z0-9.-]{0,9})/gi)]
+      .map((m) => m[1].toUpperCase().replace('.', '-')))];
     return { id: typeof entry.guid === 'object' ? entry.guid['#text'] : entry.guid,
       title, symbols, provider, url: entry.link, publishedAt: entry.pubDate };
   });

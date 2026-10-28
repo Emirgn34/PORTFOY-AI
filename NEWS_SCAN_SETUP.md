@@ -2,10 +2,14 @@
 
 ## Ne değişir?
 
-Mevcut dört PR Newswire / GlobeNewswire RSS akışı, Vercel üzerinde tek tarama
+Beş PR Newswire / GlobeNewswire RSS akışı, Vercel üzerinde tek tarama
 girişinden paralel okunur. Supabase Cron bu girişi dakikada bir çağırır; sonuçlar
 mevcut Supabase `notification_events` tablosunda toplanır. Ayrı sunucu hesabı veya
 ücretli haber aboneliği gerekmez. Platformların ücretsiz kullanım kotaları geçerlidir.
+
+PR Newswire'ın üç akışına ek olarak GlobeNewswire'ın resmi RSS alanındaki bilanço
+(kategori 13) ve sözleşme (kategori 7) akışları izlenir. Nasdaq/NYSE/AMEX kodları
+başlık, açıklama ve RSS kategori alanlarından okunur. Beş akış iki sağlayıcıya aittir.
 
 Başlıklar mevcut dört kategoriyle filtrelenir: tahmin yükseltme, beklenti üstü
 sonuç, düzenleyici onay ve sözleşme. Olumsuz/söylenti/beklenti başlıkları, geçersiz
@@ -125,7 +129,7 @@ telefon teslimi ayrıca kontrol edilir.
 
 ## İşleme ve gecikme
 
-Dört HTTP isteği birlikte başlar; her biri en fazla 8 saniye bekler. Uygun haberler
+Beş akış en fazla dört eşzamanlı HTTP isteğiyle okunur; her biri en fazla 8 saniye bekler. Uygun haberler
 toplu kaydedilir. İlk kayıt biter bitmez bildirim gönderimi başlar; yavaş kaynak
 ve tam başlık çevirisi beklenmez. İlk bildirimde Türkçe olay özeti kullanılır.
 Sonrasında tur başına en fazla altı başlık çevrilir; ilk algılama, sona erme ve
@@ -134,6 +138,11 @@ teslim kayıtları değişmez. Sonradan çeviri aynı haberi yeniden bildirmez.
 Başarılı kayıttan sonra ETag/Last-Modified bilgileri tutulur. Sağlayıcı 304 dönerse
 tekrar indirme ve işleme atlanır. Kaynak veya veritabanı hatası cache bilgisini
 ilerletmez. Kaynak başarısızlığı son başarılı kontrol zamanını yenilemez.
+
+Kaynak kontrollerinde akış adı ve HTTP durum kodu da tutulur. Bir kaynak 403
+dönerse hata görünür kalır; diğer kaynaklar okunmaya devam eder. Resmi RSS
+adreslerini yerelden okumak, Vercel ağından erişimin doğrulandığı anlamına gelmez.
+Yayın sonrasında `monitor_status` içindeki son tur ve kaynak hataları kontrol edilir.
 
 Her dakika planlama, haberin bir dakikada kesin ulaşması demek değildir. Kaynak
 yayımlama sıklığı, kaynak listelerinin sınırlı uzunluğu, ağ, platform ve telefon
@@ -172,3 +181,4 @@ etkinken ortak kilit gereksiz eşzamanlı taramayı önler; GitHub arşiv tarama
 - Cron kurulumu ve geçmiş temizliği: https://supabase.com/docs/guides/cron/quickstart
 - Vercel ücretsiz plan dahilindeki kullanım: https://vercel.com/docs/functions/usage-and-pricing
 - 304 davranışı: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/304
+- GlobeNewswire resmi RSS listesi: https://rss.globenewswire.com/en/Rss/List

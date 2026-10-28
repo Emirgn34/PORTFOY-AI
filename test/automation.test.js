@@ -66,6 +66,23 @@ test('ücretsiz RSS başlık, tarih ve ABD hisse kodunu okur; HTML hata sayfası
   assert.equal(catalystEvent(article,new Date('2026-09-24T20:00:30Z')).data.latencySeconds,30);
   assert.throws(()=>parsePressReleaseFeed('<html>Service unavailable</html>','source'),/RSS/);
 });
+
+test('GlobeNewswire kategori alanındaki Nasdaq/NYSE kodları okunur; OTC, yabancı kod ve ISIN alınmaz', () => {
+  const xml = '<rss><channel><item><title>Example wins major contract</title><guid>gnw-1</guid>' +
+    '<link>https://www.globenewswire.com/news-release/example</link><pubDate>Wed, 28 Oct 2026 12:00:00 GMT</pubDate>' +
+    '<description>Company announces a new agreement.</description>' +
+    '<category>Nasdaq:KTOS</category><category domain="exchange">NYSE:BRK.B</category>' +
+    '<category>Nasdaq:KTOS</category><category>OTC Markets:ECDP</category><category>TSX:BBD-A</category>' +
+    '<category>TASE:BWAY.TA</category><category>US50077B2079</category></item></channel></rss>';
+  const [article] = parsePressReleaseFeed(xml, 'GlobeNewswire');
+  assert.deepEqual(article.symbols, ['KTOS', 'BRK-B']);
+  assert.equal(catalystEvent(article, new Date('2026-10-28T12:00:02Z')).data.type, 'contract');
+  const withoutUs = xml.replace(/<category>Nasdaq:KTOS<\/category>/g, '')
+    .replace('<category domain="exchange">NYSE:BRK.B</category>', '');
+  const [foreign] = parsePressReleaseFeed(withoutUs, 'GlobeNewswire');
+  assert.deepEqual(foreign.symbols, []);
+  assert.equal(catalystEvent(foreign, new Date('2026-10-28T12:00:02Z')), null);
+});
 test('kaynak parser dönem ağırlıklarını korur; bozuk sayfa uydurma sonuç üretmez',() => {
   const html='<table id="grid"><tr><td class="period">2024 &nbsp; Q2</td><td class="sym"><a>BRK.B</a><div><b>Company Inc.</b><br>98.4% of portfolio</div></td></tr></table>';
   const [report]=parseDataromaHistory(html);
