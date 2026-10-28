@@ -1,5 +1,6 @@
 import webpush from 'web-push';
-import { checked } from './automationDb.js';
+import { checked, recordMonitor } from './automationDb.js';
+import { mapLimit } from './concurrency.js';
 
 export function pushConfigured() {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
@@ -23,36 +24,77 @@ export function validatePushSubscription(subscription) {
   }
   return { endpoint: url.href, keys: { p256dh: keys.p256dh, auth: keys.auth } };
 }
-export async function deliverNotifications(sb) {
+// A fixed time boundary and primary-key cursors keep inserts/deletions during
+// delivery from shifting pages. Already delivered events must not hide new ones.
+async function activeEvents(sb, now) {
+  const events = [];
+  let cursor;
+  for (;;) {
+    let query = sb.from('notification_events').select('*').gt('expires_at', now)
+      .lte('detected_at', now).order('id').limit(100);
+    if (cursor) query = query.gt('id', cursor);
+    const page = checked(await query);
+    events.push(...page);
+    if (page.length < 100) break;
+    cursor = page.at(-1).id;
+  }
+  return events.sort((a, b) => Date.parse(b.detected_at) - Date.parse(a.detected_at) || a.id.localeCompare(b.id));
+}
+
+export async function deliverNotifications(sb, { sender = webpush, now = () => new Date() } = {}) {
   if (!pushConfigured()) return { configured: false, sent: 0 };
-  webpush.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
-  const events = checked(await sb.from('notification_events').select('*').gt('expires_at', new Date().toISOString()).order('detected_at').limit(100));
-  let sent = 0;
-  for (let offset = 0; ; offset += 500) {
-    const subscriptions = checked(await sb.from('push_subscriptions').select('*').order('id').range(offset, offset + 499));
-    for (const subscription of subscriptions) {
+  sender.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+  const events = await activeEvents(sb, now().toISOString());
+  const result = { configured: true, sent: 0, failed: 0, removed: 0, errors: {} };
+  let cursor;
+  for (;;) {
+    let query = sb.from('push_subscriptions').select('*').order('id').limit(100);
+    if (cursor) query = query.gt('id', cursor);
+    const subscriptions = checked(await query);
+    // Keep an unresponsive endpoint from blocking delivery to every other device.
+    await mapLimit(subscriptions, 5, async (subscription) => {
       for (const event of events) {
         if (event.topic === 'hedge-radar' && (!event.data?.userId || event.data.userId !== subscription.user_id)) continue;
-        if (Date.parse(event.expires_at) <= Date.now()) continue;
+        if (Date.parse(event.expires_at) <= now().getTime()) continue;
         if (!subscription.topics.includes(event.topic) || Date.parse(subscription.created_at) > Date.parse(event.detected_at)) continue;
         if (!checked(await sb.rpc('claim_push_delivery', { p_event_id: event.id, p_subscription_id: subscription.id }))) continue;
+        let validated;
         try {
-          validatePushSubscription(subscription.subscription);
-          await webpush.sendNotification(subscription.subscription, JSON.stringify({
+          validated = validatePushSubscription(subscription.subscription);
+        } catch {
+          checked(await sb.from('push_deliveries').update({ status: 'failed' }).eq('event_id', event.id).eq('subscription_id', subscription.id));
+          result.failed++;
+          result.errors.invalid_subscription = (result.errors.invalid_subscription || 0) + 1;
+          continue;
+        }
+        try {
+          await sender.sendNotification(validated, JSON.stringify({
             title: event.title.slice(0, 120), body: notificationBody(event).slice(0, 250), url: event.url, tag: event.id,
-          }), { TTL: Math.max(0, Math.floor((Date.parse(event.expires_at) - Date.now()) / 1000)), urgency: 'high', timeout: 10000 });
-          checked(await sb.from('push_deliveries').update({ status: 'sent', delivered_at: new Date().toISOString() }).eq('event_id', event.id).eq('subscription_id', subscription.id));
-          sent++;
+          }), { TTL: Math.max(0, Math.floor((Date.parse(event.expires_at) - now().getTime()) / 1000)), urgency: 'high', timeout: 10000 });
         } catch (error) {
-          if ([404, 410].includes(error.statusCode)) {
+          const code = Number(error.statusCode);
+          const label = Number.isInteger(code) && code >= 400 && code <= 599 ? `http_${code}` : 'network';
+          result.errors[label] = (result.errors[label] || 0) + 1;
+          if ([404, 410].includes(code)) {
             checked(await sb.from('push_subscriptions').delete().eq('id', subscription.id));
+            result.removed++;
             break;
           }
-          checked(await sb.from('push_deliveries').update({ status: 'pending' }).eq('event_id', event.id).eq('subscription_id', subscription.id));
+          const retryable = !code || code === 408 || code === 429 || code >= 500;
+          checked(await sb.from('push_deliveries').update({ status: retryable ? 'pending' : 'failed' }).eq('event_id', event.id).eq('subscription_id', subscription.id));
+          result.failed++;
+          continue;
         }
+        // A database failure after provider acceptance must not immediately mark
+        // the delivery pending and resend it. Its existing lease will expire.
+        checked(await sb.from('push_deliveries').update({ status: 'sent', delivered_at: now().toISOString() }).eq('event_id', event.id).eq('subscription_id', subscription.id));
+        result.sent++;
       }
-    }
-    if (subscriptions.length < 500) break;
+    });
+    if (subscriptions.length < 100) break;
+    cursor = subscriptions.at(-1).id;
   }
-  return { configured: true, sent };
+  await recordMonitor(sb, 'push', result);
+  if (result.failed || result.removed) console.warn('[push]', JSON.stringify(result));
+  return result;
 }

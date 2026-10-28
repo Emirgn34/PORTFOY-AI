@@ -59,3 +59,40 @@ test('SQL: kaynak sepeti ve değişim bildirimi birlikte kaydedilir; tekrar veya
     await assert.rejects(db.query('select publish_source_portfolios($1,$2)',['forged',payload('c')]),/permission denied/);
   } finally { await db.close(); }
 });
+
+test('SQL: push hataları artan aralıkla denenir; başarılı ve kalıcı hatalı teslimler yeniden alınmaz', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec('create role anon; create role authenticated; create role service_role; create schema auth; create table auth.users(id uuid primary key);');
+    await db.exec(await readFile(new URL('../supabase/automation-schema.sql', import.meta.url), 'utf8'));
+    const migration = await readFile(new URL('../supabase/migrations/20261028_push_delivery_retries.sql', import.meta.url), 'utf8');
+    await db.exec(migration); await db.exec(migration);
+    const user = '11111111-1111-4111-8111-111111111111';
+    await db.query('insert into auth.users values($1)', [user]);
+    const sub = (await db.query("insert into push_subscriptions(user_id,endpoint,subscription) values($1,'https://web.push.apple.com/retry','{}') returning id", [user])).rows[0].id;
+    await db.exec("insert into notification_events(id,topic,title,body,url,published_at,expires_at) values('retry','catalyst','x','x','/news',now(),now()+interval '1 hour')");
+    const claim = async () => (await db.query("select claim_push_delivery('retry',$1) as claimed", [sub])).rows[0].claimed;
+    assert.equal(await claim(), true);
+    assert.equal(await claim(), false); // active lease
+    await db.exec("update push_deliveries set status='pending'");
+    assert.equal(await claim(), false); // no immediate retry
+    await db.exec("update push_deliveries set locked_at=now()-interval '16 seconds'");
+    assert.equal(await claim(), true);
+    await db.exec("update push_deliveries set status='pending',locked_at=now()-interval '16 seconds'");
+    assert.equal(await claim(), false); // second retry waits 30 seconds
+    await db.exec("update push_deliveries set locked_at=now()-interval '31 seconds'");
+    assert.equal(await claim(), true);
+    await db.exec("update push_deliveries set status='sending',locked_at=now()-interval '121 seconds'");
+    assert.equal(await claim(), true); // recover crashed worker
+    for (const status of ['sent', 'failed']) {
+      await db.query("update push_deliveries set status=$1,locked_at=now()-interval '1 hour'", [status]);
+      assert.equal(await claim(), false);
+    }
+    await db.exec("update push_deliveries set status='pending',attempts=7,locked_at=now()-interval '121 seconds'");
+    assert.equal(await claim(), true);
+    await db.exec("update push_deliveries set status='pending',locked_at=now()-interval '1 hour'");
+    assert.equal(await claim(), false); // bounded at eight attempts
+    await db.exec('set role authenticated');
+    await assert.rejects(claim(), /permission denied/);
+  } finally { await db.close(); }
+});

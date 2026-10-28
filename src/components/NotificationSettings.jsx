@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { automationRequest } from '../services/automation.js';
+import { decodePushKey, subscriptionNeedsRenewal } from '../services/pushSubscription.js';
 
 export default function NotificationSettings() {
   const [config, setConfig] = useState(null);
@@ -8,7 +9,8 @@ export default function NotificationSettings() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [topics, setTopics] = useState(['catalyst','source-portfolios']);
-  const supported = typeof window !== 'undefined' && window.isSecureContext && 'Notification' in window && 'PushManager' in window && 'serviceWorker' in navigator;
+  const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+  const supported = typeof window !== 'undefined' && window.isSecureContext && typeof Notification !== 'undefined' && 'PushManager' in window && 'serviceWorker' in navigator;
   useEffect(() => {
     let active = true;
     async function load() {
@@ -17,7 +19,17 @@ export default function NotificationSettings() {
         const registration=supported ? await navigator.serviceWorker.register('/sw.js') : null;
         const subscription=await registration?.pushManager.getSubscription();
         const stored=data.subscriptions?.find((item) => item.endpoint===subscription?.endpoint);
-        if (active) { setConfig(data); setEnabled(Boolean(stored)); if (stored) setTopics(stored.topics); }
+        if (active) {
+          const currentPermission = typeof Notification !== 'undefined' ? Notification.permission : 'default';
+          const denied = currentPermission === 'denied';
+          const renewal = subscription && data.publicKey && subscriptionNeedsRenewal(subscription, data.publicKey);
+          setConfig(data); setPermission(currentPermission);
+          setEnabled(Boolean(stored) && !denied && !renewal);
+          if (stored) setTopics(stored.topics);
+          if (denied) setMessage('Bildirim izni tarayıcıda kapalı. Site ayarlarından izin verip tercihlerinizi yeniden kaydedin.');
+          else if (renewal) setMessage('Bu cihazın bildirim bağlantısı yenilenmeli. Bildirimleri etkinleştir düğmesine basın.');
+          else if (subscription && !stored) setMessage('Bu cihazın aboneliği sunucuda bulunamadı. Bildirimleri etkinleştirerek yeniden kaydedin.');
+        }
       } catch (error) { if (active) setMessage(error.message); }
     }
     load();
@@ -28,11 +40,16 @@ export default function NotificationSettings() {
     try {
       // İzin isteği doğrudan düğme tıklamasında; öncesinde ağ beklenmez (iOS).
       const permission = await Notification.requestPermission();
+      setPermission(permission);
       if (permission !== 'granted') throw new Error('Bildirim izni verilmedi. Telefonunuzun site bildirim ayarlarından açabilirsiniz.');
       const registration = await navigator.serviceWorker.ready;
-      const base64 = config.publicKey.replace(/-/g, '+').replace(/_/g, '/');
-      const applicationServerKey = Uint8Array.from(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
-      const existing = await registration.pushManager.getSubscription();
+      const applicationServerKey = decodePushKey(config.publicKey);
+      let existing = await registration.pushManager.getSubscription();
+      if (subscriptionNeedsRenewal(existing, config.publicKey)) {
+        await existing.unsubscribe();
+        existing = null;
+        setEnabled(false);
+      }
       const subscription = existing ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
       try { await automationRequest('push', { method: 'POST', body: { subscription: subscription.toJSON(), topics } }); }
       catch (error) { if (!existing) await subscription.unsubscribe(); throw error; }
@@ -55,6 +72,9 @@ export default function NotificationSettings() {
   return <section className="rounded-xl border border-navy-700 bg-navy-900 p-4 space-y-3" aria-label="Telefon bildirimleri">
     <h3 className="flex items-center gap-2 font-semibold text-ink"><Bell size={17} /> Telefon bildirimleri</h3>
     <p className="text-xs text-slate-400">Site kapalıyken de bildirim al. iPhone’da ana ekrana eklediğin uygulamadan aç (iOS 16.4 ve sonrası).</p>
+    {supported && config && <p className={`text-xs ${enabled ? 'text-gain' : 'text-amber-400'}`}>
+      {permission === 'denied' ? 'Bu cihazda bildirim izni kapalı' : enabled ? 'Bu cihazın bildirim aboneliği kayıtlı' : 'Bu cihazda bildirim bağlantısı etkin değil'}
+    </p>}
     <div className="flex flex-wrap gap-4 text-sm text-slate-300">
       {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>key!=='hedge-radar'||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
         <input type="checkbox" checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}

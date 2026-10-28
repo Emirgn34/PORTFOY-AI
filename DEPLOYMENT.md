@@ -1,5 +1,33 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 28 Ekim 2026: bildirim gönderimi ve cihaz abonelikleri
+
+Önce mevcut kurulumda `supabase/migrations/20261028_push_delivery_retries.sql`
+çalıştırılır, ardından uygulama ve mevcut haber işçileri güncellenir. Migration
+tekrar çalıştırılabilir; eski olayları, abonelikleri veya teslimleri silmez.
+`automation-schema.sql` sıfırdan kurulumda aynı yeniden deneme kuralını içerir.
+
+- Gönderici geçerli olayların tüm sayfalarını okur; en eski 100 kayıt yeni haberleri
+  gizleyemez. Yeni algılanan olaylar önce gönderilir. Abonelik sayfalaması kimlikle
+  ilerler; süresi dolmuş bir cihazı silmek sonraki sayfadaki cihazları atlatmaz.
+- En fazla beş cihaz eşzamanlı işlenir. Geçici ağ, 408, 429 ve sunucu hataları en
+  fazla sekiz denemeyle ele alınır. Denemeler arası asgari bekleme 15, 30, 60 ve
+  ardından 120 saniyedir; yeniden deneme bir sonraki işçi turunda gerçekleşir.
+  Haber süresi dolduysa yeniden gönderilmez. Bu bekleme ayrı bir zamanlayıcı kurmaz.
+- 404/410 abonelikleri kaldırılır; diğer kalıcı gönderim hataları `failed` kalır.
+  Gönderim özeti `monitor_status` içinde `push` kimliğiyle, hata sayıları işçi
+  loglarında tutulur. Endpoint, anahtar veya sağlayıcının ham hata metni yazılmaz.
+- Cihaz ekranı kapalı izni, sunucuda eksik kaydı ve süresi dolmuş/anahtarı değişmiş
+  aboneliği ayırt eder. Yenileme kullanıcının düğmeye basmasıyla yapılır.
+
+`sent` ve mevcut `delivered_at` alanı push sağlayıcısının isteği kabul ettiğini
+gösterir; telefonda görüntülenme teyidi değildir. Canlı doğrulamada aynı VAPID
+anahtarlarının uygulama ve işçilerde bulunduğunu, gerçek yeni haber için teslim
+kaydını ve ekran kapalıyken telefonda görünmesini ayrı ayrı kontrol edin.
+
+Bu aşama haber kaynaklarının tarama sıklığını veya 15 dakikalık bildirim ömrünü
+değiştirmez. Ücretsiz kaynakların hızlandırılması sonraki aşamadır.
+
 ## 24 Ekim 2026: Portföy Kalkanı
 
 SQL migration, hesap UUID'si, CRON secret, manuel analiz bağlantısı ve telefon
@@ -71,7 +99,7 @@ sayısı mevcut 12 adette kalır. Ücretsiz plan için ek fonksiyon gerektirmez.
   mevcut Araştırma Merkezi'ndeki resmi bildirim kontrolünde kullanılmaya devam eder.
 - Bildirimler ilk abonelikten önceki olaylar için gönderilmez. Haberlerin bildirim
   ömrü 15 dakika, kaynak değişimininki 6 saattir. Aynı olay/cihaz için teslim kaydı
-  tutulur; geçici hata en fazla 4 kez denenir, 404/410 abonelikleri kaldırılır.
+  tutulur; geçici hata en fazla 8 kez denenir, 404/410 abonelikleri kaldırılır.
   Teslim sonrası veritabanı kesintisinde tekrar olasılığı vardır; telefon aynı `tag`
   ile bildirimi değiştirir. Telefonun odak/enerji/ağ ayarları teslimi geciktirebilir.
 - Hızlı haber başlıkları mevcut ücretsiz çeviri servisiyle Türkçeleştirilir; özgün

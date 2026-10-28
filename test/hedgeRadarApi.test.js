@@ -67,8 +67,8 @@ test('kalkan bildirimi yalnız radar sahibinin abone cihazına gider; başka hes
     const subscriptions=[owner,'other'].map((user_id,i)=>({id:`sub${i}`,user_id,topics:['hedge-radar'],created_at:'2020-01-01',
       subscription:{endpoint:`https://web.push.apple.com/${i}`,keys:{p256dh:'A'.repeat(87),auth:'B'.repeat(22)}}}));
     const sb={rpc:async()=>{claimed++;return {data:true};},from(table){return {
-      select(){return this;},gt(){return this;},order(){return this;},limit(){return this;},range(){return this;},
-      update(){return this;},eq(){return this;},then(resolve){return Promise.resolve(resolve({data:table==='notification_events'?[event]:table==='push_subscriptions'?subscriptions:[]}));}
+      select(){return this;},gt(){return this;},lte(){return this;},order(){return this;},limit(){return this;},
+      update(){return this;},upsert(){return this;},eq(){return this;},then(resolve){return Promise.resolve(resolve({data:table==='notification_events'?[event]:table==='push_subscriptions'?subscriptions:[]}));}
     };}};
     const result=await deliverNotifications(sb);
     assert.equal(result.sent,1);assert.equal(claimed,1);assert.deepEqual(sent,['https://web.push.apple.com/0']);

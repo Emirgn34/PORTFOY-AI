@@ -98,8 +98,10 @@ declare claimed boolean;
 begin
   insert into push_deliveries(event_id,subscription_id) values(p_event_id,p_subscription_id) on conflict do nothing;
   update push_deliveries set status='sending',locked_at=now(),attempts=attempts+1
-    where event_id=p_event_id and subscription_id=p_subscription_id and attempts<4
-    and (status='pending' or (status='sending' and locked_at < now()-interval '2 minutes')) returning true into claimed;
+    where event_id=p_event_id and subscription_id=p_subscription_id and attempts<8
+    and ((status='pending' and (locked_at is null or
+      locked_at <= now()-least(interval '2 minutes', interval '15 seconds' * power(2, greatest(0, attempts-1)))))
+      or (status='sending' and locked_at < now()-interval '2 minutes')) returning true into claimed;
   return coalesce(claimed,false);
 end $$;
 
