@@ -66,11 +66,15 @@ def market_context(now):
     last_session = session if now >= closing else calendar.previous_session(session)
     if not today:
         last_session = session
+    next_session = calendar.next_session(session) if now >= closing or not today else session
     return {
         'session_date': str(session.date()), 'last_complete_session': str(last_session.date()),
         'market_open': today and opening <= now < closing,
         'run_window': active, 'closing_window': active and now >= closing - timedelta(minutes=30),
         'market_close': closing.isoformat(),
+        'market_open_at': opening.isoformat(),
+        'next_market_open': calendar.session_open(next_session).to_pydatetime().isoformat(),
+        'next_market_close': calendar.session_close(next_session).to_pydatetime().isoformat(),
         'close_window_tr': f"{(closing-timedelta(minutes=30)).astimezone(TR):%H:%M}–{closing.astimezone(TR):%H:%M}",
         'confirmation_tr': f"{(closing-timedelta(minutes=15)).astimezone(TR):%H:%M}",
     }
@@ -357,10 +361,15 @@ def main():
     if args.apply:
         owner = str(uuid.UUID(os.environ['HEDGE_RADAR_USER_ID']))
         sb = SupabaseRest()
-        saved = sb.call('hedge_radar_state?id=eq.1&select=owner_user_id,refresh_version,pending_notification')
+        saved = sb.call('hedge_radar_state?id=eq.1&select=owner_user_id,refresh_version,refresh_run_id,pending_notification')
         if saved and saved[0]['owner_user_id'] != owner:
             raise DataError('Radar başka hesaba bağlı; kullanıcılar birleştirilmedi.')
-        version = saved[0]['refresh_version'] if saved else 0
+        version = int(os.environ.get('HEDGE_REFRESH_VERSION') or (saved[0]['refresh_version'] if saved else 0))
+        if saved and (saved[0]['refresh_version'] != version or
+                (saved[0].get('refresh_run_id') is not None and
+                 str(saved[0]['refresh_run_id']) != os.environ.get('GITHUB_RUN_ID'))):
+            print(json.dumps({'skipped': True, 'reason': 'Daha yeni bir analiz isteği var.'}))
+            return
         rows = sb.call(f'portfolios?user_id=eq.{owner}&select=stocks&limit=1')
         stocks = rows[0]['stocks'] if rows else []
     else:
@@ -369,18 +378,25 @@ def main():
         state = analyze(stocks, now, context)
         if sb:
             state['owner_user_id'] = owner
+            if os.environ.get('GITHUB_RUN_ID'):
+                state['diagnostics']['workflow_run_id'] = os.environ['GITHUB_RUN_ID']
             published = sb.call('rpc/publish_hedge_radar_state', {'p_state': state, 'p_refresh_version': version})
             print(json.dumps({'published': published, 'regime': state['market_regime'],
                               'beta': state['portfolio_beta'], 'as_of': state['diagnostics']['as_of']}))
             # Deliver any pending state transition; RPCs make retries idempotent.
-            if context['run_window']:
-                print(json.dumps({'notifications': trigger_notifications()}))
+            if context['run_window'] and published:
+                try:
+                    print(json.dumps({'notifications': trigger_notifications()}))
+                except Exception:
+                    print('[hedge-notifications] Bildirim gönderimi tamamlanamadı; analiz kaydedildi ve bekleyen olay korundu.', file=sys.stderr)
         else:
             print(json.dumps(state, ensure_ascii=False, allow_nan=False, indent=2))
-    except Exception:
+    except Exception as error:
         if sb:
-            sb.call(f'hedge_radar_state?id=eq.1&refresh_version=eq.{version}',
-                    {'refresh_status': 'failed', 'refresh_error': 'Analiz tamamlanamadı. Önceki radar korundu; veri ve iş akışı loglarını kontrol edin.'}, method='PATCH')
+            message = str(error)[:300] if isinstance(error, DataError) else 'Piyasa verisi veya analiz işlemi tamamlanamadı. Yeniden deneyebilirsiniz.'
+            sb.call('rpc/fail_hedge_radar_run', {'p_user_id': owner, 'p_revision': version,
+                'p_run_id': int(os.environ['GITHUB_RUN_ID']) if os.environ.get('GITHUB_RUN_ID') else None,
+                'p_error': message})
         raise
 
 

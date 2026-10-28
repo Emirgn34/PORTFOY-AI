@@ -23,18 +23,19 @@ test('kalkan API: yanlış secret ve oturumsuz istek veri okumaz; kullanıcılar
   assert.equal(validCronSecret('a'.repeat(40),''),false);
 });
 
-test('kalkan yenileme JWT sahibini kullanır, beş dakika sınırını uygular ve GitHub sırlarını gizler',async()=>{
+test('kalkan yenileme JWT sahibini kullanır, gerçek bekleme süresini bildirir ve GitHub sırlarını gizler',async()=>{
   const calls=[];
   const sb={auth:{getUser:async()=>({data:{user:{id:owner}}})},rpc:async(name,args)=>{
-    assert.equal(args.p_user_id,owner);return {data:7};}};
+    assert.equal(args.p_user_id,owner);return {data:{revision:7,status:'queued',dispatch:true,retryAfterSeconds:0}};}};
   const handler=createHedgeRadarHandler({getDb:()=>sb,env:{HEDGE_RADAR_USER_ID:owner,HEDGE_GITHUB_TOKEN:'private'},
-    fetcher:async(url,options)=>{calls.push({url,options});return {ok:true};}});
+    fetcher:async(url,options)=>{calls.push({url,options});return {ok:true,status:204};}});
   const req={method:'POST',query:{action:'refresh'},headers:{authorization:'Bearer owner'},body:{user_id:'other'}};
   const res=response();await handler(req,res);
   assert.equal(res.statusCode,202);assert.equal(res.body.revision,7);
   assert.equal(calls.length,1);assert.ok(calls[0].url.endsWith('/hedge_radar.yml/dispatches'));
+  assert.deepEqual(JSON.parse(calls[0].options.body),{ref:'main',inputs:{refresh_version:'7'}});
   assert.ok(!JSON.stringify(res.body).includes('private'));
-  sb.rpc=async()=>({error:{message:'Yeni analiz için 5 dakika bekleyin.'}});
+  sb.rpc=async()=>({data:{revision:7,status:'completed',dispatch:false,retryAfterSeconds:300}});
   const throttled=response();await handler(req,throttled);assert.equal(throttled.statusCode,429);
 });
 

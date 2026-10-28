@@ -1,5 +1,8 @@
 import importlib.util
 import unittest
+from unittest.mock import patch
+import io
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,6 +68,10 @@ class HedgeEngineTests(unittest.TestCase):
         self.assertFalse(engine.market_context(datetime(2026,12,25,19,45,tzinfo=timezone.utc))['run_window'])
         early=engine.market_context(datetime(2026,11,27,17,45,tzinfo=timezone.utc))
         self.assertTrue(early['closing_window']);self.assertEqual(early['confirmation_tr'],'20:45')
+        weekend=engine.market_context(datetime(2026,10,24,14,tzinfo=timezone.utc))
+        self.assertEqual(weekend['next_market_open'],'2026-10-26T13:30:00+00:00')
+        holiday=engine.market_context(datetime(2026,12,25,14,tzinfo=timezone.utc))
+        self.assertEqual(holiday['next_market_open'],'2026-12-28T14:30:00+00:00')
 
     def test_default_only_for_empty_and_no_silent_us_portfolio_fallback(self):
         holdings,fallback=engine.us_holdings([])
@@ -98,6 +105,45 @@ class HedgeEngineTests(unittest.TestCase):
         now=datetime(2026,10,23,20,5,tzinfo=timezone.utc)
         self.assertAlmostEqual(engine.indicators(daily.iloc[:-1],now)['weekly_ema20'],100)
         self.assertGreater(engine.indicators(daily,now)['weekly_ema20'],100)
+
+    def test_published_analysis_is_not_failed_by_notification_outage(self):
+        calls=[]
+        class Database:
+            def call(self,path,payload=None,method=None):
+                calls.append((path,payload))
+                if path.startswith('hedge_radar_state?'):
+                    return [{'owner_user_id':'11111111-1111-4111-8111-111111111111','refresh_version':3,'refresh_run_id':123}]
+                if path.startswith('portfolios?'): return [{'stocks':[]}]
+                if path=='rpc/publish_hedge_radar_state': return True
+                raise AssertionError('Kaydedilmiş analiz başarısız işaretlenmemeli')
+        state={'market_regime':'SAFE','portfolio_beta':1.2,'diagnostics':{'as_of':'2026-10-28T14:00:00Z'}}
+        with patch.dict(os.environ,{'HEDGE_RADAR_USER_ID':'11111111-1111-4111-8111-111111111111',
+                'HEDGE_REFRESH_VERSION':'3','GITHUB_RUN_ID':'123'}), \
+            patch.object(engine.sys,'argv',['hedge_engine.py','--apply','--manual']), \
+            patch.object(engine,'SupabaseRest',return_value=Database()), \
+            patch.object(engine,'market_context',return_value={'run_window':True}), \
+            patch.object(engine,'analyze',return_value=state), \
+            patch.object(engine,'trigger_notifications',side_effect=engine.DataError('Bildirim bağlantısı kapalı.')), \
+            patch.object(engine.sys,'stdout',new_callable=io.StringIO), \
+            patch.object(engine.sys,'stderr',new_callable=io.StringIO):
+            engine.main()
+        saved=next(payload for path,payload in calls if path=='rpc/publish_hedge_radar_state')
+        self.assertEqual(saved['p_refresh_version'],3)
+        self.assertEqual(saved['p_state']['diagnostics']['workflow_run_id'],'123')
+
+    def test_superseded_workflow_does_not_analyze_the_latest_request(self):
+        class Database:
+            def call(self,path,payload=None,method=None):
+                self.assert_path=path
+                return [{'owner_user_id':'11111111-1111-4111-8111-111111111111','refresh_version':4,'refresh_run_id':456}]
+        with patch.dict(os.environ,{'HEDGE_RADAR_USER_ID':'11111111-1111-4111-8111-111111111111',
+                'HEDGE_REFRESH_VERSION':'3','GITHUB_RUN_ID':'123'}), \
+            patch.object(engine.sys,'argv',['hedge_engine.py','--apply','--manual']), \
+            patch.object(engine,'SupabaseRest',return_value=Database()), \
+            patch.object(engine,'market_context',return_value={'run_window':True}), \
+            patch.object(engine,'analyze',side_effect=AssertionError('Eski iş analiz üretmemeli')), \
+            patch.object(engine.sys,'stdout',new_callable=io.StringIO):
+            engine.main()
 
 
 if __name__=='__main__': unittest.main()

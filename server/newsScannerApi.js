@@ -3,9 +3,10 @@ import { validCronSecret } from './cronAuth.js';
 import { scanFreeNews } from './freeNews.js';
 import { translateStoredCatalysts } from './catalystNews.js';
 import { pushConfigured } from './pushNotifications.js';
+import { maybeRefreshHedge } from './hedgeJobs.js';
 
 export function createNewsScannerHandler({ getDb = automationDb, scan = scanFreeNews,
-  translate = translateStoredCatalysts, env = process.env } = {}) {
+  translate = translateStoredCatalysts, refreshHedge = maybeRefreshHedge, env = process.env } = {}) {
   return async function newsScannerHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).json({ error: 'Yöntem desteklenmiyor.' });
@@ -23,6 +24,10 @@ export function createNewsScannerHandler({ getDb = automationDb, scan = scanFree
       }
       // Sources and rules come only from server code, never the request body.
       const result = await scan(sb, { intervalSeconds: 60, runner: 'supabase-cron' });
+      // Each subsystem keeps its own status and lease. An analysis dispatch
+      // failure must not turn a successful news scan into a source failure.
+      try { await refreshHedge(sb,{env}); }
+      catch { console.warn('[hedge-automation] Otomatik analiz başlatılamadı; haber taraması tamamlandı.'); }
       if (!result.skipped) {
         // Notifications have already been attempted. Backfill only a bounded
         // number of full translations, retaining the first detection timestamp.

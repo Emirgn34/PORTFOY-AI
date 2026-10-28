@@ -66,3 +66,15 @@ test('tüm kaynaklar başarısızsa 503, başka tarama etkinse 200 döner ve çe
     const res = response(); await handler(request(), res); assert.equal(res.code, skipped ? 200 : 503);
   }
 });
+
+test('otomatik hedge hatası başarılı haber taramasını bozmaz; kurulum kontrolü hedge başlatmaz', async () => {
+  let attempts=0;
+  const handler=createNewsScannerHandler({env:{CRON_SECRET:secret},getDb:()=>({}),
+    scan:async()=>({feeds:['source']}),translate:async()=>{},
+    refreshHedge:async()=>{attempts++;throw new Error('GitHub unavailable');}});
+  const res=response();await handler(request(),res);
+  assert.equal(res.code,200);assert.equal(res.body.ok,true);assert.equal(attempts,1);
+  const probe=createNewsScannerHandler({env:{CRON_SECRET:secret},getDb:()=>({from(){return {select(){return this;},eq(){return this;},async maybeSingle(){return {data:{id:'news-scan-lock'}};}};}}),
+    refreshHedge:async()=>assert.fail('Kurulum kontrolü analiz tetiklememeli')});
+  await probe(request({body:{checkOnly:true}}),response());
+});

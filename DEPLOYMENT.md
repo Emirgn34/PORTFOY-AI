@@ -1,5 +1,15 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 28 Ekim 2026: hedge yenileme takibi
+
+Önce `supabase/migrations/20261028_hedge_refresh_tracking.sql`, ardından GitHub ve
+Vercel kod yayını uygulanır. Yeni anahtar veya zamanlayıcı kurulmaz. Mevcut dakikalık
+haber çağrısı seans saatlerinde hedge işinin gerekip gerekmediğini de kontrol eder;
+son analiz 15 dakikadan eskiyse otomatik iş başlatılabilir. Haber hatası ile hedge
+hatası ayrı tutulur. Ayrıntılar ve canlı doğrulama sorgusu `HEDGE_SHIELD_SETUP.md`
+dosyasındadır. Yayın sonrası gerçek bir manuel istekte çalışma ve tamamlanma
+zamanları doğrulanmadan yeni iş takibi canlıda doğrulanmış sayılmaz.
+
 ## 28 Ekim 2026: ücretsiz haberleri hızlandırma
 
 Kurulum sırası ve doğrulama sorguları `NEWS_SCAN_SETUP.md` dosyasındadır.

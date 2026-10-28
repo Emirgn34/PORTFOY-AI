@@ -13,9 +13,12 @@ export interface RadarState {
   soxx_price: number; soxx_sma50: number; soxx_weekly_ema20: number; soxx_weekly_ema50: number;
   vix_level: number; vix_change_pct: number; portfolio_beta: number; portfolio_value_usd: number | null;
   recommended_action: string; refresh_status: string; refresh_error?: string; refresh_requested_at?: string;
+  refresh_started_at?: string; refresh_completed_at?: string; refresh_deadline_at?: string;
+  refresh_retry_at?: string; refresh_run_id?: number; refresh_run_url?: string; refresh_version?: number;
   hedge_recipe: { sqqq_pct: number; soxs_pct: number; psq_pct: number; sh_pct: number;
     hedge_ratio: number; stop_level: number; soxx_beta: number; spy_beta: number; note: string };
   diagnostics: { market_open: boolean; notifications_allowed: boolean; as_of: string; closing_window: boolean;
+    market_open_at?: string; market_close?: string; next_market_open?: string; next_market_close?: string;
     confirmation_tr: string; close_window_tr: string; session_date: string; fallback_portfolio: boolean;
     volume_ratio: number; atr_confirmed: boolean; volume_confirmed: boolean; time_confirmed: boolean; panic: boolean;
     price_source: string };

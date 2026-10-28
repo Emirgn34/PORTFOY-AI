@@ -9,28 +9,46 @@ on:
     # Early-close sessions (13:00 ET), gated by the exchange calendar.
     - cron: '45 16,17 * * 1-5'
     - cron: '5 17,18 * * 1-5'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      refresh_version:
+        description: Site tarafındaki analiz istek numarası (elle çalıştırırken boş bırakılabilir)
+        type: string
+        required: false
 permissions:
   contents: read
 concurrency:
   group: hedge-radar-single-row
   cancel-in-progress: false
+  queue: max
 jobs:
   analyze:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
+      - name: Analiz isini kaydet
+        id: start
+        run: python3 scripts/hedge_jobs.py start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HEDGE_RADAR_USER_ID: ${{ secrets.HEDGE_RADAR_USER_ID }}
+          HEDGE_REFRESH_VERSION: ${{ inputs.refresh_version }}
       - uses: actions/setup-python@v6
+        if: steps.start.outputs.active == 'true'
         with:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
+        if: steps.start.outputs.active == 'true'
       - name: Finansal kurallari test et
+        if: steps.start.outputs.active == 'true'
         run: python -m unittest discover -s test -p 'test_hedge*.py'
       - name: Kalkan durumunu guncelle
+        if: steps.start.outputs.active == 'true'
         run: |
-          python scripts/hedge_engine.py --apply ${{ github.event_name == 'workflow_dispatch' && '--manual' || '' }}
+          python scripts/hedge_engine.py --apply --manual
           python scripts/hedge_engine.py --check-api
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -38,3 +56,12 @@ jobs:
           HEDGE_RADAR_USER_ID: ${{ secrets.HEDGE_RADAR_USER_ID }}
           HEDGE_APP_URL: ${{ vars.HEDGE_APP_URL || 'https://portfoy-ai-ukyt.vercel.app' }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          HEDGE_REFRESH_VERSION: ${{ steps.start.outputs.revision }}
+      - name: Tamamlanmayan isi bildir
+        if: always() && steps.start.outputs.active == 'true'
+        run: python scripts/hedge_jobs.py finish
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HEDGE_RADAR_USER_ID: ${{ secrets.HEDGE_RADAR_USER_ID }}
+          HEDGE_REFRESH_VERSION: ${{ steps.start.outputs.revision }}

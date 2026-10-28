@@ -57,6 +57,43 @@ test('bayat veri ve varsayılan portföyü açıkça ayırt eder',async()=>{
 test('tamamlanmayan iş analizi yeniden başlatma düğmesini sonsuza kadar kilitlemez',async()=>{
   mockState({...state,refresh_status:'queued',refresh_requested_at:'2020-01-01T00:00:00Z'});
   render(<HedgeShieldDashboard/>);
-  expect(await screen.findByRole('alert')).toHaveTextContent('15 dakikadır tamamlanmadı');
+  expect(await screen.findByRole('alert')).toHaveTextContent('15 dakika içinde tamamlanmadı');
   expect(screen.getByRole('button',{name:'Şimdi Analiz Et'})).toBeEnabled();
+});
+
+test('çalışan iş ayrı görünür ve ikinci analiz başlatma düğmesi kapalıdır', async () => {
+  mockState({...state,refresh_status:'running',refresh_started_at:new Date().toISOString(),
+    refresh_deadline_at:new Date(Date.now()+5*60000).toISOString(),
+    refresh_run_url:'https://github.com/Emirgn34/PORTFOY-AI/actions/runs/123'});
+  render(<HedgeShieldDashboard/>);
+  expect(await screen.findByRole('button',{name:'Analiz çalışıyor'})).toBeDisabled();
+  expect(screen.getByRole('link',{name:/Analiz işinin ayrıntılarını aç/})).toHaveAttribute('href','https://github.com/Emirgn34/PORTFOY-AI/actions/runs/123');
+});
+
+test('başarısız ilk analizde hata saklanmaz; kısa bekleme süresi düğmede görünür', async () => {
+  const clock=Date.now();vi.spyOn(Date,'now').mockReturnValue(clock);
+  mockState({...state,market_regime:null,refresh_status:'failed',refresh_error:'QQQ fiyatı alınamadı.',
+    refresh_retry_at:new Date(clock+30000).toISOString()});
+  render(<HedgeShieldDashboard/>);
+  expect(await screen.findByRole('alert')).toHaveTextContent('QQQ fiyatı alınamadı.');
+  expect(screen.getByRole('button',{name:'30 sn sonra yeniden analiz'})).toBeDisabled();
+});
+
+test('kapanmış seansın eski market_open alanı gece boyunca gün içi gecikme alarmı üretmez', async () => {
+  mockState({...state,diagnostics:{...state.diagnostics,market_open:true,
+    market_close:'2020-01-01T21:00:00Z',as_of:'2020-01-01T20:55:00Z'}});
+  render(<HedgeShieldDashboard/>);
+  expect(await screen.findByText('Piyasa kapalı · son seans')).toBeInTheDocument();
+  expect(screen.queryByText('Veri gecikti · yeni sinyal bekleniyor')).not.toBeInTheDocument();
+});
+
+test('önceki seansın kapalı kaydı ertesi seans açılınca güncelmiş gibi gösterilmez', async () => {
+  const clock=Date.now();vi.spyOn(Date,'now').mockReturnValue(clock);
+  mockState({...state,diagnostics:{...state.diagnostics,market_open:false,
+    market_open_at:new Date(clock-48*3600000).toISOString(),market_close:new Date(clock-24*3600000).toISOString(),
+    next_market_open:new Date(clock-3600000).toISOString(),next_market_close:new Date(clock+3600000).toISOString(),
+    as_of:new Date(clock-24*3600000).toISOString()}});
+  render(<HedgeShieldDashboard/>);
+  expect(await screen.findByText('ABD seansı açık')).toBeInTheDocument();
+  expect(screen.getByText('Veri gecikti · yeni sinyal bekleniyor')).toBeInTheDocument();
 });

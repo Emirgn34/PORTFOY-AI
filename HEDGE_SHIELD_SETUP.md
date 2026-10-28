@@ -1,5 +1,52 @@
 # Portföy Kalkanı kurulumu
 
+## 28 Ekim 2026: iş takibi ve güvenilir yenileme
+
+Mevcut kurulum için önce
+`supabase/migrations/20261028_hedge_refresh_tracking.sql` çalıştırılır, sonra yeni
+kod GitHub/Vercel'e yayımlanır. Önceki `20261024_hedge_radar.sql` kurulmuş olmalıdır.
+Yeni migration tekrar çalıştırılabilir; eski analiz, portföy ve push abonelikleri
+silinmez. Güncelleme sonrasında eski migration'ı tek başına yeniden uygulamayın;
+yenileme takibi migration'ı en son uygulanmalıdır.
+
+Yeni ortam değişkeni, Vault kaydı veya ayrı zamanlayıcı gerekmez. Haberler için
+etkinleştirilmiş dakikalık Supabase çağrısı, New York hafta içi 09:30–16:05 aralığında
+hedge işinin gerekip gerekmediğini de kontrol eder. Son analiz 15 dakikadan yeniyse
+yeni otomatik iş başlatılmaz. Tatil/erken kapanış ve bildirim kuralları Python
+borsa takviminde doğrulanır. GitHub zamanlanmış işi fallback olarak devam eder.
+Hedge başlatma hatası başarılı haber taramasının durumunu değiştirmez.
+
+- Aynı anda etkin bir iş varsa mevcut istek döndürülür; yeni iş üretilmez.
+- İstek `queued → running → completed/failed` durumlarından geçer. Gerçek GitHub
+  çalışma kimliği, bağlantısı ve istek revizyonu saklanır.
+- Başarılı analiz sonrası manuel bekleme beş dakika; başarısız iş sonrası manuel
+  bekleme 30 saniyedir. Otomatik başarısızlık denemeleri beş dakikadan sık yapılmaz.
+- Kuyrukta/çalışırken 15 dakikalık süre aşılırsa yeniden başlatılabilir. Eski işin
+  sonradan gelip yeni isteği tamamlaması veya eski sonuçla üzerine yazması engellenir.
+- Paket kurulumu veya testler başarısız olsa da işin ilk/son adımları durumu bildirir.
+  Panel ayrıca gerçek GitHub sonucunu ve süre aşımını kontrol eder.
+- Analiz kaydedildikten sonraki bildirim hatası analizi başarısız saymaz. Bekleyen
+  bildirim olayı korunur. Finansal hesap, koruma oranı ve emir davranışı değiştirilmedi.
+- Seans açılış/kapanışları mevcut ve sonraki seans için kaydedilir. Gece eski
+  `market_open` kaydı nedeniyle yanlış gün içi gecikme uyarısı üretilmez; ertesi
+  seans açıldığında önceki seans verisi güncel sayılmaz.
+
+Kod yayını sonrası Portföy Kalkanı'nda **Şimdi Analiz Et** ile bir istek başlatın.
+Panelde sırada/çalışıyor durumu ve ardından yeni veri zamanı görünmeli. SQL denetimi:
+
+```sql
+select refresh_status,refresh_version,refresh_source,
+  refresh_requested_at,refresh_started_at,refresh_completed_at,
+  refresh_retry_at,refresh_run_url,refresh_error,updated_at,
+  diagnostics->>'as_of' as price_as_of
+from public.hedge_radar_state where id=1;
+```
+
+İş akışı başarısı tek başına yeni analiz kanıtı değildir; `updated_at`,
+`refresh_completed_at` ve fiyatın `as_of` zamanı birlikte kontrol edilir.
+Piyasa kapalıysa son tamamlanan seans hesaplanır ve işlem bildirimi gönderilmez.
+GitHub runner gecikmesi ve fiyat sağlayıcısının erişimi/sınırları devam edebilir.
+
 Mevcut uygulama React 18 + Vite + React Router + Vercel Functions kullanıyor.
 Next.js'e taşınmadı. `src/components/HedgeShieldDashboard.tsx`, `/portfolio`
 ana sayfasına eklendi. Dört yeni URL, `vercel.json` üzerinden mevcut
@@ -52,7 +99,8 @@ permissions → **Actions: Read and write** verin. `Contents` yazma izni gerekme
 Süre sonunu takip edin. Bu token yalnız Vercel sunucusunda tutulur. Kullanıcının
 “Şimdi Analiz Et” isteği kuyruğa alınır; GitHub işi başlatılınca Python analizi
 yapar ve panel 30 saniyede bir sonucu kontrol eder. GitHub kuyruğu nedeniyle
-eşzamanlı/saniyelik sonuç garantisi yoktur. Hesap başına 5 dakika bekleme vardır.
+eşzamanlı/saniyelik sonuç garantisi yoktur. Başarılı analiz sonrasında beş dakika,
+başarısız iş sonrasında manuel yeniden denemede 30 saniye bekleme vardır.
 
 ### Anahtar üretimi
 
@@ -91,7 +139,7 @@ JSON'daki `publicKey` → `VAPID_PUBLIC_KEY`, `privateKey` → `VAPID_PRIVATE_KE
 API uçları:
 
 - `GET /api/hedge-radar`: JWT + radar sahibi hesabı.
-- `POST /api/hedge-radar/refresh`: JWT + 5 dakika sınırı + GitHub dispatch.
+- `POST /api/hedge-radar/refresh`: JWT + etkin işi tekrar kullanma + duruma bağlı bekleme + GitHub dispatch.
 - `GET/POST/DELETE /api/notifications/subscribe`: mevcut kullanıcıya bağlı push API'si.
 - `POST /api/notifications/trigger`: `x-cron-secret` başlığı; mesajı istek gövdesinden
   değil veritabanındaki güncel radar durumundan alır. Rejim geçişi/kapanış olayı tekilleştirilir.

@@ -73,13 +73,14 @@ export default function HedgeShieldDashboard() {
         if(mounted.current) setPushEnabled(config.subscriptions.some(s=>s.endpoint===current?.endpoint&&s.topics.includes('hedge-radar')));
       }
     }).catch(()=>{});
-    const timer=setInterval(()=>{setClock(Date.now());void load();},30_000);
-    return()=>{mounted.current=false;clearInterval(timer);};
+    const timer=setInterval(()=>{void load();},30_000);
+    const clockTimer=setInterval(()=>setClock(Date.now()),1000);
+    return()=>{mounted.current=false;clearInterval(timer);clearInterval(clockTimer);};
   },[load,supported]);
   async function refresh() {
     setRequesting(true);setMessage('');
     try {const result=await hedgeRequest<{message:string}>('/refresh','POST');setMessage(result.message);await load();}
-    catch(e) {setMessage(e instanceof Error?e.message:'Analiz başlatılamadı.');}
+    catch(e) {setMessage(e instanceof Error?e.message:'Analiz başlatılamadı.');await load();}
     finally {setRequesting(false);}
   }
   async function subscribe() {
@@ -91,12 +92,24 @@ export default function HedgeShieldDashboard() {
   }
   const ready=state?.market_regime?state:null;
   const meta=ready?META[ready.market_regime!]:null;
-  const stale=ready?.diagnostics.market_open && clock-Date.parse(ready.diagnostics.as_of)>45*60_000;
+  const marketWindows=ready?[
+    [ready.diagnostics.market_open_at,ready.diagnostics.market_close],
+    [ready.diagnostics.next_market_open,ready.diagnostics.next_market_close],
+  ].filter(([open,close])=>open&&close):[];
+  const marketOpen=marketWindows.length?marketWindows.some(([open,close])=>clock>=Date.parse(open!)&&clock<Date.parse(close!)):
+    Boolean(ready?.diagnostics.market_open && (!ready.diagnostics.market_close || clock<Date.parse(ready.diagnostics.market_close)));
+  const calendarOld=Boolean(ready?.diagnostics.next_market_close&&clock>Date.parse(ready.diagnostics.next_market_close));
+  const stale=calendarOld||(marketOpen&&clock-Date.parse(ready!.diagnostics.as_of)>45*60_000);
   const parsedAmount=Number(amount);
   const total=Number.isFinite(parsedAmount)?Math.min(1e12,Math.max(0,parsedAmount)):0;
-  const queueExpired=state?.refresh_status==='queued' && Boolean(state.refresh_requested_at) &&
-    clock-Date.parse(state.refresh_requested_at!)>15*60_000;
-  const queued=state?.refresh_status==='queued'&&!queueExpired;
+  const activeJob=state?.refresh_status==='queued'||state?.refresh_status==='running';
+  const deadline=state?.refresh_deadline_at || state?.refresh_started_at || state?.refresh_requested_at;
+  const queueExpired=activeJob && Boolean(deadline) &&
+    clock-Date.parse(deadline!)>(state?.refresh_deadline_at?0:15*60_000);
+  const queued=activeJob&&!queueExpired;
+  const retrySeconds=state?.refresh_retry_at ? Math.max(0,Math.ceil((Date.parse(state.refresh_retry_at)-clock)/1000)) : 0;
+  const jobUrl=state?.refresh_run_url && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+$/.test(state.refresh_run_url)
+    ? state.refresh_run_url : null;
   const recipe=ready?.hedge_recipe;
   const alternatives=ready&&recipe?[
     {ticker:'SQQQ',leverage:3,beta:ready.portfolio_beta,base:'Nasdaq-100'},
@@ -110,9 +123,9 @@ export default function HedgeShieldDashboard() {
         <div><h2 className="font-semibold text-ink">Portföy Kalkanı & Hedge Radarı</h2>
           <p className="mt-1 text-xs text-slate-500">Destekler, tuzak filtresi ve portföyüne özel koruma senaryoları</p></div></div>
       <div className="flex flex-wrap gap-2">
-        <button onClick={refresh} disabled={requesting||queued} className="flex items-center gap-2 rounded-lg border border-navy-600 px-3 py-2 text-xs text-ink disabled:opacity-50">
+        <button onClick={refresh} disabled={requesting||queued||retrySeconds>0} className="flex items-center gap-2 rounded-lg border border-navy-600 px-3 py-2 text-xs text-ink disabled:opacity-50">
           <RefreshCw size={14} className={requesting||queued?'animate-spin':''}/>
-          {queued?'Analiz sırada':requesting?'Başlatılıyor…':'Şimdi Analiz Et'}</button>
+          {queued?state?.refresh_status==='running'?'Analiz çalışıyor':'Analiz sırada':requesting?'Başlatılıyor…':retrySeconds>0?`${retrySeconds} sn sonra yeniden analiz`:'Şimdi Analiz Et'}</button>
         <button onClick={subscribe} disabled={!supported||!pushConfig?.configured||pushBusy||pushEnabled} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-on-accent disabled:opacity-50">
           {pushEnabled?<Check size={14}/>:<Bell size={14}/>}{pushEnabled?'Kalkan bildirimleri etkin':pushBusy?'Etkinleştiriliyor…':'Bildirimleri Aktif Et'}</button>
       </div>
@@ -120,21 +133,23 @@ export default function HedgeShieldDashboard() {
     <div className="space-y-5 p-5">
       {message&&<p role="status" className="rounded-lg bg-accent/5 p-3 text-xs text-accent-soft">{message}</p>}
       {error&&<p role="alert" className="text-xs text-amber-400">{error}{ready?' Son başarılı analiz gösteriliyor.':''}</p>}
-      {queueExpired&&<p role="alert" className="text-xs text-amber-400">Analiz kuyruğu 15 dakikadır tamamlanmadı. Yeniden başlatabilir veya iş akışını kontrol edebilirsin.</p>}
+      {queued&&<p role="status" className="text-xs text-slate-400">{state?.refresh_status==='running'?'Analiz işi çalışıyor; son başarılı sonuç aşağıda korunuyor.':'Analiz isteği alındı; işin başlaması bekleniyor.'}</p>}
+      {queueExpired&&<p role="alert" className="text-xs text-amber-400">Analiz 15 dakika içinde tamamlanmadı. Yeniden başlatabilirsiniz.</p>}
+      {state?.refresh_error&&<p role="alert" className="text-xs text-amber-400">{state.refresh_error}</p>}
+      {jobUrl&&<a href={jobUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-xs text-accent">Analiz işinin ayrıntılarını aç ↗</a>}
       {loading&&!ready?<p role="status" className="text-sm text-slate-400">Kalkan durumu yükleniyor…</p>:!ready?<div className="rounded-lg border border-dashed border-navy-600 p-6 text-sm text-slate-400">
         İlk kalkan analizi bekleniyor. SQL ve hesap kurulumu tamamlandıktan sonra “Şimdi Analiz Et” ile başlatabilirsin.
       </div>:<>
         <div className={`rounded-xl border p-4 ${stale?'border-amber-400/30 bg-amber-400/5 text-amber-400':meta!.className}`}>
           <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><ShieldAlert size={18}/>
             <h3 className="font-semibold">{stale?'Veri gecikti · yeni sinyal bekleniyor':meta!.label}</h3></div>
-            <span className="text-xs">{ready.diagnostics.market_open?'ABD seansı açık':'Piyasa kapalı · son seans'}</span></div>
+            <span className="text-xs">{calendarOld?'Seans takvimi güncellemesi bekleniyor':marketOpen?'ABD seansı açık':'Piyasa kapalı · son seans'}</span></div>
           <p className="mt-2 text-sm leading-relaxed text-slate-300">{stale?'Güncel fiyat alınana kadar bu reçeteyi aktif sinyal olarak kullanma.':ready.recommended_action}</p>
           <p className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><Clock3 size={12}/>
             Veri: {dateTime(ready.diagnostics.as_of)} · Kapanış penceresi {ready.diagnostics.close_window_tr} TR
             {ready.previous_regime&&<span>· Önceki: {META[ready.previous_regime]?.label??ready.previous_regime}</span>}</p>
         </div>
         {ready.diagnostics.fallback_portfolio&&<p className="text-xs text-amber-400">Portföy boş: varsayılan sekiz hisse eşit ağırlıklı izleniyor. Bu beta kişisel portföy betası değildir.</p>}
-        {ready.refresh_error&&<p role="alert" className="text-xs text-amber-400">{ready.refresh_error}</p>}
         <div className="grid gap-4 lg:grid-cols-3">
           {[{ticker:'QQQ',price:ready.qqq_price,sma:ready.qqq_sma50,ema20:ready.qqq_weekly_ema20,ema50:ready.qqq_weekly_ema50},
             {ticker:'SOXX',price:ready.soxx_price,sma:ready.soxx_sma50,ema20:ready.soxx_weekly_ema20,ema50:ready.soxx_weekly_ema50}].map(index=><div key={index.ticker} className="space-y-4 rounded-xl border border-navy-700 bg-navy-850/40 p-4">

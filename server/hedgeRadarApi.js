@@ -1,6 +1,7 @@
 import { automationDb, checked } from './automationDb.js';
 import { deliverNotifications } from './pushNotifications.js';
 import { validCronSecret } from './cronAuth.js';
+import { requestHedgeJob, reconcileHedgeJob } from './hedgeJobs.js';
 
 export { validCronSecret } from './cronAuth.js';
 
@@ -44,7 +45,8 @@ export function createHedgeRadarHandler({ getDb = automationDb, send = deliverNo
       if (!env.HEDGE_RADAR_USER_ID) return res.status(503).json({error:'Kalkan hesabı henüz yapılandırılmadı.'});
       if (userId !== env.HEDGE_RADAR_USER_ID) return res.status(403).json({error:'Bu radar başka hesaba ait.'});
       if (req.method === 'GET' && action === 'state') {
-        const state = checked(await sb.from('hedge_radar_state').select('*').eq('id',1).eq('owner_user_id',userId).maybeSingle());
+        let state = checked(await sb.from('hedge_radar_state').select('*').eq('id',1).eq('owner_user_id',userId).maybeSingle());
+        state = await reconcileHedgeJob(sb,state,{fetcher,env});
         if (state) {
           delete state.pending_notification;
           delete state.last_close_notified_session;
@@ -53,24 +55,19 @@ export function createHedgeRadarHandler({ getDb = automationDb, send = deliverNo
       }
       if (req.method === 'POST' && action === 'refresh') {
         if (!env.HEDGE_GITHUB_TOKEN) return res.status(503).json({error:'Analiz başlatma bağlantısı kurulmamış.'});
-        const repository = env.HEDGE_GITHUB_REPOSITORY || 'Emirgn34/PORTFOY-AI';
-        if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Geçersiz depo ayarı.');
-        const request = await sb.rpc('request_hedge_radar_refresh',{p_user_id:userId});
-        if (request.error?.message?.includes('5 dakika')) return res.status(429).json({error:request.error.message});
-        const revision = checked(request);
+        let result;
         try {
-          const response = await fetcher(`https://api.github.com/repos/${repository}/actions/workflows/hedge_radar.yml/dispatches`, {
-            method:'POST', headers:{Authorization:`Bearer ${env.HEDGE_GITHUB_TOKEN}`,
-              Accept:'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'},
-            body:JSON.stringify({ref:'main'}),signal:AbortSignal.timeout(10000),
-          });
-          if (!response.ok) throw new Error('İş akışı başlatılamadı.');
-        } catch {
-          checked(await sb.from('hedge_radar_state').update({refresh_status:'failed',refresh_error:'Analiz iş akışı başlatılamadı.'})
-            .eq('id',1).eq('owner_user_id',userId).eq('refresh_version',revision));
-          return res.status(503).json({error:'Analiz başlatılamadı; GitHub Actions bağlantısını kontrol edin.'});
+          result = await requestHedgeJob(sb,userId,{fetcher,env});
+        } catch (error) {
+          return res.status(503).json({error:error.message});
         }
-        return res.status(202).json({status:'queued',revision,message:'Analiz sıraya alındı. Sonuç hazır olduğunda panel yenilenecek.'});
+        if (result.retryAfterSeconds>0) {
+          res.setHeader('Retry-After',String(result.retryAfterSeconds));
+          return res.status(429).json({error:`Yeni analiz için ${result.retryAfterSeconds} saniye bekleyin.`,retryAfterSeconds:result.retryAfterSeconds});
+        }
+        return res.status(202).json({status:result.status,revision:result.revision,
+          message:result.dispatch?'Analiz sıraya alındı. Sonuç hazır olduğunda panel yenilenecek.':
+            result.status==='running'?'Analiz zaten çalışıyor. Sonuç burada güncellenecek.':'Analiz zaten sırada. Sonuç burada güncellenecek.'});
       }
       return res.status(400).json({error:'Geçersiz radar işlemi.'});
     } catch (error) {
