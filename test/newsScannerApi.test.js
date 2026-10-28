@@ -14,6 +14,27 @@ test('haber taraması anonim kullanıcı veya JWT ile tetiklenemez; secret kontr
   const res = response(); await handler(request({ method: 'GET' }), res); assert.equal(res.code, 405);
 });
 
+test('haber anahtarı tanımlandığında yalnız o kabul edilir; kalkanın eski anahtarı haberleri açamaz', async () => {
+  const newsSecret = 'b'.repeat(64);
+  let scans = 0;
+  const handler = createNewsScannerHandler({ env: { CRON_SECRET: secret, NEWS_CRON_SECRET: newsSecret },
+    getDb: () => ({}), scan: async () => { scans++; return { skipped: true, feeds: [] }; } });
+  const old = response(); await handler(request(), old);
+  assert.equal(old.code, 401); assert.equal(scans, 0);
+  const fresh = response(); await handler(request({ headers: { 'x-cron-secret': newsSecret } }), fresh);
+  assert.equal(fresh.code, 200); assert.equal(scans, 1);
+  assert.ok(!JSON.stringify(fresh.body).includes(newsSecret));
+});
+
+test('haber anahtarı boş veya kısaysa eski anahtara dönülmez; kurulum hatası kapalı kalır', async () => {
+  for (const newsSecret of ['', 'short']) {
+    const handler = createNewsScannerHandler({ env: { CRON_SECRET: secret, NEWS_CRON_SECRET: newsSecret },
+      getDb: () => assert.fail('Geçersiz yapılandırma veri okuyamaz') });
+    const res = response(); await handler(request(), res);
+    assert.equal(res.code, 401);
+  }
+});
+
 test('geçerli secret ile sabit kaynaklar ve 60 saniyelik mod kullanılır; çeviri taramadan sonra sınırlı çalışır', async () => {
   const calls = [], sb = {};
   const handler = createNewsScannerHandler({ env: { CRON_SECRET: secret }, getDb: () => sb,

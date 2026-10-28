@@ -9,7 +9,8 @@ export function createNewsScannerHandler({ getDb = automationDb, scan = scanFree
   return async function newsScannerHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).json({ error: 'Yöntem desteklenmiyor.' });
-    if (!validCronSecret(req.headers?.['x-cron-secret'], env.CRON_SECRET)) {
+    const expectedSecret = env.NEWS_CRON_SECRET ?? env.CRON_SECRET;
+    if (!validCronSecret(req.headers?.['x-cron-secret'], expectedSecret)) {
       return res.status(401).json({ error: 'Geçersiz otomasyon kimliği.' });
     }
     try {

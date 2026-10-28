@@ -1,6 +1,6 @@
 -- Apply AFTER deployment and after creating two secrets in Supabase Vault:
 -- news_scan_url: https://YOUR-PRODUCTION-DOMAIN/api/account?feature=news-scan
--- news_cron_secret: the exact CRON_SECRET already configured in Vercel.
+-- news_cron_secret: the exact NEWS_CRON_SECRET configured in Vercel.
 -- Keep the actual secret in Vault; never commit it or paste it into chat.
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
@@ -14,7 +14,7 @@ begin
     raise exception 'Vault news_scan_url: üretim adresini /api/account?feature=news-scan ile kaydedin.';
   end if;
   if cron_secret is null or length(cron_secret)<32 then
-    raise exception 'Vault news_cron_secret: Vercel CRON_SECRET değerini kaydedin (en az 32 karakter).';
+    raise exception 'Vault news_cron_secret: Vercel NEWS_CRON_SECRET değerini kaydedin (en az 32 karakter).';
   end if;
 end $$;
 

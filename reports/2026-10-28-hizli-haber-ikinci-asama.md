@@ -36,7 +36,8 @@ ve tüm kaynakların bağlantı sorunu ekranda ayrı gösterilir.
 
 Supabase Cron, mevcut `/api/account?feature=news-scan` girişine dakikada bir POST
 gönderir. `/api/news/scan` aynı girişe yönlendirilir. Giriş, en az 32 karakterlik
-mevcut `CRON_SECRET` ile doğrulanır. Kullanıcı JWT'si veya istek gövdesiyle kaynak
+ayrı `NEWS_CRON_SECRET` ile doğrulanır. Bu değişken tanımlanmamış eski kurulumlarda
+`CRON_SECRET` kullanılabilir. Kullanıcı JWT'si veya istek gövdesiyle kaynak
 adresi/filtre/çalışma aralığı belirlenemez. Yeni Vercel fonksiyonu eklenmez.
 
 Cron, GitHub fallback ve isteğe bağlı daemon için ortak DB kilidi bulunur. Başlangıçlar
@@ -59,6 +60,13 @@ operasyon kayıtlarını kapsar. Geri dönüşte dakikalık iş pasife alınabil
 | TypeScript | `tsconfig.hedge.json` başarılı |
 | Üretim derlemesi | Başarılı |
 | `git diff --check` | Boşluk hatası yok |
+
+Kurulum takip düzeltmesi: Vercel Secret değerinin panelden okunamaması nedeniyle
+haber için ayrı anahtar desteği eklendi; kalkanın anahtarı değiştirilmez. Bağımsız
+haber anahtarı tanımlanınca yalnız o kabul edilir; boş/kısa bir değer yapılandırma
+hatası olarak kapalı kalır. İki yeni kimlik testiyle sunucu/veritabanı testleri
+yeniden çalıştırıldı: **103/103 başarılı**. Bu küçük API düzeltmesi ayrıca kod
+yayını gerektirir. Gizli değerler kodda veya raporda tutulmaz.
 
 Yeni testler; hızlı kaynağın yavaş kaynaktan önce gönderilmesi, cache ve kayıt
 hatasının tekrar denenmesi, önemsiz/tekrarlı haber filtresi, çeviriyi beklemeyen

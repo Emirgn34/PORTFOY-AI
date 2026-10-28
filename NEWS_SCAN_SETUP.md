@@ -35,8 +35,21 @@ Vercel fonksiyonu eklenmez; mevcut `api/account.js` üzerinden
 Bu fonksiyonun üst süresi 60 saniye olarak ayarlanır.
 
 Vercel'de mevcut `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, VAPID ayarları ve
-en az 32 karakterlik `CRON_SECRET` bulunmalı. Kalkan kurulumu için tanımlanmış
-`CRON_SECRET` yeniden kullanılabilir. Anahtarı değiştirmek gerekli değildir.
+en az 32 karakterlik ayrı `NEWS_CRON_SECRET` bulunmalı. Kalkan için kullanılan
+`CRON_SECRET` değiştirilmez. Vercel Secret değerleri kaydedildikten sonra panelden
+okunamadığından, var olan gizli değeri kopyalamak gerekli değildir. Ayrı haber
+anahtarı tanımlanmamış eski kurulumlarda `CRON_SECRET` kullanılmaya devam eder.
+
+Yeni haber anahtarını kendi bilgisayarınızda üretip doğrudan panoya almak için:
+
+```powershell
+node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))" | Set-Clipboard
+```
+
+Bu işlem anahtarı terminale yazdırmadan panoya kopyalar. Aynı değeri Vercel'de
+`NEWS_CRON_SECRET` (Production, Secret) ve Vault'ta `news_cron_secret` olarak
+kaydedin. İki kayıt arasında yeniden anahtar üretmeyin. Yeni ortam değişkeni için
+uygulamanın bu kodla yeniden yayımlanması gerekir.
 
 Tarama yalnızca doğru `x-cron-secret` başlığıyla POST üzerinden çağrılır. Kullanıcı
 JWT'si bu işlemi başlatamaz. İstek gövdesi kaynak, filtre veya tarama aralığı belirleyemez.
@@ -49,7 +62,7 @@ GitHub dosyasına veya ekran görüntüsüne koymayın.
 | Ad | Değer |
 | --- | --- |
 | `news_scan_url` | `https://portfoy-ai-ukyt.vercel.app/api/account?feature=news-scan` — üretim alan adı farklıysa onu kullanın |
-| `news_cron_secret` | Vercel'deki mevcut `CRON_SECRET` ile birebir aynı değer |
+| `news_cron_secret` | Bu kurulumda üretilip Vercel'e eklenen `NEWS_CRON_SECRET` ile birebir aynı değer |
 
 Vault ayarları Supabase projesinin Integrations / Vault bölümündedir. Arayüz yolu
 değişmişse resmi Vault belgesindeki yönetim yönergelerini kullanın:
