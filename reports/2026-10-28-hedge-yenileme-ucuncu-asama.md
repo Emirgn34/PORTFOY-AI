@@ -7,8 +7,21 @@ beş dakika bekleme mesajı. İkinci madde olan haber toplamada beş akışın H
 ile çalıştığı kullanıcının canlı Supabase sonucu ile doğrulandıktan sonra bu aşamaya
 geçildi. Gerçek yeni haberin telefonda görüntülenmesi ayrıca gözlemlenmelidir.
 
-Bu rapor hedge için yerel uygulama ve testleri kapsar. Yeni SQL/kod canlıya
-uygulanmadı ve yeni iş takibiyle canlı analiz henüz doğrulanmadı.
+Kullanıcı hedge SQL'ini uyguladı ve `50d18cc` kod yayınının Ready olduğunu bildirdi.
+İlk canlı iş yeni revizyon/run ID takibiyle başarıyla analiz kaydetti. Paneldeki
+görünüm ve kullanıcı düğmesiyle yeni manuel istek ayrıca doğrulanacak.
+
+## Canlı çalışma doğrulaması
+
+28 Ekim 17:39 İstanbul saatinde istek revizyonu 8 için iş kaydı, hesaplama ve
+tamamlama adımları başarıyla çalıştı:
+https://github.com/Emirgn34/PORTFOY-AI/actions/runs/40708040185
+
+Logda `started: true, revision: 8`, ardından `published: true` görüldü. Fiyat
+`as_of` zamanı İstanbul 17:35 idi. Son kurulum kontrolündeki dört kontrol de true
+olarak döndü. Son adım `unfinished_run_marked_failed: false` ile başarılı analizin
+başarısız sayılmadığını doğruladı. Yeni rejim bildirimi oluşmadığı için gönderim
+sayısı 0'dı; bu çalışma gerçek telefonda bildirim görüntülenmesini doğrulamaz.
 
 ## Bulgular
 
@@ -83,7 +96,7 @@ kısa hata beklemesi, beş dakikalık başarı beklemesi, otomatik backoff, eski
 reddi ve başarılı analizin bildirim hatasından korunması test edildi. API/motor
 testleri dış isteklere gerçek iş başlatmadan çalışır; Python verileri sentetiktir.
 Takvim testleri yaz/kış saati, hafta sonu ve tatili kapsar. Arayüz testleri jsdom
-kullanır; canlı yeni iş ve telefon testi yapılmadı. Gerçek hesapla hedge/finansal
+kullanır; canlı yeni iş yukarıdaki kayıtta ayrıca doğrulandı, telefon testi yapılmadı. Gerçek hesapla hedge/finansal
 emir verilmedi. Kullanıcıya ait mevcut dosyalar veya inceleme raporları silinmedi.
 
 ## Yayın sırası

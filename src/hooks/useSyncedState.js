@@ -2,129 +2,150 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../services/supabaseClient.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
-/**
- * Kullanıcıya bağlı, çok cihaz senkron durum hook'u.
- *
- * Giriş yapılmışsa veriyi Supabase'deki <table>.<column> (jsonb) satırından
- * okur/yazar — satır user_id'ye bağlıdır ve RLS ile yalnızca sahibi erişir.
- * Böylece kullanıcı hangi cihazdan girerse girsin aynı veriyi görür.
- * Giriş yoksa veya Supabase yapılandırılmamışsa localStorage'a düşer
- * (lokal/mock geliştirme bozulmaz).
- *
- * API, useLocalStorage ile uyumludur: [value, setValue] döner; setValue hem
- * doğrudan değeri hem de fonksiyonel updater'ı (prev => next) destekler.
- * Üçüncü eleman { loading, cloud } durum bilgisidir.
- *
- * NOT: Çağıran taraf, veri kullanıcının gerçek satırından gelene kadar (loading)
- * fiyat çekme gibi yan etkileri başlatmamalı — bu yüzden içerik bileşeni
- * yalnızca loading=false olunca mount edilmelidir.
- */
-export default function useSyncedState({
-  table,
-  column,
-  localKey,
-  seed,
-  cloudSeed = [],
-  readOnly = false,
-}) {
+// A remounted page waits for its previous save before reading the same account.
+const writesByScope = new Map();
+
+/** User-scoped JSON state. flush() saves a completed edit without the debounce. */
+export default function useSyncedState({ table, column, localKey, seed, cloudSeed = [], readOnly = false }) {
   const { configured, isAuthenticated, user } = useAuth();
   const cloud = Boolean(configured && isAuthenticated && supabase && user);
-
+  const owner = cloud ? user.id : null;
+  const scope = JSON.stringify([owner, table, column, localKey]);
   const [value, setValueState] = useState(seed);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [saveError, setSaveError] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const valueRef = useRef(seed);
-  const userIdRef = useRef(null);
-  const readyRef = useRef(false); // yükleme bitmeden cloud'a yazma yapılmaz
-  const saveTimer = useRef(null);
+  const readyRef = useRef(false);
+  const scopeRef = useRef(null);
+  const generationRef = useRef(0);
+  const timerRef = useRef(null);
+  const pendingRef = useRef(null);
+  const chainRef = useRef(Promise.resolve());
+  const ticketRef = useRef(0);
 
-  const apply = (v) => {
-    valueRef.current = v;
-    setValueState(v);
-  };
+  const flush = useCallback(() => {
+    clearTimeout(timerRef.current);
+    const pending = pendingRef.current;
+    if (!pending) return chainRef.current;
+    pendingRef.current = null;
+    // Serialize writes: a slower earlier save cannot overwrite the final order.
+    const previous = writesByScope.get(pending.scope) ?? Promise.resolve();
+    const task = previous.then(async () => {
+      try {
+        const { error } = await supabase.from(pending.table).upsert({
+          user_id: pending.owner,
+          [pending.column]: pending.data,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
+        if (generationRef.current === pending.generation && ticketRef.current === pending.ticket) {
+          setSaveStatus('saved');
+          setSaveError(null);
+        }
+        return true;
+      } catch (error) {
+        if (generationRef.current === pending.generation && ticketRef.current === pending.ticket) {
+          setSaveStatus('error');
+          setSaveError(error);
+        }
+        return false;
+      }
+    });
+    writesByScope.set(pending.scope, task);
+    void task.then(() => {
+      if (writesByScope.get(pending.scope) === task) writesByScope.delete(pending.scope);
+    });
+    chainRef.current = task;
+    return task;
+  }, []);
 
-  // Yükleme: cloud'dan veya localStorage'dan
   useEffect(() => {
     let active = true;
+    ++generationRef.current;
+    scopeRef.current = scope;
     readyRef.current = false;
     setLoading(true);
-
+    setLoadError(null);
+    setSaveStatus('idle');
+    setSaveError(null);
+    // Do not show another account's holdings during a change of session.
+    if (cloud) {
+      valueRef.current = cloudSeed;
+      setValueState(cloudSeed);
+    }
     (async () => {
-      if (cloud) {
-        userIdRef.current = user.id;
-        const { data } = await supabase
-          .from(table)
-          .select(column)
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (!active) return;
-        if (data && data[column] != null) {
-          apply(data[column]);
-        } else {
-          // İlk gerçek kullanıcıya demo hisseleri yazılmaz. Seed yalnızca yerel
-          // geliştirmede kullanılır; bulut hesabı boş ve kullanıcıya özel başlar.
-          // readOnly tüketici sayfalar (analiz/haber/fırsatlar) satır yazmaz —
-          // satırı yalnızca portföy/izleme sayfaları (sahibi düzenleyen) oluşturur.
-          apply(cloudSeed);
-          if (!readOnly) {
-            await supabase
-              .from(table)
-              .upsert({ user_id: user.id, [column]: cloudSeed, updated_at: new Date().toISOString() });
-          }
-        }
-      } else {
-        userIdRef.current = null;
+      try {
         let initial = seed;
-        try {
-          const stored = window.localStorage.getItem(localKey);
-          if (stored !== null) initial = JSON.parse(stored);
-        } catch {
-          /* erişilemezse seed kullan */
+        if (cloud) {
+          await writesByScope.get(scope);
+          if (!active) return;
+          const { data, error } = await supabase.from(table).select(column).eq('user_id', owner).maybeSingle();
+          if (error) throw error;
+          initial = data?.[column] ?? cloudSeed;
+        } else {
+          try {
+            const stored = window.localStorage.getItem(localKey);
+            if (stored !== null) initial = JSON.parse(stored);
+          } catch { /* A blocked local store still allows the local seed to load. */ }
         }
         if (!active) return;
-        apply(initial);
+        valueRef.current = initial;
+        setValueState(initial);
+        readyRef.current = true;
+      } catch (error) {
+        // A failed read is never treated as an empty portfolio to write back.
+        if (active) setLoadError(error);
+      } finally {
+        if (active) setLoading(false);
       }
-      if (!active) return;
-      readyRef.current = true;
-      setLoading(false);
     })();
-
     return () => {
       active = false;
+      readyRef.current = false;
+      ++generationRef.current;
+      // The queued edit keeps its original account ID even after navigation.
+      void flush();
     };
+    // Seeds are defaults, not triggers to reload a user's persisted data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloud, user?.id]);
+  }, [scope, cloud, reloadToken, flush]);
 
-  // Kalıcılaştır: cloud → debounce'lu upsert; local → anında localStorage
-  const persist = useCallback(
-    (data) => {
-      if (!readyRef.current) return; // yükleme sırasındaki ara güncellemeleri yazma
-      if (cloud && userIdRef.current) {
-        clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => {
-          supabase
-            .from(table)
-            .upsert({ user_id: userIdRef.current, [column]: data, updated_at: new Date().toISOString() })
-            .then(null, () => {});
-        }, 700);
-      } else {
-        try {
-          window.localStorage.setItem(localKey, JSON.stringify(data));
-        } catch {
-          /* localStorage dolu/erişilemez — sessizce geç */
-        }
+  const persist = useCallback((data) => {
+    const ticket = ++ticketRef.current;
+    setSaveError(null);
+    if (cloud) {
+      setSaveStatus('saving');
+      pendingRef.current = { data, owner, table, column, scope, ticket, generation: generationRef.current };
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => { void flush(); }, 700);
+    } else {
+      try {
+        window.localStorage.setItem(localKey, JSON.stringify(data));
+        setSaveStatus('saved');
+      } catch (error) {
+        setSaveStatus('error');
+        setSaveError(error);
       }
-    },
-    [cloud, table, column, localKey]
-  );
+    }
+  }, [cloud, owner, table, column, localKey, scope, flush]);
 
-  const setValue = useCallback(
-    (next) => {
-      const resolved = typeof next === 'function' ? next(valueRef.current) : next;
-      apply(resolved);
-      persist(resolved);
-    },
-    [persist]
-  );
+  const setValue = useCallback((next) => {
+    if (!readyRef.current || scopeRef.current !== scope || readOnly) return;
+    const resolved = typeof next === 'function' ? next(valueRef.current) : next;
+    if (Object.is(resolved, valueRef.current)) return;
+    valueRef.current = resolved;
+    setValueState(resolved);
+    persist(resolved);
+  }, [scope, readOnly, persist]);
 
-  return [value, setValue, { loading, cloud }];
+  const retrySave = useCallback(() => {
+    if (!readyRef.current || scopeRef.current !== scope || readOnly) return;
+    persist(valueRef.current);
+    return flush();
+  }, [scope, readOnly, persist, flush]);
+  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
+  return [value, setValue, { loading: loading || scopeRef.current !== scope, cloud, loadError, reload, saveStatus, saveError, retrySave, flush }];
 }

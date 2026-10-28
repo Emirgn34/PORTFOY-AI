@@ -1,5 +1,25 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 28 Ekim 2026: kişisel portföy sırası ve paylaşım görseli
+
+Yalnızca kod yayını gerekir; yeni SQL, anahtar veya zamanlayıcı yoktur.
+`package.json` ve kilit dosyası dnd-kit bağımlılıklarıyla birlikte yayımlanır.
+Kişisel sıra mevcut `portfolios.stocks` dizisinin sırası olarak saklanır.
+
+- Telefonda hissenin yanındaki tutamacı yaklaşık 300 ms basılı tutup yukarı/aşağı
+  taşıyın. Bilgisayarda fareyle sürükleyin veya tutamaca odaklanıp okları kullanın.
+  Kolon sıralaması geçicidir; `Kişisel sıra` kayıtlı düzene geri döner.
+- Kayıt tamamlandığında hesap/cihaz bilgisi gösterilir; hata varsa `Kaydı tekrar dene`
+  kullanılabilir. Sayfayı yeniden açıp, ardından aynı hesapla başka cihazdan kontrol edin.
+- `Hisseye Göre Dağılım` kartını sağa kaydırın veya `Paylaşım görseli` seçin.
+  Koyu turkuaz görselde yalnızca hisse kodları ve yüzdeler bulunur. `PNG indir`
+  kullanılabilir; dosya paylaşımını destekleyen tarayıcılar ayrıca `Paylaş` sunar.
+  Görsel tarayıcıda üretilir; paylaşım menüsünün açılması otomatik gönderim yapmaz.
+
+Otomatik testler ve SVG çıktısının görsel kontrolü yerelde yapıldı. Gerçek telefonda
+uzun basma, sayfa kaydırma ve PNG indirme/paylaşma yayın sonrası doğrulanmalıdır.
+Ayrıntılar `reports/2026-10-28-portfoy-duzeni-dorduncu-asama.md` dosyasındadır.
+
 ## 28 Ekim 2026: hedge yenileme takibi
 
 Önce `supabase/migrations/20261028_hedge_refresh_tracking.sql`, ardından GitHub ve

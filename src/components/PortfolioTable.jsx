@@ -1,4 +1,8 @@
-import { Pencil, Trash2, Inbox, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { useState } from 'react';
+import { Pencil, Trash2, Inbox, ArrowUp, ArrowDown, ArrowUpDown, GripVertical } from 'lucide-react';
+import { DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, useSortable, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   getStockMetrics,
   getPeriodChange,
@@ -19,7 +23,50 @@ function SortIcon({ column, sortConfig }) {
   );
 }
 
-export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, onSort, period }) {
+function SortableRow({ stock, disabled, onStep, children }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: stock.id, disabled });
+  const handle = (
+    <button
+      ref={setActivatorNodeRef}
+      type="button"
+      {...attributes}
+      {...listeners}
+      disabled={disabled}
+      aria-label={`${stock.ticker} sırasını değiştir`}
+      title={disabled ? 'Taşımak için Kişisel sıra seçin' : 'Basılı tutup taşıyın; klavyede yukarı/aşağı okları kullanın'}
+      onKeyDown={(event) => {
+        if (!isDragging && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          event.preventDefault();
+          onStep(stock.id, event.key === 'ArrowUp' ? -1 : 1);
+        } else listeners?.onKeyDown?.(event);
+      }}
+      onContextMenu={(event) => { if (!disabled) { event.preventDefault(); event.stopPropagation(); } }}
+      style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', userSelect: 'none' }}
+      className="-ml-2 flex h-10 w-8 shrink-0 cursor-grab items-center justify-center rounded-lg text-slate-500 hover:bg-navy-700 hover:text-accent-soft focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-25 active:cursor-grabbing"
+    >
+      <GripVertical size={18} />
+    </button>
+  );
+  return (
+    <tr ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.25 : 1 }} className="border-b border-navy-800 transition-colors last:border-0 hover:bg-navy-850">
+      {children(handle)}
+    </tr>
+  );
+}
+
+export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, onSort, period, onReorder }) {
+  const [activeId, setActiveId] = useState(null);
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 300, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const canReorder = Boolean(onReorder && !sortConfig.key);
+  const activeStock = stocks.find((stock) => stock.id === activeId);
+  function step(id, direction) {
+    const target = stocks[stocks.findIndex((stock) => stock.id === id) + direction];
+    if (canReorder && target) onReorder(id, target.id);
+  }
   const periodLabel = PERIOD_OPTIONS.find((p) => p.value === period)?.label ?? 'Gün';
 
   const columns = [
@@ -50,6 +97,25 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
   }
 
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={({ active }) => setActiveId(active.id)}
+      onDragCancel={() => setActiveId(null)}
+      onDragEnd={({ active, over }) => {
+        setActiveId(null);
+        if (canReorder && over && active.id !== over.id) onReorder(active.id, over.id);
+      }}
+      accessibility={{
+        screenReaderInstructions: { draggable: 'Taşımak için boşluk tuşuna basın, oklarla ilerleyin ve boşlukla bırakın. İptal için Escape tuşuna basın.' },
+        announcements: {
+          onDragStart: () => 'Hisse taşınıyor.',
+          onDragOver: ({ over }) => over ? `${stocks.findIndex((s) => s.id === over.id) + 1}. sıra.` : undefined,
+          onDragEnd: () => 'Hisse bırakıldı.',
+          onDragCancel: () => 'Taşıma iptal edildi.',
+        },
+      }}
+    >
     <div className="overflow-x-auto rounded-xl border border-navy-700/60 bg-navy-900">
       <table className="w-full min-w-[1000px] text-sm">
         <thead>
@@ -77,6 +143,7 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
             ))}
           </tr>
         </thead>
+        <SortableContext items={stocks.map((stock) => stock.id)} strategy={verticalListSortingStrategy}>
         <tbody>
           {stocks.map((stock) => {
             const m = getStockMetrics(stock);
@@ -90,14 +157,20 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
                   : 'text-loss';
 
             return (
-              <tr
+              <SortableRow
                 key={stock.id}
-                className="border-b border-navy-800 transition-colors last:border-0 hover:bg-navy-850"
+                stock={stock}
+                disabled={!canReorder}
+                onStep={step}
               >
+                {(handle) => <>
                 <td className="px-4 py-3">
-                  <div className="flex flex-col">
+                  <div className="flex items-center gap-1">
+                    {handle}
+                    <div className="flex flex-col">
                     <span className="font-bold text-ink">{stock.ticker}</span>
                     <span className="text-[11px] text-slate-500">{stock.market}</span>
+                    </div>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-slate-300">{stock.company}</td>
@@ -159,11 +232,17 @@ export default function PortfolioTable({ stocks, onEdit, onDelete, sortConfig, o
                     </button>
                   </div>
                 </td>
-              </tr>
+                </>}
+              </SortableRow>
             );
           })}
         </tbody>
+        </SortableContext>
       </table>
     </div>
+    <DragOverlay dropAnimation={null}>
+      {activeStock ? <div className="flex w-44 items-center gap-3 rounded-xl border border-teal-400/50 bg-[#0c2931] px-4 py-4 font-bold text-teal-100 shadow-xl"><GripVertical size={18} />{activeStock.ticker}</div> : null}
+    </DragOverlay>
+    </DndContext>
   );
 }

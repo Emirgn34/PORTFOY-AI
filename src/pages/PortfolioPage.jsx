@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, PieChart as PieChartIcon, BarChart3, RefreshCw, WifiOff, Loader2 } from 'lucide-react';
+import { Plus, PieChart as PieChartIcon, RefreshCw, WifiOff, Loader2, ListOrdered } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import useSyncedState from '../hooks/useSyncedState.js';
 import useLivePrices from '../hooks/useLivePrices.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import PortfolioSummaryCards from '../components/PortfolioSummaryCards.jsx';
 import PortfolioTable from '../components/PortfolioTable.jsx';
+import StockAllocationPanel from '../components/StockAllocationPanel.jsx';
+import { movePortfolioStock } from '../utils/portfolioOrder.js';
 import HedgeShieldDashboard from '../components/HedgeShieldDashboard.tsx';
 import StockFormModal from '../components/StockFormModal.jsx';
 import {
@@ -41,14 +43,14 @@ export default function PortfolioPage() {
   // Portföy artık kullanıcı hesabına bağlı (Supabase, çok cihaz senkron, RLS
   // izole); giriş yoksa localStorage'a düşer. Veri kullanıcının kendi satırından
   // gelene kadar içerik mount edilmez ki canlı fiyatlar doğru sembollerle çeksin.
-  const [stocks, setStocks, { loading }] = useSyncedState({
+  const [stocks, setStocks, sync] = useSyncedState({
     table: 'portfolios',
     column: 'stocks',
     localKey: STORAGE_KEY,
     seed: SEED_STOCKS,
   });
 
-  if (loading) {
+  if (sync.loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <Loader2 size={26} className="animate-spin text-accent-soft" />
@@ -56,10 +58,13 @@ export default function PortfolioPage() {
     );
   }
 
-  return <PortfolioContent stocks={stocks} setStocks={setStocks} />;
+  if (sync.loadError) {
+    return <div role="alert" className="rounded-xl border border-amber-500/30 bg-navy-900 p-6 text-sm text-slate-300">Portföy yüklenemedi. Yeniden denediğinizde kayıtlı verileriniz tekrar okunacak.<button type="button" onClick={sync.reload} className="ml-3 text-accent-soft underline">Tekrar dene</button></div>;
+  }
+  return <PortfolioContent stocks={stocks} setStocks={setStocks} sync={sync} />;
 }
 
-function PortfolioContent({ stocks, setStocks }) {
+function PortfolioContent({ stocks, setStocks, sync }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStock, setEditingStock] = useState(null);
   const [period, setPeriod] = useState('day');
@@ -78,7 +83,7 @@ function PortfolioContent({ stocks, setStocks }) {
   // Portföy bileşimi değişince (sembol/pazar) geçmiş veri yeniden çekilir;
   // canlı fiyat tiklerinde gereksiz çekim olmasın diye yalnızca sembol anahtarı izlenir.
   const symbolsKey = useMemo(
-    () => stocks.map((s) => `${s.market}:${s.ticker}`).join(','),
+    () => stocks.map((s) => `${s.market}:${s.ticker}`).sort().join(','),
     [stocks]
   );
 
@@ -126,6 +131,10 @@ function PortfolioContent({ stocks, setStocks }) {
         ? { key, direction: prev.direction === 'desc' ? 'asc' : 'desc' }
         : { key, direction: 'desc' }
     );
+  }
+  function handleReorder(activeId, overId) {
+    setStocks((prev) => movePortfolioStock(prev, activeId, overId));
+    void sync.flush();
   }
   const sectorAllocation = useMemo(() => getSectorAllocation(stocks), [stocks]);
   const stockAllocation = useMemo(() => getStockAllocation(stocks), [stocks]);
@@ -177,7 +186,8 @@ function PortfolioContent({ stocks, setStocks }) {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
           Hisselerim
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setSortConfig({ key: null, direction: 'desc' })} aria-pressed={!sortConfig.key} className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${!sortConfig.key ? 'border-accent/40 bg-accent/10 text-accent-soft' : 'border-navy-700 text-slate-400'}`}><ListOrdered size={14} />Kişisel sıra</button>
           {/* Canlı fiyat güncelleme (lokal veri sunucusu) */}
           {live.isOffline ? (
             <span
@@ -244,12 +254,17 @@ function PortfolioContent({ stocks, setStocks }) {
           sortConfig={sortConfig}
           onSort={handleSort}
           period={period}
+          onReorder={handleReorder}
         />
       </div>
-      <p className="-mt-4 text-[11px] text-slate-600">
-        Kolon başlıklarına tıklayarak sıralayabilirsiniz; "Toplam Maliyet" en çok para yatırılan
-        sıralamasını verir. Dönemsel değişim yüzdeleri şimdilik elle girilir, ileride fiyat
-        API'sinden otomatik dolacaktır.
+      <div aria-live="polite" className="flex flex-wrap items-center gap-2 text-xs">
+        {sync.saveStatus === 'saving' && <span className="text-slate-400">Kaydediliyor…</span>}
+        {sync.saveStatus === 'saved' && <span className="text-accent-soft">{sync.cloud ? 'Düzen hesabınıza kaydedildi.' : 'Düzen bu cihaza kaydedildi.'}</span>}
+        {sync.saveStatus === 'error' && <><span role="alert" className="text-amber-300">Değişiklikler kaydedilemedi.</span><button type="button" onClick={sync.retrySave} className="text-accent-soft underline">Kaydı tekrar dene</button></>}
+      </div>
+      <p className="text-[11px] text-slate-500">
+        Kişisel sırada, hissenin yanındaki tutamacı basılı tutup yukarı veya aşağı taşıyın.
+        Klavyede tutamaca odaklanıp ok tuşlarını kullanın. Kolon başlıklarıyla geçici sıralama yapabilirsiniz.
       </p>
 
       {stocks.length > 0 && (
@@ -298,38 +313,7 @@ function PortfolioContent({ stocks, setStocks }) {
             </div>
           </div>
 
-          {/* Hisseye göre dağılım — progress barlar */}
-          <div className="rounded-xl border border-navy-700/60 bg-navy-900 p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
-              <BarChart3 size={16} className="text-accent-soft" />
-              Hisseye Göre Dağılım
-            </h3>
-            <ul className="space-y-3">
-              {stockAllocation.map((item, i) => (
-                <li key={item.name}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="font-medium text-slate-300">{item.name}</span>
-                    <span className="tabular-nums text-slate-400">
-                      {formatCurrency(item.value)} •{' '}
-                      <span className="font-semibold text-ink">{item.percent.toFixed(1)}%</span>
-                    </span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-navy-700/70">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${item.percent}%`,
-                        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
-                      }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-4 text-[11px] text-slate-600">
-              * Dağılımlar, farklı para birimleri sabit örnek kurlarla TRY'ye çevrilerek hesaplanır.
-            </p>
-          </div>
+          <StockAllocationPanel allocation={stockAllocation} />
         </div>
       )}
 
