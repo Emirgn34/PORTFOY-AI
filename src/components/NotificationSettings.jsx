@@ -9,6 +9,7 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [topics, setTopics] = useState(['catalyst','source-portfolios']);
+  const [savedTopics, setSavedTopics] = useState([]);
   const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
   const supported = typeof window !== 'undefined' && window.isSecureContext && typeof Notification !== 'undefined' && 'PushManager' in window && 'serviceWorker' in navigator;
   const suggestedKey = suggestedTopics.join(',');
@@ -27,7 +28,8 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
           setConfig(data); setPermission(currentPermission);
           setEnabled(Boolean(stored) && !denied && !renewal);
           const suggestions = suggestedKey.split(',').filter((topic) => topic && data.allowedTopics?.includes(topic));
-          setTopics([...new Set([...(stored?.topics ?? ['catalyst', 'source-portfolios']), ...suggestions])]);
+          setSavedTopics(stored?.topics ?? []);
+          setTopics(stored ? [...stored.topics] : [...new Set(['catalyst', 'source-portfolios', ...suggestions])]);
           if (denied) setMessage('Bildirim izni tarayıcıda kapalı. Site ayarlarından izin verip tercihlerinizi yeniden kaydedin.');
           else if (renewal) setMessage('Bu cihazın bildirim bağlantısı yenilenmeli. Bildirimleri etkinleştir düğmesine basın.');
           else if (subscription && !stored) setMessage('Bu cihazın aboneliği sunucuda bulunamadı. Bildirimleri etkinleştirerek yeniden kaydedin.');
@@ -39,6 +41,7 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
   }, [supported, suggestedKey]);
   async function subscribe() {
     setBusy(true); setMessage('');
+    const submittedTopics=[...topics];
     try {
       // İzin isteği doğrudan düğme tıklamasında; öncesinde ağ beklenmez (iOS).
       const permission = await Notification.requestPermission();
@@ -53,9 +56,9 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
         setEnabled(false);
       }
       const subscription = existing ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
-      try { await automationRequest('push', { method: 'POST', body: { subscription: subscription.toJSON(), topics } }); }
+      try { await automationRequest('push', { method: 'POST', body: { subscription: subscription.toJSON(), topics:submittedTopics } }); }
       catch (error) { if (!existing) await subscription.unsubscribe(); throw error; }
-      setEnabled(true); setMessage('Bildirim tercihleri kaydedildi.');
+      setEnabled(true); setSavedTopics(submittedTopics); setMessage('Bildirim tercihleri kaydedildi.');
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
   }
@@ -67,7 +70,7 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
         await automationRequest('push', { method: 'DELETE', body: { endpoint: subscription.endpoint } });
         await subscription.unsubscribe();
       }
-      setEnabled(false); setMessage('Bu cihazda bildirimler kapatıldı.');
+      setEnabled(false); setSavedTopics([]); setMessage('Bu cihazda bildirimler kapatıldı.');
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
   }
@@ -79,9 +82,10 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
     </p>}
     <div className="flex flex-wrap gap-4 text-sm text-slate-300">
       {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['trade', 'Trade sinyalleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>!['hedge-radar','trade'].includes(key)||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
-        <input type="checkbox" checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}
+        <input type="checkbox" disabled={busy || !config} checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}
       </label>)}
     </div>
+    {enabled && [...topics].sort().join(',')!==[...savedTopics].sort().join(',') && <p className="text-xs text-amber-400">Seçtiğin bildirim konuları henüz kaydedilmedi. Etkinleşmeleri için bildirim tercihlerini kaydet.</p>}
     {!supported ? <p className="text-xs text-amber-400">Bu tarayıcıda telefon bildirimi kullanılamıyor. HTTPS üzerinden, desteklenen tarayıcı veya ana ekran uygulamasını açın.</p>
       : config && !config.configured ? <p className="text-xs text-amber-400">Bildirim hizmetinin sunucu kurulumu bekleniyor.</p>
         : <div className="flex flex-wrap gap-3"><button disabled={busy || !config?.configured || !topics.length} onClick={subscribe} className="rounded-lg bg-accent px-4 py-2 text-sm text-on-accent disabled:opacity-50">{busy ? 'Kaydediliyor…' : enabled ? 'Bildirim tercihlerini kaydet' : 'Bildirimleri etkinleştir'}</button>

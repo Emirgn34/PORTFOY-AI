@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 const MINUTE = 60_000;
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 const positive = (v) => finite(v) && v > 0;
-const round = (v, digits = 4) => Number(v.toFixed(digits));
+const round = (v, digits = 4) => finite(v) ? Number(v.toFixed(digits)) : null;
 const average = (values) => values.reduce((a, b) => a + b, 0) / values.length;
 const timestamp = (v) => typeof v === 'string' && /T.*(?:Z|[+-]\d\d:\d\d)$/.test(v) ? Date.parse(v) : NaN;
 const iso = (v) => Number.isFinite(v) ? new Date(v).toISOString() : null;
@@ -58,16 +58,25 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
 } = {}) {
   const clock = now instanceof Date ? now.getTime() : now;
   if (!Number.isFinite(clock)) throw new Error('Geçerli değerlendirme zamanı gerekli.');
+  quote = quote && typeof quote === 'object' && !Array.isArray(quote) ? quote : {};
+  context = context && typeof context === 'object' && !Array.isArray(context) ? context : {};
   // Caller options may tighten live-data guards, never loosen them.
   maxQuoteAgeMs = Math.min(15_000, positive(maxQuoteAgeMs) ? maxQuoteAgeMs : 15_000);
   maxBarAgeMs = Math.min(90_000, positive(maxBarAgeMs) ? maxBarAgeMs : 90_000);
   roundTripCostBps = finite(roundTripCostBps) && roundTripCostBps >= 0 ? roundTripCostBps : 20;
   const blockers = [], warnings = [], reasons = [];
+  // Keep upcoming risk context for the full supported holding horizon. A
+  // release outside the current blackout can still overlap a longer trade.
+  const macroRisks = (Array.isArray(context.macroEvents) ? context.macroEvents : [])
+    .filter((event) => event && typeof event === 'object' && ['high', 'critical'].includes(event.impact ?? event.importance))
+    .map((event) => ({ event, time: timestamp(event.time ?? event.date ?? event.startsAt) }))
+    .filter(({ time }) => Number.isFinite(time) && time >= clock - 30 * MINUTE && time <= clock + 6.5 * 60 * MINUTE);
   const symbolValid = typeof symbol === 'string' && /^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol);
   if (!symbolValid) blockers.push('Geçerli hisse sembolü eksik.');
   const bist = symbolValid && symbol.endsWith('.IS');
   const currency = bist ? 'TRY' : 'USD';
-  if (quote.currency !== currency) blockers.push('Fiyat para birimi doğrulanamadı.');
+  const currencyVerified=quote.currency===currency;
+  if (!currencyVerified) blockers.push('Fiyat para birimi doğrulanamadı.');
   const qt = timestamp(quote.marketTime), rt = timestamp(quote.receivedAt), sessionEnd = timestamp(quote.sessionEndsAt);
   const quoteAgeMs = Number.isFinite(qt) ? clock - qt : null;
   if (!Number.isFinite(qt) || clock - qt > maxQuoteAgeMs || qt > clock + 2000) blockers.push('Fiyat zaman damgası eksik, eski veya gelecekte.');
@@ -79,7 +88,7 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
   if (!Number.isFinite(sessionEnd) || sessionEnd - clock < 30 * MINUTE || sessionEnd - clock > 9 * 60 * MINUTE) blockers.push('Seans kapanışı doğrulanmadı veya yeni işlem için 30 dakikadan az kaldı.');
   if (!positive(quote.price) || !positive(quote.bid) || !positive(quote.ask) || quote.ask < quote.bid) blockers.push('Geçerli son fiyat ve alış/satış kotasyonu eksik.');
   const entry = positive(quote.ask) ? quote.ask : null;
-  const spreadBps = positive(quote.bid) && positive(quote.ask) && quote.ask >= quote.bid ? (quote.ask - quote.bid) / ((quote.ask + quote.bid) / 2) * 10_000 : null;
+  const spreadBps = positive(quote.bid) && positive(quote.ask) && quote.ask >= quote.bid ? (quote.ask - quote.bid) / (quote.ask / 2 + quote.bid / 2) * 10_000 : null;
   if (spreadBps != null && spreadBps > 25) blockers.push('Alış/satış farkı 25 baz puan sınırının üzerinde.');
   if (entry && positive(quote.price) && Math.abs(quote.price / entry - 1) > 0.005) blockers.push('Son işlem fiyatı ile kotasyon arasında tutarsızlık var.');
 
@@ -102,13 +111,13 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
   if (!Number.isFinite(sessionStart) || sessionStart % MINUTE !== 0 || sessionStart > clock || sessionStart >= sessionEnd) blockers.push('Seans başlangıcı doğrulanmadı; seans VWAP hesaplanamaz.');
   if (usable.length < 40) blockers.push('Aynı seansta kesintisiz en az 40 tamamlanmış dakikalık bar gerekli.');
   const volume = usable.reduce((sum, bar) => sum + bar.volume, 0);
-  if (volume <= 0) blockers.push('İşlem hacmi bulunamadı.');
+  if (!positive(volume)) blockers.push('İşlem hacmi bulunamadı veya geçersiz.');
   // VWAP must include all completed bars from regular-session open.
   if (Number.isFinite(sessionStart) && usable.length && timestamp(usable[0].time) !== sessionStart) blockers.push('Seans başından itibaren bar kapsamı eksik; VWAP doğrulanamadı.');
   if (usable.some((bar) => timestamp(bar.time) % MINUTE !== 0)) blockers.push('Dakikalık barlar dakika başlangıçlarına hizalı değil.');
 
-  let metrics = { spreadBps: spreadBps == null ? null : round(spreadBps, 2), roundTripCostBps }, scenarios = [], stopLoss = null, score = 0;
-  if (usable.length >= 40 && entry && volume > 0) {
+  let metrics = { spreadBps: spreadBps == null ? null : round(spreadBps, 2), roundTripCostBps }, scenarios = [], stopLoss = null, score = 0, riskLevelsValid=true;
+  if (usable.length >= 40 && entry && positive(volume)) {
     const closes = usable.map((bar) => bar.close);
     const vwap = usable.reduce((sum, bar) => sum + (bar.high + bar.low + bar.close) / 3 * bar.volume, 0) / volume;
     const ema9 = ema(closes, 9), ema21 = ema(closes, 21), strength = rsi(closes);
@@ -137,9 +146,14 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
     const stopDistance = Math.max(atr * 1.5, entry - Math.min(...usable.slice(-5).map((bar) => bar.low)), entry * 0.004);
     const stopPercent = stopDistance / entry * 100;
     stopLoss = round(entry - stopDistance);
+    riskLevelsValid=stopLoss>0 && stopLoss<round(entry);
+    if (!riskLevelsValid) blockers.push('Fiyat hassasiyeti giriş ve zarar kes seviyelerini ayırt etmeye yetmiyor.');
     if (stopPercent > 3) blockers.push('Gerekli zarar kes mesafesi %3 sınırını aşıyor.');
     const estimatedCostPerShare = entry * (roundTripCostBps + (spreadBps ?? 0)) / 10_000;
     const availableHours = Number.isFinite(sessionEnd) ? (sessionEnd - clock) / 3_600_000 : 0;
+    const finiteMetrics = [vwap, ema9, ema21, strength, atr, atrPercent, relativeVolume, minuteNotional,
+      momentumPercent, stopDistance, stopPercent, estimatedCostPerShare].every(finite);
+    if (!finiteMetrics) blockers.push('Gösterge ve risk hesabında geçersiz sayısal değer oluştu.');
     // Volatility-distance heuristic only. No calibrated first-passage forecast.
     scenarios = [
       { id: 'near', label: 'Görece temkinli hedef', risk: 'lower', multiple: 2, floor: 1 },
@@ -152,21 +166,30 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
       const centralHours = atr > 0 ? (targetDistance / atr) ** 2 / 60 : Infinity;
       const minHours = Math.max(0.5, Math.floor(centralHours * 0.5 * 2) / 2);
       const maxHours = Math.max(minHours + 0.5, Math.ceil(centralHours * 1.5 * 2) / 2);
-      const eligible = netRewardRisk >= 1.5 && maxHours <= availableHours && maxHours <= 6;
-      return { id, label, risk, targetPercent, targetPrice: round(entry + targetDistance), stopLoss,
-        netRewardRisk: round(netRewardRisk, 2), estimatedHours: Number.isFinite(maxHours) ? [minHours, maxHours] : null,
-        eligible, ineligibleReason: eligible ? null : netRewardRisk < 1.5 ? 'Maliyet sonrası getiri/risk 1,5 altında.' : 'Hedef penceresi kalan seansı veya 6 saati aşıyor.' };
+      const targetPrice=round(entry+targetDistance);
+      const finiteScenario = finiteMetrics && riskLevelsValid && targetPrice>round(entry) && [targetDistance, netRewardRisk, minHours, maxHours].every(finite);
+      const overlapsMacro = macroRisks.some(({ time }) => time - 30 * MINUTE <= clock + maxHours * 3_600_000
+        && time + 30 * MINUTE >= clock);
+      const eligible = finiteScenario && netRewardRisk >= 1.5 && maxHours <= availableHours && maxHours <= 6 && !overlapsMacro;
+      return { id, label, risk, targetPercent, targetPrice, stopLoss,
+        netRewardRisk: round(netRewardRisk, 2), estimatedHours: finiteScenario ? [minHours, maxHours] : null,
+        eligible, ineligibleReason: eligible ? null : !finiteScenario ? 'Hedef ve risk hesabındaki sayısal değerler geçersiz.'
+          : netRewardRisk < 1.5 ? 'Maliyet sonrası getiri/risk 1,5 altında.'
+            : maxHours > availableHours || maxHours > 6 ? 'Hedef penceresi kalan seansı veya 6 saati aşıyor.'
+              : 'İşlem penceresi yüksek etkili makro veri açıklamasıyla çakışıyor.' };
     });
     metrics = { ...metrics, ema9: round(ema9), ema21: round(ema21), vwap: round(vwap), rsi14: round(strength, 1),
       atr14: round(atr), atrPercent: round(atrPercent, 2), relativeVolume: round(relativeVolume, 2), minuteNotional: round(minuteNotional, 2),
       momentumPercent: round(momentumPercent, 2), stopPercent: round(stopPercent, 2), estimatedCostPerShare: round(estimatedCostPerShare),
       barsUsed: usable.length, trendConfirmed: trend, aboveVwap, availableHours: round(Math.max(0, availableHours), 2),
       durationMethod: 'Volatiliteye dayalı kalibre edilmemiş işlem penceresi; doğrulanmış varış süresi tahmini değildir.' };
-    if (!scenarios.some((scenario) => scenario.eligible)) blockers.push('Maliyet ve kalan seans sonrası uygun hedef senaryosu yok.');
+    if (!scenarios.some((scenario) => scenario.eligible)) blockers.push(scenarios.some((scenario) => scenario.ineligibleReason?.includes('makro veri'))
+      ? 'Makro veri açıklaması planlanan işlem pencereleriyle çakışıyor; uygun hedef senaryosu yok.'
+      : 'Maliyet ve kalan seans sonrası uygun hedef senaryosu yok.');
   }
 
   const news = (Array.isArray(context.news) ? context.news : []).filter((item) => {
-    const time = timestamp(item.publishedAt ?? item.published_at);
+    const time = timestamp(item?.publishedAt ?? item?.published_at);
     return time <= clock && clock - time <= 24 * 60 * MINUTE;
   }).slice(0, 5).map((item) => ({ title: String(item.titleTr ?? item.title_tr ?? item.title ?? '').slice(0, 500),
     url: typeof (item.url ?? item.link) === 'string' && /^https:\/\//.test(item.url ?? item.link) ? item.url ?? item.link : null,
@@ -179,11 +202,8 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
   const earnings = timestamp(earningsValue);
   if (Number.isFinite(earnings) && earnings >= clock - 15 * MINUTE && earnings <= clock + 24 * 60 * MINUTE) blockers.push('Yakın bilanço açıklaması nedeniyle yeni trade sinyali durduruldu.');
   if (Number.isFinite(earningsDay) && earningsDay <= clock + 24 * 60 * MINUTE && earningsDay + 24 * 60 * MINUTE > clock) blockers.push('Bilanço günü / açıklama saati belirsiz; yeni trade sinyali durduruldu.');
-  const events = (Array.isArray(context.macroEvents) ? context.macroEvents : []).filter((event) => {
-    const time = timestamp(event.time ?? event.date ?? event.startsAt);
-    return ['high', 'critical'].includes(event.impact ?? event.importance) && Math.abs(time - clock) <= 30 * MINUTE;
-  });
-  if (events.length) blockers.push('Yüksek etkili makro veri penceresinde yeni sinyal durduruldu.');
+  const events = macroRisks.map(({ event }) => event);
+  if (macroRisks.some(({ time }) => Math.abs(time - clock) <= 30 * MINUTE)) blockers.push('Yüksek etkili makro veri penceresinde yeni sinyal durduruldu.');
   warnings.push('İşlem pencereleri ve skor geçmiş testle kalibre edilmedi; skor başarı olasılığı değildir.');
   warnings.push('Yakın hedef, sermaye kaybı riskinin düşük olduğu anlamına gelmez. Zarar kes fiyatı gerçekleşme garantisi vermez.');
   if (!Number.isFinite(earnings) && !Number.isFinite(earningsDay)) warnings.push('Bilanço takvimi kapsamı eksik; sağlayıcı takvimi ayrıca doğrulanmalı.');
@@ -194,11 +214,12 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
   const expiry = Math.min(clock + 30_000, Number.isFinite(qt) ? qt + maxQuoteAgeMs : clock, Number.isFinite(barClose) ? barClose + maxBarAgeMs : clock);
   const id = createHash('sha256').update(`${symbol}|${iso(barClose)}|long-v1`).digest('hex').slice(0, 24);
   const activeScenario = scenarios.find((scenario) => scenario.eligible);
-  return { id, symbol: symbolValid ? symbol : '', name: String(quote.name ?? quote.shortName ?? context.candidate?.companyName ?? symbol ?? '').slice(0, 120), currency,
-    market: bist ? 'BIST' : 'ABD', direction: 'long', status, score, entry: entry ? round(entry) : null, stopLoss,
-    scenarios, estimatedHours: activeScenario?.estimatedHours ?? null, reasons, blockers: unique(blockers), warnings: unique(warnings), metrics,
+  return { id, symbol: symbolValid ? symbol : '', name: String(quote.name ?? quote.shortName ?? context.candidate?.companyName ?? symbol ?? '').slice(0, 120), currency:currencyVerified?currency:null,
+    market: bist ? 'BIST' : 'ABD', direction: 'long', status, score, entry: currencyVerified && riskLevelsValid && entry ? round(entry) : null, stopLoss:currencyVerified && riskLevelsValid?stopLoss:null,
+    scenarios:currencyVerified && riskLevelsValid?scenarios:[], estimatedHours: currencyVerified && riskLevelsValid?activeScenario?.estimatedHours ?? null:null, reasons, blockers: unique(blockers), warnings: unique(warnings), metrics,
     dataQuality: { quoteTime: iso(qt), receivedAt: iso(rt), barTime: iso(barClose), quoteAgeMs, barAgeMs,
       source: String(quote.source ?? '').slice(0, 100), realtime: quote.realtime === true, sessionVerified: quote.sessionVerified === true,
+      currencyVerified,expectedCurrency:currency,quoteCurrency:typeof quote.currency==='string'?quote.currency.slice(0,10):null,
       halted: quote.halted, sessionStartsAt: iso(sessionStart), sessionEndsAt: iso(sessionEnd), transportLatencyMs: Number.isFinite(rt) && Number.isFinite(qt) ? rt - qt : null },
     createdAt: iso(clock), expiresAt: iso(expiry),
     context: { news, candidate: context.candidate ? { score: context.candidate.score ?? context.candidate.shortTermScore ?? null,

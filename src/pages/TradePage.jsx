@@ -74,7 +74,7 @@ function TradeDetail({ candidate, now, onClose }) {
   const costPerShare = Number.isFinite(candidate.metrics?.estimatedCostPerShare)
     ? candidate.metrics.estimatedCostPerShare : candidate.entry * (costBps + (candidate.metrics?.spreadBps ?? 0)) / 10000;
   const lossPerShare = candidate.entry - candidate.stopLoss + costPerShare;
-  const canSize = Number(capital) > 0 && Number(riskBudget) > 0 && Number(riskBudget) <= 5
+  const canSize = Number.isFinite(Number(capital)) && Number(capital) > 0 && Number.isFinite(Number(riskBudget)) && Number(riskBudget) > 0 && Number(riskBudget) <= 5
     && Number.isFinite(costPerShare) && costPerShare >= 0 && candidate.entry > candidate.stopLoss && candidate.stopLoss > 0 && lossPerShare > 0;
   const quantity = canSize ? Math.max(0, Math.floor(Math.min(Number(capital) / (candidate.entry + costPerShare),
     Number(capital) * Number(riskBudget) / 100 / lossPerShare))) : null;
@@ -106,7 +106,7 @@ function TradeDetail({ candidate, now, onClose }) {
         <button ref={closeButton} onClick={onClose} aria-label="Trade detayını kapat" className="rounded-lg p-2 text-slate-400 hover:bg-navy-800"><X size={20} /></button>
       </div>
       <div className="space-y-5 p-5">
-        {!actionable && <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-400">{candidate.status === 'ready' ? 'Sinyalin süresi doldu. Yeni ve doğrulanmış veri gelene kadar işlem koşulları geçerli değil.' : 'Bu hisse şu an işlem için uygun değil. Aşağıdaki seviyeler inceleme senaryosudur.'}</p>}
+        {!actionable && <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-400">{candidate.availability === 'research-only' ? 'Bu kart mevcut fırsat analizinden gelen araştırma adayıdır. Doğrulanmış canlı fiyat ve hacim bağlantısı kurulana kadar gün içi trade sinyali üretilmez.' : candidate.status === 'ready' ? 'Sinyalin süresi doldu. Yeni ve doğrulanmış veri gelene kadar işlem koşulları geçerli değil.' : 'Bu hisse şu an işlem için uygun değil. Aşağıdaki seviyeler inceleme senaryosudur.'}</p>}
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-navy-850 p-4 text-sm sm:grid-cols-3">
           <div><p className="text-slate-400">Referans giriş</p><p className="mt-1 font-semibold tabular-nums text-ink">{price(candidate.entry, candidate.currency)}</p></div>
           <div><p className="text-slate-400">Zarar kes</p><p className="mt-1 font-semibold tabular-nums text-loss">{price(candidate.stopLoss, candidate.currency)}</p></div>
@@ -148,6 +148,7 @@ export default function TradePage() {
     return symbol && /^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol) ? symbol : null;
   });
   const clockAnchor = useRef(null);
+  const preferenceRevision = useRef(0);
   const [preferenceBusy, setPreferenceBusy] = useState(false);
   const [preferenceMessage, setPreferenceMessage] = useState('');
   const closeDetail = useRef(() => setSelectedSymbol(null)).current;
@@ -159,6 +160,7 @@ export default function TradePage() {
       loading = true;
       request = new AbortController();
       const requestStarted = performance.now();
+      const requestedPreferenceRevision = preferenceRevision.current;
       try {
         const next = await tradeRequest('state', { signal: request.signal });
         if (active && !request.signal.aborted) {
@@ -169,9 +171,14 @@ export default function TradePage() {
           clockAnchor.current = Number.isFinite(serverTime)
             ? { server: serverTime + Math.max(0, monotonic - requestStarted), monotonic } : null;
           setNow(clockAnchor.current?.server ?? Number.POSITIVE_INFINITY);
-          setData(next); setError('');
+          setData((previous) => requestedPreferenceRevision === preferenceRevision.current
+            ? next : { ...next, preferences: previous?.preferences ?? next.preferences });
+          setError('');
         }
-      } catch (e) { if (active && !request.signal.aborted) setError(e.message || 'Trade bağlantısı kurulamadı.'); }
+      } catch (e) { if (active && !request.signal.aborted) {
+        clockAnchor.current=null;setNow(Number.POSITIVE_INFINITY);
+        setError(e.message || 'Trade bağlantısı kurulamadı.');
+      } }
       finally {
         loading = false;
         if (active && document.visibilityState !== 'hidden') timer = setTimeout(load, 5000);
@@ -194,12 +201,13 @@ export default function TradePage() {
   const selected = items.find((item) => item.symbol === selectedSymbol);
   const readyCount = items.filter((item) => live(item, now)).length;
   const status = data?.status;
-  const running = !error && status?.running && now - Date.parse(status.lastHeartbeatAt) <= 30000
+  const running = !error && status?.running && now - Date.parse(status.lastHeartbeatAt) <= (status.heartbeatMaxAgeMs ?? 30000)
     && Date.parse(status.lastHeartbeatAt) <= now + 2000;
   async function savePreference(enabled) {
     setPreferenceBusy(true); setPreferenceMessage('');
     try {
       const saved = await tradeRequest('preferences', { method: 'POST', body: { enabled } });
+      preferenceRevision.current += 1;
       setData((previous) => ({ ...previous, preferences: { ...previous?.preferences, ...(saved.preferences ?? saved), enabled: saved.preferences?.enabled ?? saved.enabled ?? enabled } }));
       setPreferenceMessage(enabled ? 'Trade uyarıları hesabın için açıldı. Bu telefonda da aşağıdaki bildirim aboneliğini kaydet.' : 'Trade uyarıları hesabın için kapatıldı.');
     } catch (e) { setPreferenceMessage(e.message); }
@@ -222,11 +230,13 @@ export default function TradePage() {
       {items.map((candidate) => {
         const actionable = live(candidate, now);
         const expired = candidate.status === 'ready' && !actionable;
+        const researchOnly = candidate.availability === 'research-only';
         return <button key={candidate.symbol} onClick={() => setSelectedSymbol(candidate.symbol)} aria-label={`${candidate.symbol} trade detayını aç`} className="group flex h-full flex-col rounded-xl border border-navy-700 bg-navy-900 p-5 text-left transition-colors hover:border-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
           <div className="mb-4 flex w-full items-start justify-between gap-3"><div><h3 className="text-lg font-semibold text-ink">{candidate.symbol}</h3><p className="mt-1 text-xs text-slate-400">{candidate.name || candidate.market}</p></div><ArrowUpRight size={20} className="shrink-0 text-slate-500 group-hover:text-accent" /></div>
-          <span className={`mb-4 inline-flex self-start rounded-full px-2.5 py-1 text-xs font-medium ${actionable ? 'bg-gain/10 text-gain' : 'bg-amber-400/10 text-amber-400'}`}>{expired ? 'Süresi doldu' : STATUS_LABELS[candidate.status] || 'İzlemede'}</span>
-          <p className="text-xl font-semibold tabular-nums text-ink">{price(candidate.entry, candidate.currency)}</p>
+          <span className={`mb-4 inline-flex self-start rounded-full px-2.5 py-1 text-xs font-medium ${actionable ? 'bg-gain/10 text-gain' : 'bg-amber-400/10 text-amber-400'}`}>{researchOnly ? 'Canlı veri bağlantısı bekleniyor' : expired ? 'Süresi doldu' : STATUS_LABELS[candidate.status] || 'İzlemede'}</span>
+          <p className="text-xl font-semibold tabular-nums text-ink">{researchOnly && candidate.entry == null ? 'Gün içi fiyat bekleniyor' : price(candidate.entry, candidate.currency)}</p>
           <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-accent"><Clock3 size={14} />{duration(candidate.estimatedHours)}</p>
+          {researchOnly && <p className="mt-3 text-xs leading-relaxed text-slate-400">Mevcut fırsat analizinden araştırma adayı. Gün içi işlem planı için bu hisseye ait doğrulanmış canlı fiyat ve hacim akışı gerekli.</p>}
           <div className="mt-4 w-full border-t border-navy-700 pt-4"><p className="mb-2 text-xs font-semibold text-slate-400">Neden bu hisse?</p><ul className="space-y-2 text-sm leading-relaxed text-slate-300">{reasons(candidate, 'reasons').slice(0, 3).map((reason, index) => <li key={index}>{reason}</li>)}</ul>{!reasons(candidate, 'reasons').length && <p className="text-sm text-slate-400">İşlem gerekçesi için veri toplanıyor.</p>}</div>
           {reasons(candidate, 'blockers')[0] && <p className="mt-4 text-xs leading-relaxed text-amber-400">{reasons(candidate, 'blockers')[0]}</p>}
           <p className="mt-auto pt-4 text-[11px] text-slate-500">Oluşturulma: {date(candidate.createdAt)}</p>

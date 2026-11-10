@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
-import {normalizeTradeBatch,currentTradeItem,processTradeBatch,candidateTradeSymbol,loadTradeContexts} from '../server/tradeData.js';
+import {normalizeTradeBatch,currentTradeItem,processTradeBatch,candidateTradeSymbol,loadTradeContexts,tradeMonitorState,tradeRequirements} from '../server/tradeData.js';
 import {buildTradeCandidate} from '../server/tradeEngine.js';
 import {createTradeHandler} from '../server/tradeApi.js';
 import {readTradeFeed,tradeUniverse} from '../server/tradeWorker.js';
@@ -73,6 +73,52 @@ test('BIST candidates keep Yahoo suffix in universe, context lookup and fallback
   assert.equal(res.statusCode,200);assert.equal(res.body.items[0].symbol,'THYAO.IS');
   assert.equal(res.body.items[0].market,'BIST');assert.equal(res.body.items[0].name,'Türk Hava Yolları');
   assert.equal(res.body.items[0].status,'blocked');
+  assert.equal(res.body.items[0].availability,'research-only');
+  assert.match(res.body.items[0].blockers[0],/Canlı trade veri kaynağı henüz bağlanmadı/);
+  assert.ok(!res.body.items[0].blockers.some((text)=>text.includes('para birimi')));
+});
+
+test('saved research coverage is completed with missing candidates without duplicate stock cards',async()=>{
+  const db=resultDb({trade_signals:[{data:{symbol:'AAPL',status:'watch'}}],candidates:[
+    {symbol:'AAPL',market:'NASDAQ',horizon:'short',data:{}},
+    {symbol:'THYAO',market:'BIST',horizon:'short',data:{companyName:'Türk Hava Yolları'}},
+  ]});
+  const handler=createTradeHandler({getDb:()=>db,now:()=>clock});const res=response();
+  await handler({method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},res);
+  assert.equal(res.statusCode,200);assert.deepEqual(res.body.items.map((item)=>item.symbol),['AAPL','THYAO.IS']);
+  assert.equal(res.body.items[1].availability,'research-only');assert.equal(res.body.status.mode,'unconfigured');
+});
+
+test('research heartbeat remains valid between minute polls, licensed heartbeat stays strict and future clocks fail closed',()=>{
+  const monitor={updated_at:new Date(clock-45_000).toISOString(),data:{ok:true,running:true,mode:'delayed-research'}};
+  assert.deepEqual(tradeMonitorState(monitor,clock),{heartbeatMaxAgeMs:90_000,running:true});
+  monitor.data.mode='licensed-http';assert.equal(tradeMonitorState(monitor,clock).running,false);
+  monitor.updated_at=new Date(clock+10_000).toISOString();assert.equal(tradeMonitorState(monitor,clock).running,false);
+});
+
+test('a configured source and heartbeat alone do not claim verified live price availability',()=>{
+  const options={licensedSource:'Feed',now:clock,monitor:{updated_at:new Date(clock).toISOString(),data:{ok:true,running:true,mode:'licensed-http'}}};
+  assert.equal(tradeRequirements(options).find((row)=>row.id==='realtime').status,'partial');
+  options.items=[{dataQuality:{realtime:true,currencyVerified:true,sessionVerified:true,halted:false,quoteTime:new Date(clock-1000).toISOString()},metrics:{spreadBps:2}}];
+  assert.equal(tradeRequirements(options).find((row)=>row.id==='realtime').status,'available');
+  options.items[0].dataQuality.quoteTime=new Date(clock-20_000).toISOString();
+  assert.equal(tradeRequirements(options).find((row)=>row.id==='realtime').status,'partial');
+});
+
+test('temporary auth service failure returns a controlled response rather than an unhandled exception',async()=>{
+  const db=resultDb();db.auth.getUser=async()=>{throw new Error('network down');};
+  const handler=createTradeHandler({getDb:()=>db});const res=response();
+  await handler({method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},res);
+  assert.equal(res.statusCode,503);assert.match(res.body.error,/Oturum doğrulama hizmetine/);
+});
+
+test('a known feed outage revokes a saved ready signal before its quote age expires',async()=>{
+  const ready={symbol:'AAPL',status:'ready',createdAt:new Date(clock-1000).toISOString(),expiresAt:new Date(clock+10_000).toISOString(),
+    dataQuality:{realtime:true,sessionVerified:true,halted:false,quoteTime:new Date(clock-1000).toISOString(),barTime:new Date(clock-30_000).toISOString()},
+    scenarios:[{eligible:true}],blockers:[]};
+  const db=resultDb({trade_signals:[{data:ready}],monitor_status:[{id:'trade',updated_at:new Date(clock).toISOString(),data:{ok:false,running:false,mode:'licensed-http'}}]});
+  const res=response();await createTradeHandler({getDb:()=>db,now:()=>clock})({method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},res);
+  assert.equal(res.statusCode,200);assert.equal(res.body.items[0].status,'blocked');assert.equal(res.body.items[0].scenarios[0].eligible,false);
 });
 
 test('trade API authenticates users, derives owner from JWT, and separates feed credential',async()=>{
@@ -115,6 +161,9 @@ async function database() {
   await db.exec(await readFile(new URL('../supabase/automation-schema.sql',import.meta.url),'utf8'));
   const migration=await readFile(new URL('../supabase/migrations/20261111_trade.sql',import.meta.url),'utf8');
   await db.exec(migration);await db.exec(migration);
+  const ordering=await readFile(new URL('../supabase/migrations/20261111_trade_publication_order.sql',import.meta.url),'utf8');
+  await db.exec(ordering);await db.exec(ordering);
+  await db.exec("insert into monitor_status(id,data) values('trade','{\"ok\":true,\"running\":true,\"mode\":\"licensed-http\"}')");
   return db;
 }
 
@@ -137,14 +186,39 @@ test('SQL trade publication and opt-in outbox are atomic, idempotent and isolate
     assert.equal(events.length,1);assert.equal(events[0].data.userId,owner);
     const allowed=(user)=>db.query('select trade_delivery_allowed($1,$2) as ok',[events[0].id,user]);
     assert.equal((await allowed(owner)).rows[0].ok,true);assert.equal((await allowed(other)).rows[0].ok,false);
+    await db.exec("update monitor_status set data='{\"ok\":false,\"running\":false}' where id='trade'");
+    assert.equal((await allowed(owner)).rows[0].ok,false,'known feed outage cancels queued fresh alerts');
+    await db.exec("update monitor_status set data='{\"ok\":true,\"running\":true}' where id='trade'");
     // A halt with the SAME last trade timestamp must revoke an active signal.
     await publish({...ready,status:'blocked'});
     assert.equal((await allowed(owner)).rows[0].ok,false);
-    await publish(ready);await db.query('update trade_preferences set enabled=false where user_id=$1',[owner]);
+    await publish(ready,new Date(Date.now()).toISOString());
+    assert.equal((await allowed(owner)).rows[0].ok,true);
+    await db.query('update trade_preferences set enabled=false where user_id=$1',[owner]);
     assert.equal((await allowed(owner)).rows[0].ok,false);
     await db.exec('set role authenticated');
     await assert.rejects(db.query('select * from trade_signals'),/permission denied/);
     await assert.rejects(publish(ready),/permission denied/);
+  } finally {await db.close();}
+});
+
+test('SQL late ready snapshots cannot undo equal-time halts and research cannot replace a fresh licensed quote',async()=>{
+  const db=await database();
+  try {
+    const time=Date.now(),quoteTime=new Date(time-2000).toISOString();
+    const signal={symbol:'AAPL',id:'ordering',status:'ready',expiresAt:new Date(time+10_000).toISOString(),
+      reasons:[],dataQuality:{receivedAt:new Date(time-1500).toISOString()}};
+    const publish=async(data,qtime=quoteTime,realtime=true)=>
+      (await db.query('select publish_trade_signal($1,$2,$3,$4) as published',[JSON.stringify(data),qtime,realtime,realtime?'licensed':'research'])).rows[0].published;
+    assert.equal(await publish(signal),true);
+    const halted={...signal,status:'blocked',dataQuality:{receivedAt:new Date(time-500).toISOString()}};
+    assert.equal(await publish(halted),true);
+    assert.equal(await publish(signal),false);
+    assert.equal(await publish({...signal,dataQuality:{receivedAt:new Date(time).toISOString()}}),false,'same market timestamp cannot upgrade a halted quote');
+    assert.equal((await db.query('select data from trade_signals')).rows[0].data.status,'blocked');
+    assert.equal(await publish({...signal,dataQuality:{receivedAt:new Date(time).toISOString()}},new Date(time-100).toISOString()),true);
+    assert.equal(await publish({...halted,dataQuality:{receivedAt:new Date(time).toISOString()}},new Date(time).toISOString(),false),false);
+    assert.equal((await db.query('select data from trade_signals')).rows[0].data.status,'ready');
   } finally {await db.close();}
 });
 

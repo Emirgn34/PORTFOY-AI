@@ -99,10 +99,15 @@ test('Trade sayfasında önerilen konu mevcut cihazın diğer konuları korunara
   render(<NotificationSettings suggestedTopics={['trade']} />);
   const save = await screen.findByRole('button', { name: 'Bildirim tercihlerini kaydet' });
   await waitFor(() => expect(save).toBeEnabled());
-  expect(screen.getByRole('checkbox', { name: 'Trade sinyalleri' })).toBeChecked();
+  const trade=screen.getByRole('checkbox', { name: 'Trade sinyalleri' });
+  expect(trade).not.toBeChecked();
   expect(Notification.requestPermission).not.toHaveBeenCalled();
   expect(automationRequest).toHaveBeenCalledTimes(1);
+  fireEvent.click(trade);
+  expect(screen.getByText(/Seçtiğin bildirim konuları henüz kaydedilmedi/)).toBeInTheDocument();
   fireEvent.click(save);
+  expect(trade).toBeDisabled();
   await waitFor(() => expect(automationRequest).toHaveBeenCalledWith('push', { method: 'POST',
     body: { subscription: old.toJSON(), topics: ['catalyst', 'source-portfolios', 'trade'] } }));
+  await waitFor(()=>expect(screen.queryByText(/Seçtiğin bildirim konuları henüz kaydedilmedi/)).not.toBeInTheDocument());
 });

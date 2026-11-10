@@ -135,3 +135,86 @@ test('a bearish or unconfirmed setup remains watch, never an actionable buy', ()
   const candidate = buildTradeCandidate(input, { now });
   assert.equal(candidate.status, 'watch'); assert.equal(isTradeCandidateFresh(candidate, now), false);
 });
+
+test('mismatched source currency never relabels a numeric entry as USD or exposes trade levels',()=>{
+  const input=snapshot();input.quote.currency='EUR';
+  const candidate=buildTradeCandidate(input,{now});
+  assert.equal(candidate.status,'blocked');assert.equal(candidate.currency,null);
+  assert.equal(candidate.entry,null);assert.equal(candidate.stopLoss,null);assert.deepEqual(candidate.scenarios,[]);
+  assert.equal(candidate.dataQuality.expectedCurrency,'USD');assert.equal(candidate.dataQuality.quoteCurrency,'EUR');
+  assert.equal(candidate.dataQuality.currencyVerified,false);
+});
+
+test('tiny quoted prices cannot round entry and stop to the same level and become actionable',()=>{
+  const input=snapshot();
+  for (const key of ['price','bid','ask']) input.quote[key]/=1_000_000;
+  input.bars=input.bars.map((bar)=>({...bar,open:bar.open/1_000_000,high:bar.high/1_000_000,
+    low:bar.low/1_000_000,close:bar.close/1_000_000,volume:bar.volume*1_000_000}));
+  const candidate=buildTradeCandidate(input,{now});
+  assert.equal(candidate.status,'blocked');assert.match(candidate.blockers.join(' '),/Fiyat hassasiyeti/);
+  assert.equal(candidate.entry,null);assert.equal(candidate.stopLoss,null);assert.deepEqual(candidate.scenarios,[]);
+});
+
+test('a known macro release inside the holding window remains visible and blocks overlapping targets', () => {
+  const input = snapshot();
+  input.context.macroEvents = [{ title: 'Yüksek etkili açıklama', date: iso(now + 60 * 60_000), impact: 'high' }];
+  const candidate = buildTradeCandidate(input, { now });
+  assert.equal(candidate.status, 'blocked');
+  assert.equal(candidate.context.macroEvents[0].title, 'Yüksek etkili açıklama');
+  assert.ok(candidate.scenarios.every((scenario) => !scenario.eligible));
+  assert.match(candidate.scenarios[0].ineligibleReason, /makro veri/);
+  assert.ok(candidate.blockers.some((message) => message.includes('Makro veri açıklaması')));
+  assert.equal(isTradeCandidateFresh(candidate, now), false);
+});
+
+test('a shorter safe target can remain ready while a longer target overlaps an upcoming macro release', () => {
+  const input = snapshot();
+  input.context.macroEvents = [{ title: 'Daha sonraki açıklama', startsAt: iso(now + 150 * 60_000), importance: 'critical' }];
+  const candidate = buildTradeCandidate(input, { now });
+  assert.equal(candidate.status, 'ready');
+  assert.equal(candidate.scenarios[0].eligible, true);
+  assert.equal(candidate.scenarios[1].eligible, false);
+  assert.match(candidate.scenarios[1].ineligibleReason, /makro veri/);
+  assert.equal(candidate.context.macroEvents.length, 1);
+  assert.deepEqual(candidate.estimatedHours, candidate.scenarios[0].estimatedHours);
+});
+
+test('current macro blackout stays enforced; malformed calendar entries cannot create valid events', () => {
+  const input = snapshot();
+  input.context.macroEvents = [null, { date: 'unknown', impact: 'high' }, { date: iso(now), impact: 'medium' }];
+  input.context.news = [null];
+  const clean = buildTradeCandidate(input, { now });
+  assert.equal(clean.status, 'ready');
+  assert.deepEqual(clean.context.macroEvents, []);
+  for (const minutes of [-20, 20]) {
+    input.context.macroEvents = [{ date: iso(now + minutes * 60_000), impact: 'high' }];
+    const blocked = buildTradeCandidate(input, { now });
+    assert.equal(blocked.status, 'blocked');
+    assert.ok(blocked.blockers.some((message) => message.includes('Yüksek etkili makro veri penceresinde')));
+  }
+});
+
+test('null legacy quote/context values return a blocked result instead of crashing', () => {
+  const blocked = buildTradeCandidate({ symbol: 'TEST', quote: null, context: null, bars: null }, { now });
+  assert.equal(blocked.status, 'blocked');
+  assert.ok(blocked.blockers.includes('Fiyat para birimi doğrulanamadı.'));
+  const input = snapshot(); input.context = null;
+  assert.equal(buildTradeCandidate(input, { now }).status, 'ready');
+});
+
+test('overflowing volume or derived indicators cannot become ready or expose non-finite numbers', () => {
+  function finiteNumbers(value) {
+    if (typeof value === 'number') assert.ok(Number.isFinite(value));
+    else if (value && typeof value === 'object') Object.values(value).forEach(finiteNumbers);
+  }
+  const volume = snapshot(); volume.bars.forEach((bar) => { bar.volume = Number.MAX_VALUE; });
+  const blockedVolume = buildTradeCandidate(volume, { now });
+  assert.equal(blockedVolume.status, 'blocked'); finiteNumbers(blockedVolume);
+  const prices = snapshot();
+  prices.bars.forEach((bar) => { for (const key of ['open', 'high', 'low', 'close']) bar[key] *= 5e300; });
+  for (const key of ['price', 'bid', 'ask']) prices.quote[key] *= 5e300;
+  const blockedPrices = buildTradeCandidate(prices, { now });
+  assert.equal(blockedPrices.status, 'blocked');
+  assert.ok(blockedPrices.blockers.some((message) => message.includes('geçersiz sayısal değer')));
+  finiteNumbers(blockedPrices);
+});

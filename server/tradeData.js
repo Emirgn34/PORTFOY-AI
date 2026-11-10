@@ -15,6 +15,25 @@ export function candidateTradeSymbol(row) {
   return (row?.market ?? row?.data?.market)==='BIST' && !symbol.endsWith('.IS') ? `${symbol}.IS` : symbol;
 }
 
+export function buildResearchTradeItem(row, {now=Date.now(),feedConfigured=false}={}) {
+  const item=buildTradeCandidate({symbol:candidateTradeSymbol(row),quote:{},bars:[],context:{
+    candidate:{...row.data,horizon:'short',updatedAt:row.updated_at},news:[],macroEvents:[],
+  }},{now});
+  return {...item,availability:'research-only',reasons:['Mevcut fırsat havuzundan araştırma adayı; doğrulanmış canlı trade sinyali henüz oluşmadı.'],
+    blockers:[feedConfigured
+      ? 'Bu hisse için doğrulanmış canlı trade verisi henüz alınmadı.'
+      : 'Canlı trade veri kaynağı henüz bağlanmadı. Bu kart mevcut araştırma verilerinden gösteriliyor.'],
+    dataQuality:{...item.dataQuality,currencyVerified:false},
+  };
+}
+
+export function tradeMonitorState(monitor, now=Date.now()) {
+  const heartbeatMaxAgeMs=monitor?.data?.mode==='delayed-research'?90_000:30_000;
+  const age=now-Date.parse(monitor?.updated_at);
+  return {heartbeatMaxAgeMs,running:Boolean(monitor?.data?.ok && monitor.data.running!==false
+    && Number.isFinite(age) && age>=-2000 && age<heartbeatMaxAgeMs)};
+}
+
 // This is the adapter contract, not a claim that a public Yahoo quote is live.
 // Only an operator-configured licensed source can set realtime/session flags.
 export function normalizeTradeBatch(payload, { source, licensed = false, now = Date.now() } = {}) {
@@ -61,7 +80,7 @@ export async function loadTradeContexts(sb, symbols) {
   const candidateSymbols=[...new Set(symbols.flatMap((symbol)=>symbol.endsWith('.IS')?[symbol,symbol.slice(0,-3)]:[symbol]))];
   const [candidateResult, newsResult, contextResult] = await Promise.all([
     sb.from('candidates').select('symbol,market,data,updated_at').in('symbol',candidateSymbols).eq('horizon','short'),
-    sb.from('news').select('symbol,title,title_tr,link,published_at,sentiment,reliability').in('symbol',symbols).order('published_at',{ascending:false}).limit(200),
+    sb.from('news').select('symbol,title,title_tr,link,publisher,published_at,sentiment,reliability').in('symbol',symbols).order('published_at',{ascending:false}).limit(200),
     sb.from('trade_context').select('symbol,data,updated_at').in('symbol',symbols),
   ]);
   const candidates = checked(candidateResult) ?? [], news = checked(newsResult) ?? [], contexts = checked(contextResult) ?? [];
@@ -70,7 +89,7 @@ export async function loadTradeContexts(sb, symbols) {
     const candidate = candidates.find((row) => candidateTradeSymbol(row) === symbol);
     return [symbol, { ...(cached?.data ?? {}), candidate: candidate ? { ...candidate.data, horizon:'short', updatedAt: candidate.updated_at } : null,
       news: news.filter((row) => row.symbol === symbol).slice(0,8).map((row) => ({
-        title: row.title_tr || row.title, url: row.link, publishedAt: row.published_at, sentiment: row.sentiment, reliability: row.reliability,
+        title: row.title_tr || row.title, url: row.link, publisher:row.publisher, publishedAt: row.published_at, sentiment: row.sentiment, reliability: row.reliability,
       })), contextUpdatedAt: cached?.updated_at ?? null }];
   }));
   // Quotes remain uncached. A short context cache keeps research SQL off most
@@ -96,7 +115,7 @@ export async function processTradeBatch(sb, payload, { source, licensed = false,
   });
   const durationMs = Math.max(0,now()-started);
   await recordMonitor(sb,'trade',{ok:true,mode:licensed?'licensed-http':'delayed-research',source,
-    running:true,lastCycleAt:new Date(now()).toISOString(),latencyMs:durationMs,checkedCount:items.length,
+    running:true,heartbeatMaxAgeMs:licensed?30_000:90_000,lastCycleAt:new Date(now()).toISOString(),latencyMs:durationMs,checkedCount:items.length,
     readyCount:results.filter((item) => item.status === 'ready').length,
     quoteMaxAgeMs:TRADE_QUOTE_MAX_AGE_MS,barMaxAgeMs:TRADE_BAR_MAX_AGE_MS,
     message:licensed?'Lisanslı adaptör verisi işleniyor. Telefon teslim süresi operatöre ve cihaza bağlıdır.':'Gecikmeli araştırma verisi: canlı trade ve trade bildirimi kapalı.'});
@@ -111,10 +130,15 @@ export function currentTradeItem(candidate, now = Date.now()) {
     scenarios:(candidate.scenarios ?? []).map((scenario) => ({...scenario,eligible:false}))};
 }
 
-export function tradeRequirements({licensedSource,monitor,pushReady,hasContext} = {}) {
-  const running = Boolean(monitor?.data?.ok && monitor.data.running!==false && Date.now()-Date.parse(monitor.updated_at) < 30_000);
+export function tradeRequirements({licensedSource,monitor,pushReady,hasContext,items=[],now=Date.now()} = {}) {
+  const {running}=tradeMonitorState(monitor,now);
+  const verifiedQuote=items.some((item)=>{
+    const q=item.dataQuality,quoteTime=Date.parse(q?.quoteTime);
+    return q?.realtime===true && q.currencyVerified===true && q.sessionVerified===true && q.halted===false
+      && now-quoteTime<=TRADE_QUOTE_MAX_AGE_MS && quoteTime<=now+2000 && Number.isFinite(item.metrics?.spreadBps);
+  });
   return [
-    {id:'realtime',label:'Lisanslı gerçek zamanlı fiyat ve alış/satış',status:licensedSource && running && monitor?.data?.mode==='licensed-http'?'available':'missing',detail:'Borsa zaman damgalı fiyat, spread, seans ve durdurma bilgisi; fiyat yaşı en fazla 15 saniye.'},
+    {id:'realtime',label:'Lisanslı gerçek zamanlı fiyat ve alış/satış',status:!licensedSource?'missing':running && monitor?.data?.mode==='licensed-http' && verifiedQuote?'available':'partial',detail:'Borsa zaman damgalı fiyat, spread, seans ve durdurma bilgisi; fiyat yaşı en fazla 15 saniye. Kaynak adının tanımlanması tek başına doğrulanmış fiyat değildir.'},
     {id:'intraday',label:'Bir dakikalık OHLCV ve veri kalite kapısı',status:running?'partial':'missing',detail:'En az 40 kapanmış mum, hacim, VWAP, ATR, RSI ve momentum; son mum en fazla 90 saniye eski.'},
     {id:'context',label:'Mevcut haber ve araştırma verileri',status:hasContext?'available':'partial',detail:'Fırsat analizleri, haberler, makro takvim ve şirket olayları bağlam olarak birleştirilir; günlük veriler canlı fiyat yerine geçmez.'},
     {id:'risk',label:'Maliyet, stop ve hedef senaryoları',status:'available',detail:'Volatiliteye uyarlanan hedefler, spread ve işlem maliyeti sonrası risk/getiri; hedefler gerçekleşme garantisi taşımaz.'},

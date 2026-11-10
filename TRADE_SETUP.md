@@ -4,11 +4,22 @@ Bu özellik mevcut Vercel + Supabase uygulamasına eklenir. Yeni Sites projesi v
 
 Yerel test veya üretim derlemesinin başarılı olması canlı veri, migration, ücretli abonelik veya gerçek telefon tesliminin doğrulandığı anlamına gelmez. Gecikmeli Yahoo verileri canlı trade sinyali ve trade bildirimi üretmek için kullanılamaz.
 
-**11 Kasım 2026 durumu:** Kullanıcı henüz gerçek zamanlı veri sağlayıcısı bulunmadığını belirtti. Bu çalışma kapsamında harici veritabanına migration uygulanmadı, üretim yayını ve gerçek telefon teslimi doğrulanmadı. Kod veri sağlayıcısının bağlanmasına hazırdır; hazır sinyalin canlıda üretildiği veya ölçülmüş bir gecikme seviyesine ulaşıldığı iddia edilmez.
+**11 Kasım 2026 durumu:** Kullanıcı gerçek zamanlı veri sağlayıcısı bulunmadığını belirtti. İlk `20261111_trade.sql` dosyasını Supabase SQL Editor'da çalıştırıp başarılı sonuç aldığını bildirdi. `ee16861` sürümünün GitHub'a gönderildiği, CI ve Vercel yayınının başarılı olduğu doğrulandı. Gerçek telefon teslimi veya canlı trade performansı doğrulanmadı. Sonraki denetim düzeltmeleri için aşağıdaki ek migration ve güncel kod birlikte yayımlanmalıdır.
 
 ## 1. Veritabanı ve kod yayını
 
 Önce mevcut `schema.sql`, kimlik ve `automation-schema.sql` kurulumunun tamamlandığını doğrulayın. `supabase/migrations/20261111_trade.sql` migration'ını Supabase SQL Editor'da uygulayıp aynı kod sürümünü mevcut Vercel projesine yayımlayın. `api/account.js` üzerinden `feature=trade` kullanılır; ayrı Vercel fonksiyonu gerektirmez. Trade tablolarına tarayıcıdan service-role anahtarıyla erişilmez.
+
+İlk Trade kurulumu zaten yapılmışsa `supabase/migrations/20261111_trade_publication_order.sql` dosyasını da uygulayın. Bu ek dosya aynı fiyat zamanıyla gelen eski sinyalin işlem durdurmasını geri almasını önler; bilinen veri bağlantısı arızasında bekleyen trade bildirimini iptal eder. Tablo, portföy, abonelik veya kullanıcı tercihi silmez. Yeni veri akışını açmadan önce bu dosya ve güncel gönderici kodu birlikte devrede olmalıdır.
+
+Bu güncellemenin kurulmasını salt okunur doğrulamak için SQL Editor'da:
+
+```sql
+select position('incoming_rank' in pg_get_functiondef('public.publish_trade_signal(jsonb,timestamptz,boolean,text)'::regprocedure)) > 0 as publication_order_installed,
+       position('join monitor_status' in pg_get_functiondef('public.trade_delivery_allowed(text,uuid)'::regprocedure)) > 0 as feed_outage_guard_installed;
+```
+
+İki sonuç da `true` olmalıdır. Canlı veri yokken araştırma kartları gösterilir; zaman geçmesi tek başına canlı sinyali etkinleştirmez.
 
 ## 2. Gerçek zamanlı kaynak seçimi
 

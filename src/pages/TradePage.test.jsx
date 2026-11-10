@@ -159,3 +159,57 @@ test('telefon uykuya girip dönünce yeni veri gelene kadar önceki sinyal uygun
   expect(within(card).getByText('Süresi doldu')).toBeInTheDocument();
   visibility.mockRestore();
 });
+
+test('yenileme bağlantısı kopunca süre henüz dolmasa da önceki hazır sinyal uygun görünmez',async()=>{
+  vi.useFakeTimers();
+  tradeRequest.mockResolvedValueOnce(state()).mockRejectedValue(new Error('Bağlantı koptu.'));
+  render(<TradePage />);
+  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+  const card=screen.getByRole('button',{name:'AAPL trade detayını aç'});
+  expect(within(card).getByText('Koşullar uygun')).toBeInTheDocument();
+  await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+  expect(screen.getByRole('alert')).toHaveTextContent('Bağlantı koptu.');
+  expect(within(card).getByText('Süresi doldu')).toBeInTheDocument();
+});
+
+test('tercih kaydından önce başlayan eski polling yanıtı başarılı tercihi geri almaz', async () => {
+  vi.useFakeTimers();
+  let resolveOldPoll;
+  tradeRequest.mockImplementation((action) => {
+    if (action === 'preferences') return Promise.resolve({ preferences: { enabled: true } });
+    if (!resolveOldPoll && tradeRequest.mock.calls.filter(([key]) => key === 'state').length === 1) return Promise.resolve(state([]));
+    return new Promise((resolve) => { resolveOldPoll = resolve; });
+  });
+  render(<TradePage />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  const preference = screen.getByRole('checkbox', { name: /Hesabım için trade/ });
+  fireEvent.click(preference);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(preference).toBeChecked();
+  await act(async () => { resolveOldPoll(state([])); });
+  expect(preference).toBeChecked();
+  expect(screen.getByRole('status')).toHaveTextContent('açıldı');
+});
+
+test('canlı veri olmayan araştırma kartı eksik para birimi hatası gibi sunulmaz', async () => {
+  tradeRequest.mockResolvedValue(state([candidate({ availability: 'research-only', status: 'blocked', entry: null,
+    scenarios: [], estimatedHours: null, blockers: ['Bu hisse için doğrulanmış canlı trade verisi henüz alınmadı.'] })]));
+  render(<TradePage />);
+  const card = await screen.findByRole('button', { name: 'AAPL trade detayını aç' });
+  expect(within(card).getByText('Canlı veri bağlantısı bekleniyor')).toBeInTheDocument();
+  expect(within(card).getByText('Gün içi fiyat bekleniyor')).toBeInTheDocument();
+  expect(within(card).getByText(/Mevcut fırsat analizinden araştırma adayı/)).toBeInTheDocument();
+  fireEvent.click(card);
+  expect(within(screen.getByRole('dialog')).getByRole('status')).toHaveTextContent('araştırma adayıdır');
+});
+
+test('araştırma çalışanı bağlantı durumu sunucunun 90 saniyelik eşiğini kullanır', async () => {
+  const response = state([]);
+  response.status = { mode: 'delayed-research', running: true, heartbeatMaxAgeMs: 90000,
+    lastHeartbeatAt: new Date(Date.now() - 60000).toISOString() };
+  tradeRequest.mockResolvedValue(response);
+  render(<TradePage />);
+  expect(await screen.findByText('Trade çalışanı bağlı')).toBeInTheDocument();
+  expect(screen.getByText('Trade çalışanı bağlı').querySelector('span')).not.toHaveClass('bg-gain');
+});

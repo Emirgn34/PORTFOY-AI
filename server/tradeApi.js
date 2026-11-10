@@ -1,8 +1,7 @@
 import { automationDb, checked } from './automationDb.js';
 import { validCronSecret } from './cronAuth.js';
 import { pushConfigured } from './pushNotifications.js';
-import { candidateTradeSymbol, currentTradeItem, processTradeBatch, tradeRequirements, TRADE_QUOTE_MAX_AGE_MS, TRADE_BAR_MAX_AGE_MS } from './tradeData.js';
-import { buildTradeCandidate } from './tradeEngine.js';
+import { buildResearchTradeItem, candidateTradeSymbol, currentTradeItem, processTradeBatch, tradeRequirements, tradeMonitorState, TRADE_QUOTE_MAX_AGE_MS, TRADE_BAR_MAX_AGE_MS } from './tradeData.js';
 
 export function createTradeHandler({ getDb=automationDb, processBatch=processTradeBatch, env=process.env, now=()=>Date.now() } = {}) {
   return async function tradeHandler(req,res) {
@@ -28,7 +27,9 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
     if (!token) return res.status(401).json({error:'Oturum açmanız gerekiyor.'});
     let sb;
     try { sb=getDb(); } catch { return res.status(503).json({error:'Sunucu veri bağlantısı kurulmamış.'}); }
-    const {data:auth,error:authError}=await sb.auth.getUser(token);
+    let auth,authError;
+    try { ({data:auth,error:authError}=await sb.auth.getUser(token)); }
+    catch { return res.status(503).json({error:'Oturum doğrulama hizmetine şu an ulaşılamıyor.'}); }
     if (authError || !auth?.user) return res.status(401).json({error:'Oturum açmanız gerekiyor.'});
     const userId=auth.user.id;
     try {
@@ -37,25 +38,33 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
         checked(await sb.from('trade_preferences').upsert({user_id:userId,enabled:req.body.enabled,updated_at:new Date(now()).toISOString()}));
         return res.json({preferences:{enabled:req.body.enabled}});
       }
-      const [signals,monitor,prefs]=await Promise.all([
+      const [signals,monitor,prefs,candidatesResult]=await Promise.all([
         sb.from('trade_signals').select('data,updated_at').order('updated_at',{ascending:false}).limit(100),
         sb.from('monitor_status').select('updated_at,data').eq('id','trade').maybeSingle(),
         sb.from('trade_preferences').select('enabled').eq('user_id',userId).maybeSingle(),
+        sb.from('candidates').select('symbol,market,data,updated_at').eq('horizon','short').order('updated_at',{ascending:false}).limit(50),
       ]);
       let items=(checked(signals) ?? []).map((row)=>currentTradeItem(row.data,now()));
       const statusRow=checked(monitor), preferences=checked(prefs) ?? {enabled:false};
       // Genuine existing candidates still explain missing live prerequisites in
       // a new installation; no demo stock is presented as a current trade.
-      if (!items.length) {
-        const candidates=checked(await sb.from('candidates').select('symbol,market,data,updated_at').eq('horizon','short').order('updated_at',{ascending:false}).limit(30));
-        items=(candidates ?? []).map((row)=>buildTradeCandidate({symbol:candidateTradeSymbol(row),quote:{},bars:[],context:{candidate:{...row.data,horizon:'short',updatedAt:row.updated_at},news:[],macroEvents:[]}}, {now:now()}));
+      const seen=new Set(items.map((item)=>item.symbol));
+      for (const row of checked(candidatesResult) ?? []) {
+        const symbol=candidateTradeSymbol(row);
+        if (!seen.has(symbol)) { items.push(buildResearchTradeItem(row,{now:now(),feedConfigured:Boolean(env.TRADE_LICENSED_SOURCE)}));seen.add(symbol); }
       }
-      const running=Boolean(statusRow?.data?.ok && statusRow.data.running!==false && now()-Date.parse(statusRow.updated_at)<30_000);
-      const status={...(statusRow?.data ?? {}),running,lastHeartbeatAt:statusRow?.updated_at ?? null,
+      const monitorState=tradeMonitorState(statusRow,now());
+      if (!monitorState.running) items=items.map((item)=>item.status!=='ready'?item:{...item,status:'blocked',
+        blockers:[...(item.blockers ?? []),'Canlı veri bağlantısı sağlıklı değil; yeni doğrulanmış veri bekleniyor.'],
+        scenarios:(item.scenarios ?? []).map((scenario)=>({...scenario,eligible:false}))});
+      const status={...(statusRow?.data ?? {}),...monitorState,lastHeartbeatAt:statusRow?.updated_at ?? null,
+        mode:statusRow?.data?.mode ?? (env.TRADE_LICENSED_SOURCE?'awaiting-feed':'unconfigured'),
         quoteMaxAgeMs:TRADE_QUOTE_MAX_AGE_MS,barMaxAgeMs:TRADE_BAR_MAX_AGE_MS,
-        message:running?statusRow.data.message:'Canlı veri adaptörü bağlı değil veya son bağlantı eski. Yeni canlı trade bildirimi üretilmez.'};
+        message:monitorState.running?statusRow.data.message:!env.TRADE_LICENSED_SOURCE
+          ? 'Canlı trade veri kaynağı henüz bağlanmadı. Araştırma kartları gösterilir; canlı sinyal ve trade bildirimi üretilmez.'
+          : 'Canlı veri kaynağı tanımlı ancak güncel veri alınamıyor. Yeni canlı trade bildirimi üretilmez.'};
       return res.json({items,status,preferences,serverTime:new Date(now()).toISOString(),
-        requirements:tradeRequirements({licensedSource:env.TRADE_LICENSED_SOURCE,monitor:statusRow,pushReady:pushConfigured(),hasContext:items.some((item)=>item.context?.candidate || item.context?.news?.length || item.context?.intelligence || item.context?.macroEvents?.length)})});
+        requirements:tradeRequirements({licensedSource:env.TRADE_LICENSED_SOURCE,monitor:statusRow,pushReady:pushConfigured(),now:now(),items,hasContext:items.some((item)=>item.context?.candidate || item.context?.news?.length || item.context?.intelligence || item.context?.macroEvents?.length)})});
     } catch {
       console.error('[trade] Veri tabloları okunamadı.');
       return res.status(503).json({error:'Trade kurulumu tamamlanmamış veya veri hizmeti kullanılamıyor. Trade SQL migration ve adaptör kontrol edilmeli.'});
