@@ -1,6 +1,9 @@
 {
   "functions": { "api/account.js": { "maxDuration": 60 } },
   "rewrites": [
+    { "source": "/api/trade", "destination": "/api/account?feature=trade&action=state" },
+    { "source": "/api/trade/preferences", "destination": "/api/account?feature=trade&action=preferences" },
+    { "source": "/api/trade/ingest", "destination": "/api/account?feature=trade&action=ingest" },
     { "source": "/api/news/scan", "destination": "/api/account?feature=news-scan" },
     { "source": "/api/hedge-radar", "destination": "/api/account?feature=hedge&action=state" },
     { "source": "/api/hedge-radar/refresh", "destination": "/api/account?feature=hedge&action=refresh" },

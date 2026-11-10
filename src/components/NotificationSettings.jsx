@@ -3,7 +3,7 @@ import { Bell } from 'lucide-react';
 import { automationRequest } from '../services/automation.js';
 import { decodePushKey, subscriptionNeedsRenewal } from '../services/pushSubscription.js';
 
-export default function NotificationSettings() {
+export default function NotificationSettings({ suggestedTopics = [] }) {
   const [config, setConfig] = useState(null);
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -11,6 +11,7 @@ export default function NotificationSettings() {
   const [topics, setTopics] = useState(['catalyst','source-portfolios']);
   const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
   const supported = typeof window !== 'undefined' && window.isSecureContext && typeof Notification !== 'undefined' && 'PushManager' in window && 'serviceWorker' in navigator;
+  const suggestedKey = suggestedTopics.join(',');
   useEffect(() => {
     let active = true;
     async function load() {
@@ -25,7 +26,8 @@ export default function NotificationSettings() {
           const renewal = subscription && data.publicKey && subscriptionNeedsRenewal(subscription, data.publicKey);
           setConfig(data); setPermission(currentPermission);
           setEnabled(Boolean(stored) && !denied && !renewal);
-          if (stored) setTopics(stored.topics);
+          const suggestions = suggestedKey.split(',').filter((topic) => topic && data.allowedTopics?.includes(topic));
+          setTopics([...new Set([...(stored?.topics ?? ['catalyst', 'source-portfolios']), ...suggestions])]);
           if (denied) setMessage('Bildirim izni tarayıcıda kapalı. Site ayarlarından izin verip tercihlerinizi yeniden kaydedin.');
           else if (renewal) setMessage('Bu cihazın bildirim bağlantısı yenilenmeli. Bildirimleri etkinleştir düğmesine basın.');
           else if (subscription && !stored) setMessage('Bu cihazın aboneliği sunucuda bulunamadı. Bildirimleri etkinleştirerek yeniden kaydedin.');
@@ -34,7 +36,7 @@ export default function NotificationSettings() {
     }
     load();
     return () => { active = false; };
-  }, [supported]);
+  }, [supported, suggestedKey]);
   async function subscribe() {
     setBusy(true); setMessage('');
     try {
@@ -76,7 +78,7 @@ export default function NotificationSettings() {
       {permission === 'denied' ? 'Bu cihazda bildirim izni kapalı' : enabled ? 'Bu cihazın bildirim aboneliği kayıtlı' : 'Bu cihazda bildirim bağlantısı etkin değil'}
     </p>}
     <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>key!=='hedge-radar'||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
+      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['trade', 'Trade sinyalleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>!['hedge-radar','trade'].includes(key)||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
         <input type="checkbox" checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}
       </label>)}
     </div>

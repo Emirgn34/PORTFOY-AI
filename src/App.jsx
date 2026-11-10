@@ -8,6 +8,7 @@ const PortfolioPage = lazy(() => import('./pages/PortfolioPage.jsx'));
 const WatchlistPage = lazy(() => import('./pages/WatchlistPage.jsx'));
 const NewsPage = lazy(() => import('./pages/NewsPage.jsx'));
 const OpportunitiesPage = lazy(() => import('./pages/OpportunitiesPage.jsx'));
+const TradePage = lazy(() => import('./pages/TradePage.jsx'));
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage.jsx'));
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
 const AdminPage = lazy(() => import('./pages/AdminPage.jsx'));
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/watchlist" element={<WatchlistPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/opportunities" element={<OpportunitiesPage />} />
+        <Route path="/trade" element={<TradePage />} />
         <Route path="/model-portfolios" element={<ModelPortfoliosPage />} />
         <Route path="/value-portfolios" element={<ValuePortfoliosPage />} />
         <Route path="/source-portfolios" element={<SourcePortfoliosPage />} />

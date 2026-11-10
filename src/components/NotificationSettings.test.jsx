@@ -90,3 +90,19 @@ test('desteklenmeyen tarayıcıda bildirim API’sine erişilmez', async () => {
   await waitFor(() => expect(automationRequest).toHaveBeenCalled());
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
 });
+
+test('Trade sayfasında önerilen konu mevcut cihazın diğer konuları korunarak yalnızca tıklamada kaydedilir', async () => {
+  const { old } = setupSubscription();
+  automationRequest.mockResolvedValue({ configured: true, publicKey: 'YQ',
+    allowedTopics: ['catalyst', 'source-portfolios', 'trade'],
+    subscriptions: [{ endpoint: old.endpoint, topics: ['catalyst', 'source-portfolios'] }] });
+  render(<NotificationSettings suggestedTopics={['trade']} />);
+  const save = await screen.findByRole('button', { name: 'Bildirim tercihlerini kaydet' });
+  await waitFor(() => expect(save).toBeEnabled());
+  expect(screen.getByRole('checkbox', { name: 'Trade sinyalleri' })).toBeChecked();
+  expect(Notification.requestPermission).not.toHaveBeenCalled();
+  expect(automationRequest).toHaveBeenCalledTimes(1);
+  fireEvent.click(save);
+  await waitFor(() => expect(automationRequest).toHaveBeenCalledWith('push', { method: 'POST',
+    body: { subscription: old.toJSON(), topics: ['catalyst', 'source-portfolios', 'trade'] } }));
+});

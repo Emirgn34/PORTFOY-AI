@@ -7,6 +7,7 @@ import ThemeToggle from './ThemeToggle.jsx';
 const NAV_ITEMS = [
   { to: '/portfolio', label: 'Portföy Özeti', icon: LayoutDashboard },
   { to: '/opportunities', label: 'Fırsatlar', icon: TrendingUp },
+  { to: '/trade', label: 'Trade Önerileri', icon: LineChart },
   { to: '/model-portfolios', label: 'Hazır Portföyler', icon: WalletCards },
   { to: '/value-portfolios', label: 'Manuel Değer Portföyleri', icon: TrendingUp },
   { to: '/source-portfolios', label: 'Yatırımcı Portföyleri', icon: Database },

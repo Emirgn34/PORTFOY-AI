@@ -38,7 +38,7 @@ export default async function handler(req, res) {
         status: checked(await sb.from('monitor_status').select('*').eq('id','news').maybeSingle()) });
     }
     if (req.method === 'GET' && action === 'push') return res.json({ configured: pushConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY ?? null,
-      allowedTopics: ['catalyst','source-portfolios',...(userId === process.env.HEDGE_RADAR_USER_ID ? ['hedge-radar'] : [])],
+      allowedTopics: ['catalyst','source-portfolios','trade',...(userId === process.env.HEDGE_RADAR_USER_ID ? ['hedge-radar'] : [])],
       subscriptions:checked(await sb.from('push_subscriptions').select('endpoint,topics').eq('user_id',userId)) });
     if (req.method === 'POST' && action === 'push') {
       if (!pushConfigured()) return res.status(503).json({ error: 'Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.' });
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
       try { subscription = validatePushSubscription(req.body?.subscription); }
       catch (e) { return res.status(400).json({ error: e.message }); }
       const topics = req.body?.topics;
-      if (!Array.isArray(topics) || !topics.length || topics.some((t) => !['catalyst','source-portfolios','hedge-radar'].includes(t))) return res.status(400).json({ error: 'Bildirim konusunu seçin.' });
+      if (!Array.isArray(topics) || !topics.length || topics.some((t) => !['catalyst','source-portfolios','hedge-radar','trade'].includes(t))) return res.status(400).json({ error: 'Bildirim konusunu seçin.' });
       if (topics.includes('hedge-radar') && userId !== process.env.HEDGE_RADAR_USER_ID) return res.status(403).json({error:'Kalkan bildirimi bu hesap için yapılandırılmamış.'});
       const existing = checked(await sb.from('push_subscriptions').select('id,user_id').eq('endpoint', subscription.endpoint).maybeSingle());
       if (existing && existing.user_id !== userId) return res.status(409).json({ error: 'Bu cihazdaki abonelik başka hesaba bağlı; önce o hesapta bildirimleri kapatın.' });

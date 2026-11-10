@@ -11,6 +11,7 @@
     "worker": "node server/automationWorker.js",
     "news:stream": "node server/newsStream.js",
     "news:free": "node server/freeNewsDaemon.js",
+    "trade:worker": "node server/tradeWorker.js",
     "test": "npm run test:unit && npm run test:ui",
     "test:unit": "node --test",
     "test:ui": "vitest run",

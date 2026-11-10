@@ -26,12 +26,13 @@ export function validatePushSubscription(subscription) {
 }
 // A fixed time boundary and primary-key cursors keep inserts/deletions during
 // delivery from shifting pages. Already delivered events must not hide new ones.
-async function activeEvents(sb, now) {
+async function activeEvents(sb, now, topics) {
   const events = [];
   let cursor;
   for (;;) {
     let query = sb.from('notification_events').select('*').gt('expires_at', now)
       .lte('detected_at', now).order('id').limit(100);
+    if (topics?.length) query = query.in('topic',topics);
     if (cursor) query = query.gt('id', cursor);
     const page = checked(await query);
     events.push(...page);
@@ -41,11 +42,12 @@ async function activeEvents(sb, now) {
   return events.sort((a, b) => Date.parse(b.detected_at) - Date.parse(a.detected_at) || a.id.localeCompare(b.id));
 }
 
-export async function deliverNotifications(sb, { sender = webpush, now = () => new Date() } = {}) {
+export async function deliverNotifications(sb, { sender = webpush, now = () => new Date(), topics } = {}) {
   if (!pushConfigured()) return { configured: false, sent: 0 };
   sender.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
-  const events = await activeEvents(sb, now().toISOString());
+  const events = await activeEvents(sb, now().toISOString(), topics);
   const result = { configured: true, sent: 0, failed: 0, removed: 0, errors: {} };
+  if (!events.length) return result;
   let cursor;
   for (;;) {
     let query = sb.from('push_subscriptions').select('*').order('id').limit(100);
@@ -55,8 +57,10 @@ export async function deliverNotifications(sb, { sender = webpush, now = () => n
     await mapLimit(subscriptions, 5, async (subscription) => {
       for (const event of events) {
         if (event.topic === 'hedge-radar' && (!event.data?.userId || event.data.userId !== subscription.user_id)) continue;
+        if (event.topic === 'trade' && (!event.data?.userId || event.data.userId !== subscription.user_id)) continue;
         if (Date.parse(event.expires_at) <= now().getTime()) continue;
         if (!subscription.topics.includes(event.topic) || Date.parse(subscription.created_at) > Date.parse(event.detected_at)) continue;
+        if (event.topic === 'trade' && !checked(await sb.rpc('trade_delivery_allowed', {p_event_id:event.id,p_user_id:subscription.user_id}))) continue;
         if (!checked(await sb.rpc('claim_push_delivery', { p_event_id: event.id, p_subscription_id: subscription.id }))) continue;
         let validated;
         try {
@@ -67,10 +71,17 @@ export async function deliverNotifications(sb, { sender = webpush, now = () => n
           result.errors.invalid_subscription = (result.errors.invalid_subscription || 0) + 1;
           continue;
         }
+        // Claim/validation can use up a very short trade lifetime. Recheck at
+        // the last possible moment before calling the push provider.
+        if (event.topic === 'trade' && Date.parse(event.expires_at) <= now().getTime()) {
+          checked(await sb.from('push_deliveries').update({ status: 'failed' }).eq('event_id', event.id).eq('subscription_id', subscription.id));
+          continue;
+        }
         try {
           await sender.sendNotification(validated, JSON.stringify({
             title: event.title.slice(0, 120), body: notificationBody(event).slice(0, 250), url: event.url, tag: event.id,
-          }), { TTL: Math.max(0, Math.floor((Date.parse(event.expires_at) - now().getTime()) / 1000)), urgency: 'high', timeout: 10000 });
+            ...(event.topic==='trade'?{expiresAt:event.expires_at,topic:'trade'}:{}),
+          }), { TTL: Math.max(0, Math.min(event.topic==='trade'?15:Infinity, Math.floor((Date.parse(event.expires_at) - now().getTime()) / 1000))), urgency: 'high', timeout: event.topic==='trade'?3000:10000 });
         } catch (error) {
           const code = Number(error.statusCode);
           const label = Number.isInteger(code) && code >= 400 && code <= 599 ? `http_${code}` : 'network';

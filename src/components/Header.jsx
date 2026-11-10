@@ -7,6 +7,7 @@ const PAGE_TITLES = {
   '/watchlist': 'Takip Listesi',
   '/news': 'Haberler ve Araştırma',
   '/opportunities': 'Fırsatlar',
+  '/trade': 'Trade Önerileri',
   '/model-portfolios': 'Hazır Model Portföyler',
   '/value-portfolios': 'Manuel Değer Portföyleri',
   '/source-portfolios': 'Yatırımcı Portföyleri',

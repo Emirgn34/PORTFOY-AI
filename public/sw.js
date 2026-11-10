@@ -4,8 +4,9 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() ?? {}; } catch { data.body = event.data?.text(); }
+  const expiredTrade = data.topic === 'trade' && !(Date.parse(data.expiresAt) > Date.now());
   event.waitUntil(self.registration.showNotification(data.title || 'PortföyAI', {
-    body: data.body || 'Yeni bir gelişme var.', icon: '/logo.png', badge: '/logo.png',
+    body: expiredTrade ? 'Bu trade sinyalinin geçerliliği sona erdi. Güncel durumu Trade ekranında kontrol et.' : data.body || 'Yeni bir gelişme var.', icon: '/logo.png', badge: '/logo.png',
     tag: data.tag || 'portfoyai', data: { url: data.url || '/news?tab=catalysts' },
     // A new hedge state replaces the same tagged notification on the device;
     // clicks are still restricted to this site's origin below.

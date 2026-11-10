@@ -134,9 +134,11 @@ async function fetchNewsForSymbol(symbol, { force = false } = {}) {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '64kb' }));
+const regularJson = express.json({limit:'64kb'}), tradeJson = express.json({limit:'4mb'});
+app.use((req,res,next) => (req.path === '/api/trade/ingest' || (req.path === '/api/account' && req.query.feature === 'trade' && req.query.action === 'ingest') ? tradeJson : regularJson)(req,res,next));
 app.all('/api/account', accountHandler);
 for (const [path, feature, action] of [
+  ['/api/trade','trade','state'], ['/api/trade/preferences','trade','preferences'], ['/api/trade/ingest','trade','ingest'],
   ['/api/hedge-radar','hedge','state'], ['/api/hedge-radar/refresh','hedge','refresh'],
   ['/api/notifications/subscribe','automation','push'], ['/api/notifications/trigger','hedge','trigger'],
 ]) app.all(path, (req,res) => accountHandler({method:req.method,headers:req.headers,body:req.body,query:{feature,action}},res));
