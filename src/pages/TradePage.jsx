@@ -70,12 +70,16 @@ function TradeDetail({ candidate, now, onClose }) {
   const [capital, setCapital] = useState('');
   const [riskBudget, setRiskBudget] = useState('0.5');
   const actionable = live(candidate, now);
+  const hasEntry=Number.isFinite(candidate.entry) && candidate.entry>0;
+  const hasPlan=candidate.availability!=='research-only' && hasEntry && Number.isFinite(candidate.stopLoss)
+    && candidate.stopLoss>0 && candidate.stopLoss<candidate.entry && (candidate.scenarios ?? []).length>0;
   const costBps = candidate.metrics?.roundTripCostBps ?? candidate.metrics?.costBps;
-  const costPerShare = Number.isFinite(candidate.metrics?.estimatedCostPerShare)
-    ? candidate.metrics.estimatedCostPerShare : candidate.entry * (costBps + (candidate.metrics?.spreadBps ?? 0)) / 10000;
-  const lossPerShare = candidate.entry - candidate.stopLoss + costPerShare;
-  const canSize = Number.isFinite(Number(capital)) && Number(capital) > 0 && Number.isFinite(Number(riskBudget)) && Number(riskBudget) > 0 && Number(riskBudget) <= 5
-    && Number.isFinite(costPerShare) && costPerShare >= 0 && candidate.entry > candidate.stopLoss && candidate.stopLoss > 0 && lossPerShare > 0;
+  const hasSpread=Number.isFinite(candidate.metrics?.spreadBps) && candidate.metrics.spreadBps>=0;
+  const costPerShare = hasEntry && hasSpread ? Number.isFinite(candidate.metrics?.estimatedCostPerShare)
+    ? candidate.metrics.estimatedCostPerShare : Number.isFinite(costBps) ? candidate.entry * (costBps + candidate.metrics.spreadBps) / 10000 : null : null;
+  const hasSizingData=hasPlan && Number.isFinite(costPerShare) && costPerShare>=0;
+  const lossPerShare = hasSizingData ? candidate.entry - candidate.stopLoss + costPerShare : null;
+  const canSize = hasSizingData && Number.isFinite(Number(capital)) && Number(capital) > 0 && Number.isFinite(Number(riskBudget)) && Number(riskBudget) > 0 && Number(riskBudget) <= 5 && lossPerShare>0;
   const quantity = canSize ? Math.max(0, Math.floor(Math.min(Number(capital) / (candidate.entry + costPerShare),
     Number(capital) * Number(riskBudget) / 100 / lossPerShare))) : null;
   useEffect(() => {
@@ -110,7 +114,7 @@ function TradeDetail({ candidate, now, onClose }) {
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-navy-850 p-4 text-sm sm:grid-cols-3">
           <div><p className="text-slate-400">Referans giriş</p><p className="mt-1 font-semibold tabular-nums text-ink">{price(candidate.entry, candidate.currency)}</p></div>
           <div><p className="text-slate-400">Zarar kes</p><p className="mt-1 font-semibold tabular-nums text-loss">{price(candidate.stopLoss, candidate.currency)}</p></div>
-          <div><p className="text-slate-400">Geçerlilik sonu</p><p className="mt-1 text-ink">{date(candidate.expiresAt)}</p></div>
+          <div><p className="text-slate-400">Geçerlilik sonu</p><p className="mt-1 text-ink">{hasPlan?date(candidate.expiresAt):'Canlı plan oluşmadı'}</p></div>
         </div>
         <section><h3 className="mb-3 font-semibold text-ink">Hedef ve risk senaryoları</h3>
           <p className="mb-4 text-xs leading-relaxed text-slate-400">Risk etiketleri hedefe ulaşma belirsizliğini karşılaştırır. Daha yakın hedef düşük sermaye kaybı riski garantisi vermez. Süreler oynaklığa dayalı yaklaşık işlem penceresidir; doğrulanmış süre tahmini değildir. Hedefler gerçekleşmeyebilir. Emir gönderilmez.</p>
@@ -121,13 +125,13 @@ function TradeDetail({ candidate, now, onClose }) {
             <dl className="mt-4 space-y-2 text-xs"><div className="flex justify-between gap-2"><dt className="text-slate-400">Zarar kes</dt><dd className="text-loss">{price(scenario.stopLoss ?? candidate.stopLoss, candidate.currency)}</dd></div><div className="flex justify-between gap-2"><dt className="text-slate-400">Net getiri / risk</dt><dd className="text-ink">{number(scenario.netRewardRisk)}×</dd></div><div><dt className="text-slate-400">Tahmini süre</dt><dd className="mt-1 text-ink">{duration(scenario.estimatedHours)}</dd></div></dl>
             <p className={`mt-4 text-xs ${scenario.eligible && actionable ? 'text-gain' : 'text-amber-400'}`}>{scenario.eligible && actionable ? 'Veri ve risk koşulları uygun' : 'İşlem koşulları sağlanmıyor'}</p>
           </article>)}</div> : <p className="text-sm text-slate-400">Hedef üretebilmek için doğrulanmış gün içi fiyat, hacim ve oynaklık verisi gerekiyor.</p>}
-          <p className="mt-3 text-xs text-slate-500">Gidiş dönüş komisyon / kayma varsayımı: {number(costBps)} baz puan. Spread: {number(candidate.metrics?.spreadBps)} baz puan; hesapta toplam tahmini maliyet {price(costPerShare, candidate.currency)} / adet. Gerçek maliyet farklı olabilir.</p>
+          <p className="mt-3 text-xs text-slate-500">Gidiş dönüş komisyon / kayma varsayımı: {number(costBps)} baz puan. {Number.isFinite(costPerShare)?<>Spread: {number(candidate.metrics?.spreadBps)} baz puan; hesapta toplam tahmini maliyet {price(costPerShare, candidate.currency)} / adet. Gerçek maliyet farklı olabilir.</>:'Giriş fiyatı ve alış/satış verisi olmadan hisse başına toplam maliyet hesaplanamaz.'}</p>
         </section>
         <section className="rounded-xl border border-navy-700 bg-navy-850 p-4">
           <h3 className="font-semibold text-ink">İşlem büyüklüğü hesabı</h3>
           <p className="mt-1 text-xs text-slate-400">Sermaye, hisseyle aynı para biriminde olmalı ({candidate.currency || 'hissenin para birimi'}). Bu hesap emir oluşturmaz.</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">İşleme ayrılabilir sermaye<input aria-label="İşleme ayrılabilir sermaye" type="number" inputMode="decimal" min="0" value={capital} onChange={(event) => setCapital(event.target.value)} placeholder="Örn. 10000" className="mt-1 block w-full rounded-lg border border-navy-700 bg-navy-900 p-2 text-sm text-ink" /></label><label className="text-xs text-slate-400">Sermayeden azami kayıp bütçesi (%)<input aria-label="Azami kayıp bütçesi yüzde" type="number" inputMode="decimal" min="0.01" max="5" step="0.1" value={riskBudget} onChange={(event) => setRiskBudget(event.target.value)} className="mt-1 block w-full rounded-lg border border-navy-700 bg-navy-900 p-2 text-sm text-ink" /></label></div>
-          <p className="mt-3 text-sm text-ink">{quantity === null ? 'Geçerli sermaye ve %0–5 arası kayıp bütçesi girerek hesapla.' : `${number(quantity, 0)} adet · Yaklaşık zarar kes + maliyet kaybı: ${price(quantity * lossPerShare, candidate.currency)}`}</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">İşleme ayrılabilir sermaye<input aria-label="İşleme ayrılabilir sermaye" type="number" inputMode="decimal" min="0" disabled={!hasSizingData} value={capital} onChange={(event) => setCapital(event.target.value)} placeholder="Örn. 10000" className="mt-1 block w-full rounded-lg border border-navy-700 bg-navy-900 p-2 text-sm text-ink disabled:opacity-50" /></label><label className="text-xs text-slate-400">Sermayeden azami kayıp bütçesi (%)<input aria-label="Azami kayıp bütçesi yüzde" type="number" inputMode="decimal" min="0.01" max="5" step="0.1" disabled={!hasSizingData} value={riskBudget} onChange={(event) => setRiskBudget(event.target.value)} className="mt-1 block w-full rounded-lg border border-navy-700 bg-navy-900 p-2 text-sm text-ink disabled:opacity-50" /></label></div>
+          <p className="mt-3 text-sm text-ink">{!hasSizingData?'İşlem büyüklüğü hesabı için giriş, zarar kes ve alış/satış verisi bekleniyor.':quantity === null ? 'Geçerli sermaye ve %0–5 arası kayıp bütçesi girerek hesapla.' : `${number(quantity, 0)} adet · Yaklaşık zarar kes + maliyet kaybı: ${price(quantity * lossPerShare, candidate.currency)}`}</p>
           <p className="mt-2 text-xs text-slate-500">Adet, zarar kes mesafesi ve maliyet varsayımıyla sınırlanır. Fiyat boşluğu veya kayma gerçekleşen kaybı bütçenin üzerine çıkarabilir.</p>
         </section>
         <section><h3 className="mb-2 font-semibold text-ink">Neden bu hisse?</h3><ul className="list-disc space-y-2 pl-5 text-sm text-slate-300">{reasons(candidate, 'reasons').map((reason, index) => <li key={index}>{reason}</li>)}</ul></section>

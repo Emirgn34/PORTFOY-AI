@@ -201,7 +201,14 @@ test('canlı veri olmayan araştırma kartı eksik para birimi hatası gibi sunu
   expect(within(card).getByText('Gün içi fiyat bekleniyor')).toBeInTheDocument();
   expect(within(card).getByText(/Mevcut fırsat analizinden araştırma adayı/)).toBeInTheDocument();
   fireEvent.click(card);
-  expect(within(screen.getByRole('dialog')).getByRole('status')).toHaveTextContent('araştırma adayıdır');
+  const detail=within(screen.getByRole('dialog'));
+  expect(detail.getByRole('status')).toHaveTextContent('araştırma adayıdır');
+  expect(detail.getByText('Canlı plan oluşmadı')).toBeInTheDocument();
+  expect(detail.getByText(/hisse başına toplam maliyet hesaplanamaz/)).toBeInTheDocument();
+  expect(detail.queryByText(/toplam tahmini maliyet 0/)).not.toBeInTheDocument();
+  expect(detail.getByLabelText('İşleme ayrılabilir sermaye')).toBeDisabled();
+  expect(detail.getByLabelText('Azami kayıp bütçesi yüzde')).toBeDisabled();
+  expect(detail.getByText(/İşlem büyüklüğü hesabı için giriş/)).toBeInTheDocument();
 });
 
 test('araştırma çalışanı bağlantı durumu sunucunun 90 saniyelik eşiğini kullanır', async () => {
