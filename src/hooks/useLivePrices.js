@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLiveQuotes, fetchLiveFx } from '../services/liveData.js';
 import { updateExchangeRates } from '../utils/portfolioCalculations.js';
 
@@ -44,14 +44,22 @@ export default function useLivePrices(stocks, setStocks, { autoRefreshMs = null 
     setLoading(false);
   }, [stocks, setStocks]);
 
+  // Interval, HER ZAMAN güncel refresh'i çağırsın diye ref üzerinden gider.
+  // Doğrudan `refresh` kapatılsaydı mount anındaki stok listesine takılırdı:
+  // sonradan eklenen hisse 5 dakikalık yenilemede hiç çekilmezdi (madde 8).
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
   // Sayfa açıldığında bir kez dene; istenirse aralıklı yenile
   useEffect(() => {
     refresh();
     if (!autoRefreshMs) return undefined;
-    const timer = setInterval(refresh, autoRefreshMs);
+    const timer = setInterval(() => refreshRef.current(), autoRefreshMs);
     return () => clearInterval(timer);
-    // refresh'i bilinçli olarak bağımlılığa eklemiyoruz: stok listesi her
-    // güncellemede değiştiği için döngü oluşur; ilk yükleme + interval yeterli.
+    // İlk çağrı bilinçli olarak bağımlılıksız: stok listesi her güncellemede
+    // değiştiği için refresh'i doğrudan izlemek istek döngüsü oluştururdu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

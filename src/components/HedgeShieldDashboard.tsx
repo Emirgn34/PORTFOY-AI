@@ -73,9 +73,16 @@ export default function HedgeShieldDashboard() {
         if(mounted.current) setPushEnabled(config.subscriptions.some(s=>s.endpoint===current?.endpoint&&s.topics.includes('hedge-radar')));
       }
     }).catch(()=>{});
-    const timer=setInterval(()=>{void load();},30_000);
+    // Sekme arka plandayken yoklama DURUR (TradePage'deki görünürlük deseni):
+    // açık unutulan sekme gün boyu Supabase okuması ve batarya harcamasın.
+    let timer: ReturnType<typeof setInterval>|null = setInterval(()=>{void load();},30_000);
+    const visibility=()=>{
+      if(document.visibilityState==='hidden'){ if(timer){clearInterval(timer);timer=null;} }
+      else if(!timer){ void load(); timer=setInterval(()=>{void load();},30_000); }
+    };
+    document.addEventListener('visibilitychange',visibility);
     const clockTimer=setInterval(()=>setClock(Date.now()),1000);
-    return()=>{mounted.current=false;clearInterval(timer);clearInterval(clockTimer);};
+    return()=>{mounted.current=false;if(timer)clearInterval(timer);clearInterval(clockTimer);document.removeEventListener('visibilitychange',visibility);};
   },[load,supported]);
   async function refresh() {
     setRequesting(true);setMessage('');
