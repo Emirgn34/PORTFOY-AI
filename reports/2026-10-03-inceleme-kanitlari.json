@@ -1,0 +1,146 @@
+﻿{
+  "date": "2026-10-03",
+  "method": "Yerel sentetik örnekler; ağ erişimi kapalı; uygulama kaynakları değiştirilmedi.",
+  "checks": [
+    {
+      "id": "F01",
+      "topic": "Alış kuru olmayan toplam TL kar/zararı",
+      "inputs": {
+        "quantity": 10,
+        "buyPriceUsd": 100,
+        "nowPriceUsd": 100,
+        "assumedBuyFx": 30,
+        "nowFx": 40
+      },
+      "observedProfitTry": 0,
+      "cashflowBasedProfitTry": 10000,
+      "note": "Alış kuru mevcut veri modelinde yok; 30 TRY/USD yalnızca bu sentetik örneğin varsayımıdır."
+    },
+    {
+      "id": "F02",
+      "topic": "Bugünkü pozisyonla geçmiş dönem karı",
+      "observed": {
+        "profit": 8000,
+        "percent": 25,
+        "covered": true
+      },
+      "actualProfitIfBoughtTodayAtCurrentPrice": 0,
+      "note": "Bugün alınan pozisyon bile geçmiş dönemde tutulmuş gibi hesaplanır; alım tarihi girdisi yoktur."
+    },
+    {
+      "id": "F03",
+      "topic": "Yüzde 10 fiyat kapsamı ve eksik kurla dönem karı",
+      "observed": {
+        "profit": 8000,
+        "percent": 25,
+        "covered": true
+      },
+      "actualPriceCoveragePct": 10,
+      "missingFxAssumedPct": 0
+    },
+    {
+      "id": "F04",
+      "topic": "Bozulma seviyesinin altında giriş etiketi",
+      "currentPrice": 90,
+      "observed": {
+        "low": 100,
+        "high": 103.5,
+        "anchorTouches": null,
+        "anchorIsSupport": false,
+        "status": "inside",
+        "distanceToZonePct": -13,
+        "invalidation": 97
+      },
+      "observedText": "Fiyat şu anda bu bölgenin içinde — seviye açısından giriş için uygun aralıkta.",
+      "expectedStatus": "invalidated"
+    },
+    {
+      "id": "F05",
+      "topic": "Fiyat, bilanço ve haber yokken analiz",
+      "observedPortfolio": {
+        "overallScore": 45,
+        "riskLevel": "Düşük",
+        "diversificationScore": 0,
+        "newsImpactScore": 50,
+        "fundamentalScore": 50,
+        "technicalScore": 50,
+        "largestPositionWeight": 100,
+        "largestSectorWeight": 100,
+        "comment": "Portföy genel skoru 45/100, risk seviyesi Düşük. Çeşitlendirme 0/100; en büyük sektör ağırlıkları ve yüksek riskli pozisyonlar sınırlandırılmalıdır."
+      },
+      "observedStock": {
+        "overallScore": 50,
+        "riskScore": 36,
+        "returnPotential": 50,
+        "newsSensitivity": 35,
+        "reliableNewsAvg": 5,
+        "recommendation": "Nötr",
+        "comment": "AUDIT için genel görünüm dengeli (skor 50/100). Temel sağlamlık 50, teknik 50, getiri potansiyeli 50, risk 36."
+      },
+      "expected": "Veri yetersiz; ölçülmüş risk sınıfı ve skor üretilmemeli."
+    },
+    {
+      "id": "F06",
+      "topic": "Tek sürücüyle yüksek güven; uzun vade uyuşmazlığı",
+      "driverKeys": [
+        "analyst"
+      ],
+      "confidence": 0.91,
+      "confidenceLabel": "yüksek",
+      "longExpectationSessions": 252,
+      "longAnalogSessions": 60
+    },
+    {
+      "id": "F07",
+      "topic": "Kaynak kıyasındaki dönem sonu düşüşü günlük maksimum düşüş değildir",
+      "observedPeriodDrawdownPct": 0,
+      "actualDailyMaxDrawdownPct": -50,
+      "note": "Mevcut alan periodDrawdownPct olarak adlandırılmış; gelecekte günlük maksimum düşüş diye sunulmamalı."
+    },
+    {
+      "id": "F08",
+      "topic": "Manuel ekleme sonrası eksik tahmine rağmen eski portföy beklentisi korunuyor",
+      "actualHoldingCount": 2,
+      "metrics": {
+        "opportunityScore": 62,
+        "convictionScore": null,
+        "expectedReturnPct": 1.2,
+        "expectedReturnCoveragePct": 12
+      },
+      "manualHoldingTarget": {
+        "price": 110
+      },
+      "expectedPortfolioReturnPct": null,
+      "note": "Model çekirdeğinin tüm yatırım kalemlerinde beklenti gerektiren kuralıyla çelişir; PortfolioSet bugün bu metriği göstermiyor."
+    },
+    {
+      "id": "F09",
+      "topic": "Benchmark yokken sıfır fazla getiri",
+      "observed": {
+        "count": 1,
+        "grossMean": 0.1,
+        "netMean": 0.099,
+        "medianNet": 0.099,
+        "hitRateNet": 1,
+        "excessMeanNet": 0,
+        "excessTStat": null
+      },
+      "expectedExcessMean": null
+    },
+    {
+      "id": "F10",
+      "topic": "Aynı kanıtta olay nöbeti AI indiriminin etkisini kaldırıyor",
+      "before": {
+        "score": 54,
+        "aiCertainty": 0,
+        "passesGate": false
+      },
+      "after": {
+        "score": 90,
+        "aiCertainty": 0,
+        "passesGate": true
+      },
+      "note": "Aynı haber, fiyat ve teknik veri; AI çağrısı ve gerçek veritabanı yazımı yoktur."
+    }
+  ]
+}
