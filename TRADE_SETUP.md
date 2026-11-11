@@ -13,7 +13,11 @@ Yerel test veya üretim derlemesinin başarılı olması canlı veri, migration,
 (`npm run trade:worker`) bağlam turunda ABD sembolleri için ücretsiz Yahoo
 GÜNLÜK barlarından 50 günlük zirveye göre düşüş kovası (%15/20/25/30/40) ve
 geçmiş benzer düşüşlerin 1/5/10 işlem günü ileri getiri istatistiğini hesaplar
-(sembol başına en çok 6 saatte bir chart isteği). Taze (≤5 işlem günü) ve
+(sembol başına en çok 6 saatte bir chart isteği). AYNI tarama dakikalık haber
+cron'unun sonunda BULUTTA da koşar (`server/patternCloud.js`, tur başına en çok
+4 sembol): yani desen bildirimleri için bilgisayarın açık olması GEREKMEZ;
+worker açıksa yalnızca tazeliği hızlandırır. Bölüm kimliği aynı olduğundan iki
+yol birlikte çalışsa da bildirim tek kez gider. Taze (≤5 işlem günü) ve
 geçmişte işe yaramış (≥3 örnek, 5 gün medyanı ≥ +%2, ≥%60 pozitif) düşüşlerde
 bölüm başına TEK 'pattern' bildirimi üretilir; metin geçmiş istatistik olduğunu
 ve tahmin/canlı sinyal olmadığını açıkça söyler. Migration kurulmamışsa worker

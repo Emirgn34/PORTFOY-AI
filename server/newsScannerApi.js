@@ -4,9 +4,11 @@ import { scanFreeNews } from './freeNews.js';
 import { translateStoredCatalysts } from './catalystNews.js';
 import { pushConfigured } from './pushNotifications.js';
 import { maybeRefreshHedge } from './hedgeJobs.js';
+import { scanCloudPatterns } from './patternCloud.js';
 
 export function createNewsScannerHandler({ getDb = automationDb, scan = scanFreeNews,
-  translate = translateStoredCatalysts, refreshHedge = maybeRefreshHedge, env = process.env } = {}) {
+  translate = translateStoredCatalysts, refreshHedge = maybeRefreshHedge,
+  scanPatterns = scanCloudPatterns, env = process.env } = {}) {
   return async function newsScannerHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).json({ error: 'Yöntem desteklenmiyor.' });
@@ -34,6 +36,11 @@ export function createNewsScannerHandler({ getDb = automationDb, scan = scanFree
         try { await translate(sb, { limit: 6 }); }
         catch { console.warn('[news-scan] Başlık çevirileri sonraki turda yeniden denenecek.'); }
       }
+      // Desen taraması haber turuna biner: PC'deki trade worker kapalıyken de
+      // "tekrarlayan düşüş" bildirimleri bu yoldan gider (sembol başına 6 saatte
+      // bir, tur başına en çok 4 chart isteği). Hatası haber taramasını düşürmez.
+      try { await scanPatterns(sb); }
+      catch { console.warn('[news-scan] Desen taraması bu turda tamamlanamadı; sonraki turda yeniden denenecek.'); }
       const ok = Boolean(result.skipped || result.feeds.length);
       return res.status(ok ? 200 : 503).json({ ok, ...result });
     } catch {
