@@ -22,6 +22,7 @@ export interface RadarState {
     market_open_at?: string; market_close?: string; next_market_open?: string; next_market_close?: string;
     confirmation_tr: string; close_window_tr: string; session_date: string; fallback_portfolio: boolean;
     volume_ratio: number; atr_confirmed: boolean; volume_confirmed: boolean; time_confirmed: boolean; panic: boolean;
+    weekly_break?: boolean; break_level?: number;
     price_source: string };
   stock_radar: RadarStock[];
 }

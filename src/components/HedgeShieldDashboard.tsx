@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, Check, ChevronRight, Clock3, Radar, RefreshCw, Shield, ShieldAlert, TrendingDown } from 'lucide-react';
+import { Bell, Check, ChevronRight, Clock3, HelpCircle, Radar, RefreshCw, Shield, ShieldAlert, TrendingDown } from 'lucide-react';
 import { enableShieldNotifications, hedgeRequest, type RadarState, type Regime } from '../services/hedgeRadar';
 
 const META: Record<Regime, {label:string; className:string; description:string}> = {
@@ -14,6 +14,72 @@ const decimal = (value:number, digits=2) => new Intl.NumberFormat('tr-TR',{maxim
 const pct = (value:number|null) => value == null ? '—' : `${value>0?'+':''}${decimal(value)}%`;
 const dateTime = (value:string) => new Date(value).toLocaleString('tr-TR',{timeZone:'Europe/Istanbul',dateStyle:'short',timeStyle:'short'});
 type PushConfig = {configured:boolean;publicKey:string;subscriptions:{endpoint:string;topics:string[]}[]};
+
+/**
+ * "Neden bu sinyal?" — telefona düşen bildirim (recommended_action) hangi
+ * ölçümlerden doğdu, sayfada SAYILARLA açıklanır. Kullanıcı bildirimden
+ * gelince "SOXS/SQQQ neden mantıklı (ya da neden değil)" sorusunun cevabını
+ * tahmin etmek zorunda kalmaz. Yeni veri üretmez; eldeki radar durumundan
+ * türetilir, bu yüzden ek maliyeti yoktur.
+ */
+function buildWhy(ready: RadarState): string[] {
+  const d = ready.diagnostics;
+  const r = ready.hedge_recipe;
+  const sma = ready.qqq_sma50;
+  const smaDist = sma ? (ready.qqq_price / sma - 1) * 100 : null;
+  const soxxBelow = ready.soxx_sma50 ? ready.soxx_price < ready.soxx_sma50 : false;
+  const why: string[] = [];
+  const fmtPct = (v: number | null) => (v == null ? '—' : `%${decimal(Math.abs(v), 1)}`);
+
+  switch (ready.market_regime) {
+    case 'HEDGE_TRIGGER':
+      why.push(
+        d.weekly_break
+          ? `QQQ ($${decimal(ready.qqq_price)}), haftalık EMA20 desteğinin ($${decimal(ready.qqq_weekly_ema20)}) ALTINDA — tek başına yeterli sayılan yapısal kırılım sinyali.`
+          : `QQQ ($${decimal(ready.qqq_price)}), günlük SMA50 desteğinin ($${decimal(sma)}) ${fmtPct(smaDist)} altında ve kırılım üç filtreden geçti.`
+      );
+      why.push(
+        d.atr_confirmed
+          ? `ATR tamponu aşıldı: fiyat, "gürültü" sayılan bölgenin (SMA50 − 0,4×ATR${d.break_level ? ` ≈ $${decimal(d.break_level)}` : ''}) altında.`
+          : 'ATR tamponu henüz aşılmadı (haftalık kırılım bu onayı beklemez).'
+      );
+      why.push(
+        `İşlem hacmi 20 günlük ortalamanın ${decimal(d.volume_ratio)}× katı (eşik 1,10×) — hareketin arkasında gerçek satış ${d.volume_confirmed ? 'VAR' : 'henüz teyitsiz'}.`
+      );
+      if (d.panic) why.push(`VIX ${decimal(ready.vix_level)} (>22) ve QQQ günü %2,5'ten sert düşüşte: ekstrem panik koşulu, kapanış beklenmedi.`);
+      why.push(
+        soxxBelow
+          ? `SOXX kendi SMA50'sinin ($${decimal(ready.soxx_sma50)}) altında: çip tarafı endeksten de zayıf. Çip ağırlıklı portföyde SOXS alternatifi bu yüzden öne çıkıyor (SOXX betan β ${decimal(r.soxx_beta)}).`
+          : `SOXX hâlâ kendi SMA50'sinin üstünde: sektör kırılımı yok, QQQ bazlı koruma (SQQQ/PSQ) genelde yeterli.`
+      );
+      why.push(`Önerilen koruma kademesi %${r.hedge_ratio * 100}: ${d.weekly_break ? 'haftalık yapısal kırılım' : soxxBelow ? 'endeks + sektör kırılımı birlikte' : 'yalnızca günlük kırılım'} olduğu için.`);
+      why.push(`Çıkış kuralı: QQQ, SMA50 ($${decimal(r.stop_level)}) üstünde GÜNLÜK kapanış yaparsa koruma senaryosu kapanır.`);
+      break;
+    case 'DEEP_VALUE_BUY':
+      why.push(`QQQ ($${decimal(ready.qqq_price)}), haftalık EMA50 ana destek bölgesinin ($${decimal(ready.qqq_weekly_ema50)}) %1,5 bandı içinde.`);
+      why.push('Bu bölge tarihsel olarak güçlü tepki alanıdır: yeni hedge AÇMAK yerine mevcut hedge kârını realize edip güçlü hisselere kademeli dönüş senaryosu izlenir ("SOXL/spot mantıklı olabilir" bildirimlerinin kaynağı budur).');
+      why.push(`VIX ${decimal(ready.vix_level)} (${pct(ready.vix_change_pct)}) — panik seviyesi dip bölgelerinde tepe yapma eğilimindedir. Bu seviye dip GARANTİSİ değildir; kademeli hareket önerilir.`);
+      break;
+    case 'TRAP_WARNING': {
+      why.push(`QQQ ($${decimal(ready.qqq_price)}), SMA50 desteğinin ($${decimal(sma)}) ${fmtPct(smaDist)} altında sarkıyor ama kırılım ONAYSIZ — ayı tuzağı olabilir.`);
+      const missing: string[] = [];
+      if (!d.time_confirmed) missing.push(`kapanış penceresi teyidi (${d.confirmation_tr} kapanışı beklenir)`);
+      if (!d.atr_confirmed) missing.push('ATR tamponu aşımı (fiyat hâlâ gürültü bandında)');
+      if (!d.volume_confirmed) missing.push(`hacim teyidi (şu an ${decimal(d.volume_ratio)}×, eşik 1,10×)`);
+      if (missing.length) why.push(`Eksik onaylar: ${missing.join(' · ')}. Bu yüzden hedge ÖNERİLMEDİ.`);
+      why.push('Onaysız kırılımda pozisyon açmak, tuzak dönüşünde iki yönde de zarar ettirir; sistem bilerek bekliyor.');
+      break;
+    }
+    case 'SUPPORT_TEST':
+      why.push(`QQQ ($${decimal(ready.qqq_price)}), SMA50 desteğinin ($${decimal(sma)}) hemen üstünde (${fmtPct(smaDist)} mesafe, 0–1,2% bandı) — karar bölgesi.`);
+      why.push('Destek tutarsa tepki alımı senaryosu; aşağı kırılırsa zaman + ATR + hacim onayı aranır. Şu an iki yönde de işlem sinyali yok.');
+      break;
+    default:
+      why.push(`QQQ ($${decimal(ready.qqq_price)}), SMA50'nin ($${decimal(sma)}) ${fmtPct(smaDist)} üstünde ve haftalık EMA20 üstünde: trend sağlıklı.`);
+      why.push(`VIX ${decimal(ready.vix_level)} (${pct(ready.vix_change_pct)}) — koruma maliyeti ödemeyi gerektiren bir stres yok; spot pozisyonlar izlenir.`);
+  }
+  return why;
+}
 
 function DistanceBar({name,price,level}:{name:string;price:number;level:number|null}) {
   const distance = level ? (price/level-1)*100 : null;
@@ -155,6 +221,13 @@ export default function HedgeShieldDashboard() {
           <p className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><Clock3 size={12}/>
             Veri: {dateTime(ready.diagnostics.as_of)} · Kapanış penceresi {ready.diagnostics.close_window_tr} TR
             {ready.previous_regime&&<span>· Önceki: {META[ready.previous_regime]?.label??ready.previous_regime}</span>}</p>
+        </div>
+        <div className="rounded-xl border border-navy-700 bg-navy-850/40 p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-ink"><HelpCircle size={16} className="text-accent-soft"/> Neden bu sinyal?</h3>
+          <p className="mt-1 text-[11px] text-slate-500">Telefona giden bildirim metni yukarıdaki öneridir; aşağıdaki maddeler o önerinin hangi ölçümlerden doğduğunu gösterir.</p>
+          <ul className="mt-3 space-y-2 text-xs leading-relaxed text-slate-300">
+            {buildWhy(ready).map((reason,i)=><li key={i} className="flex gap-2"><span className="mt-0.5 shrink-0 text-accent">•</span><span>{reason}</span></li>)}
+          </ul>
         </div>
         {ready.diagnostics.fallback_portfolio&&<p className="text-xs text-amber-400">Portföy boş: varsayılan sekiz hisse eşit ağırlıklı izleniyor. Bu beta kişisel portföy betası değildir.</p>}
         <div className="grid gap-4 lg:grid-cols-3">
