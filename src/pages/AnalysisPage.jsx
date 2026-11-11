@@ -120,7 +120,9 @@ function AnalysisContent({ stocks }) {
 
   // Her hissenin TRY bazlı portföy ağırlığı
   const weights = useMemo(() => {
-    const values = stocks.map((s) => toTRY(getStockMetrics(s).currentValue, s.currency));
+    // Kur bilinmiyorsa (toTRY null) hisse ağırlığa katılamaz; 0 sayılır ki
+    // sayfa çökmesin — toplam kartları zaten "kur alınamadı" gösterir.
+    const values = stocks.map((s) => toTRY(getStockMetrics(s).currentValue, s.currency) ?? 0);
     const total = values.reduce((sum, v) => sum + v, 0);
     return stocks.map((s, i) => ({
       stock: s,

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Wallet, Banknote, TrendingUp, TrendingDown, Percent, Layers, ChevronDown, Loader2 } from 'lucide-react';
-import { formatCurrency, formatPercent, PROFIT_PERIODS } from '../utils/portfolioCalculations.js';
+import { formatCurrency, formatPercent, getFxStatus, PROFIT_PERIODS } from '../utils/portfolioCalculations.js';
 
 function SummaryCard({ icon: Icon, label, value, accent = 'text-ink', iconBg = 'bg-accent/12 text-accent' }) {
   return (
@@ -20,7 +20,7 @@ function SummaryCard({ icon: Icon, label, value, accent = 'text-ink', iconBg = '
 function ProfitPeriodCard({ period, onChange, profit, loading, available }) {
   const [open, setOpen] = useState(false);
   const opt = PROFIT_PERIODS.find((p) => p.value === period) ?? PROFIT_PERIODS[0];
-  const isGain = profit >= 0;
+  const isGain = (profit ?? 0) >= 0;
   const color = isGain ? 'text-gain' : 'text-loss';
   const iconBg = isGain ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss';
   const Icon = isGain ? TrendingUp : TrendingDown;
@@ -32,7 +32,11 @@ function ProfitPeriodCard({ period, onChange, profit, loading, available }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="block w-full text-left"
-        title="Dönem seçmek için tıklayın"
+        title={
+          period === 'total'
+            ? 'Dönem seçmek için tıklayın'
+            : 'Bugünkü sepetin varsayımsal dönem değişimi: bugünkü adetlerin dönem boyunca elde tutulduğu varsayılır; dönem içi alım/satımlar hesaba katılmaz.'
+        }
       >
         <span className="flex items-center justify-between gap-3">
           <span className="flex items-center gap-1 truncate text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -95,12 +99,22 @@ export default function PortfolioSummaryCards({
   // Dönem seçilmemişse (Toplam) klasik toplam K/Z gösterilir
   const shownProfit = profitPeriod === 'total' ? summary.totalProfit : profit;
   const shownPercent = profitPeriod === 'total' ? summary.totalProfitPercent : profitPercent;
-  const isGain = shownProfit >= 0;
-  const profitColor = isGain ? 'text-gain' : 'text-loss';
+  const isGain = (shownProfit ?? 0) >= 0;
+  const profitColor = shownProfit == null ? 'text-slate-500' : isGain ? 'text-gain' : 'text-loss';
   const profitIconBg = isGain ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss';
   const percentDash = profitPeriod !== 'total' && !periodLoading && !periodAvailable;
 
+  // Kur durumu: TL çevrimi hangi kurla ve ne zamanki kurla yapılıyor?
+  const fx = getFxStatus();
+  const fxNote = summary.fxMissing
+    ? 'Döviz kuru alınamadı; TL toplamları hesaplanamıyor. Canlı veri geldiğinde otomatik düzelir.'
+    : summary.usesFx && fx.available
+      ? `TL değerleri ${fx.stale && fx.asOf ? `${fx.asOf.toLocaleDateString('tr-TR')} tarihli son bilinen` : 'güncel'} kurla çevrildi (1$ = ${fx.usdRate?.toFixed(2)}₺). ` +
+        'Alış günü kuru kayıtlı olmadığı için kur kazancı/kaybı K/Z tutarına dahil değildir.'
+      : null;
+
   return (
+    <div>
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <SummaryCard
         icon={Wallet}
@@ -133,6 +147,15 @@ export default function PortfolioSummaryCards({
         value={summary.stockCount}
         iconBg="bg-navy-800 text-slate-400"
       />
+    </div>
+    {fxNote && (
+      <p
+        className={`mt-2 text-xs ${summary.fxMissing ? 'text-amber-500' : 'text-slate-500'}`}
+        role={summary.fxMissing ? 'alert' : undefined}
+      >
+        {fxNote}
+      </p>
+    )}
     </div>
   );
 }
