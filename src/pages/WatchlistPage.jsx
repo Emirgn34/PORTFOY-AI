@@ -416,8 +416,8 @@ function WatchlistContent({ items, setItems, setPortfolioStocks, sortMode, setSo
       )}
 
       <p className="text-[11px] text-slate-600">
-        Fiyat ve günlük değişim verileri şimdilik elle girilir; gerçek fiyat API'si bağlandığında
-        otomatik güncellenecektir. Bu liste yatırım tavsiyesi değildir.
+        Fiyat ve günlük değişim, canlı veri bağlantısı açıkken otomatik güncellenir; bağlantı
+        yoksa son bilinen değerler gösterilir. Bu liste yatırım tavsiyesi değildir.
       </p>
 
       <WatchlistFormModal

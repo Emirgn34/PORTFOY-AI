@@ -28,7 +28,15 @@ function duration(hours) {
   return Array.isArray(hours) && hours.length === 2 && hours.every((n) => typeof n === 'number' && Number.isFinite(n))
     ? `${number(hours[0], 1)}–${number(hours[1], 1)} işlem saati` : 'Süre için gün içi veri bekleniyor';
 }
-function live(candidate, now) {
+/**
+ * Tazelik eşikleri SUNUCUDAN okunur (status.quoteMaxAgeMs / barMaxAgeMs) —
+ * tek gerçek kaynak server/tradeData.js ve SQL'deki trade_delivery_allowed.
+ * Buradaki 15/90/30 sn değerleri sadece ÜST SINIRDIR: sunucu eşiği
+ * sıkılaştırabilir, arayüz asla gevşetemez (Math.min bunu garanti eder).
+ */
+function live(candidate, now, status) {
+  const quoteMax = Math.min(15000, Number(status?.quoteMaxAgeMs) || 15000);
+  const barMax = Math.min(90000, Number(status?.barMaxAgeMs) || 90000);
   const quality = candidate.dataQuality;
   const quote = Date.parse(quality?.quoteTime);
   const bar = Date.parse(quality?.barTime);
@@ -36,7 +44,7 @@ function live(candidate, now) {
   return candidate.status === 'ready' && quality?.realtime === true && quality?.sessionVerified === true
     && quality?.halted === false && Date.parse(candidate.expiresAt) > now
     && created <= now + 2000 && now - created <= 30000
-    && quote <= now + 2000 && now - quote <= 15000 && bar <= now && now - bar <= 90000;
+    && quote <= now + 2000 && now - quote <= quoteMax && bar <= now && now - bar <= barMax;
 }
 function reasons(candidate, key) {
   return (candidate[key] ?? []).map(textOf).filter(Boolean);
@@ -64,12 +72,12 @@ function TradeContext({ context = {} }) {
   </section>;
 }
 
-function TradeDetail({ candidate, now, onClose }) {
+function TradeDetail({ candidate, now, status, onClose }) {
   const dialog = useRef(null);
   const closeButton = useRef(null);
   const [capital, setCapital] = useState('');
   const [riskBudget, setRiskBudget] = useState('0.5');
-  const actionable = live(candidate, now);
+  const actionable = live(candidate, now, status);
   const hasEntry=Number.isFinite(candidate.entry) && candidate.entry>0;
   const hasPlan=candidate.availability!=='research-only' && hasEntry && Number.isFinite(candidate.stopLoss)
     && candidate.stopLoss>0 && candidate.stopLoss<candidate.entry && (candidate.scenarios ?? []).length>0;
@@ -203,7 +211,7 @@ export default function TradePage() {
   }, []);
   const items = data?.items ?? [];
   const selected = items.find((item) => item.symbol === selectedSymbol);
-  const readyCount = items.filter((item) => live(item, now)).length;
+  const readyCount = items.filter((item) => live(item, now, data?.status)).length;
   const status = data?.status;
   const running = !error && status?.running && now - Date.parse(status.lastHeartbeatAt) <= (status.heartbeatMaxAgeMs ?? 30000)
     && Date.parse(status.lastHeartbeatAt) <= now + 2000;
@@ -232,7 +240,7 @@ export default function TradePage() {
     </section>}
     <section aria-label="Trade hisse kartları" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {items.map((candidate) => {
-        const actionable = live(candidate, now);
+        const actionable = live(candidate, now, status);
         const expired = candidate.status === 'ready' && !actionable;
         const researchOnly = candidate.availability === 'research-only';
         return <button key={candidate.symbol} onClick={() => setSelectedSymbol(candidate.symbol)} aria-label={`${candidate.symbol} trade detayını aç`} className="group flex h-full flex-col rounded-xl border border-navy-700 bg-navy-900 p-5 text-left transition-colors hover:border-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
@@ -250,6 +258,6 @@ export default function TradePage() {
     {data && !items.length && <section className="rounded-xl border border-dashed border-navy-700 p-8 text-center"><Activity size={26} className="mx-auto mb-3 text-slate-500" /><h3 className="font-semibold text-ink">Şu an gösterilecek trade adayı yok</h3><p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-slate-400">İzlenen hisseler için veri akışı ve risk koşulları sağlandığında kartlar burada görünür. Seans dışında veya veri bağlantısı eksikken uygun sinyal beklenir.</p></section>}
     <section className={`${panel} space-y-4`} aria-label="Trade uyarı tercihleri"><h3 className="flex items-center gap-2 font-semibold text-ink"><Bell size={17} /> Trade uyarıları</h3><label className="flex items-start gap-3 text-sm text-slate-300"><input type="checkbox" className="mt-1" checked={Boolean(data?.preferences?.enabled)} disabled={!data || preferenceBusy} onChange={(event) => savePreference(event.target.checked)} /><span>Hesabım için trade uyarılarını aç<span className="mt-1 block text-xs leading-relaxed text-slate-400">Yalnızca güncel veriyle koşulları karşılayan sinyaller bildirilir. Telefona teslim için bu cihazda “Trade sinyalleri” konusunu da kaydet.</span></span></label>{preferenceMessage && <p role="status" className="text-xs text-amber-400">{preferenceMessage}</p>}<NotificationSettings suggestedTopics={PHONE_TOPICS} /></section>
     {(data?.requirements ?? []).length > 0 && <details className={panel}><summary className="cursor-pointer font-semibold text-ink">Trade için gerekenler ve veri durumu</summary><ul className="mt-4 space-y-4">{data.requirements.map((requirement) => <li key={requirement.id || requirement.label} className="border-t border-navy-700 pt-3"><div className="flex items-center justify-between gap-3"><h4 className="text-sm font-medium text-ink">{requirement.label}</h4><span className={`shrink-0 text-xs ${requirement.status === 'available' ? 'text-gain' : 'text-amber-400'}`}>{REQUIREMENT_LABELS[requirement.status] || requirement.status}</span></div>{requirement.detail && <p className="mt-1 text-xs leading-relaxed text-slate-400">{requirement.detail}</p>}</li>)}</ul></details>}
-    {selected && <TradeDetail candidate={selected} now={now} onClose={closeDetail} />}
+    {selected && <TradeDetail candidate={selected} now={now} status={status} onClose={closeDetail} />}
   </div>;
 }

@@ -1,5 +1,17 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## KALICI KISIT: Vercel Hobby planında en fazla 12 sunucu fonksiyonu
+
+`api/` altında şu an TAM 12 fonksiyon dosyası vardır (account, admin/users,
+analyze-portfolio, fx, history, institutional, macro-calendar,
+market-intelligence, profile, quotes, search, sec-filings) ve Hobby planının
+üst sınırı 12'dir. **Yeni bir `api/*.js` dosyası eklemek deploy'u kırar.**
+Yeni bir sunucu ucu gerekirse `api/account.js` içine `?feature=...&action=...`
+deseniyle eklenir — trade/hedge/news-scan/automation uçlarının hepsi bu yüzden
+oradadır. Ayrıca beş açık uç (quotes/history/fx/search/profile) sembol
+doğrulama + sınır + önbellek başlığını `server/apiGuards.js` üzerinden alır;
+yeni uç eklerken aynı korumayı kullan.
+
 ## 28 Ekim 2026: kişisel portföy sırası ve paylaşım görseli
 
 Yalnızca kod yayını gerekir; yeni SQL, anahtar veya zamanlayıcı yoktur.

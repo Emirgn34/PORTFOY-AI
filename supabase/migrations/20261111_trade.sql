@@ -48,6 +48,8 @@ begin
   if previous_time is not null and previous_time>p_quote_time then return false; end if;
   insert into trade_signals(symbol,data,quote_time,realtime,source,updated_at) values(ticker,p_signal,p_quote_time,p_realtime,p_source,now())
     on conflict(symbol) do update set data=excluded.data,quote_time=excluded.quote_time,realtime=excluded.realtime,source=excluded.source,updated_at=excluded.updated_at;
+  -- ÇAPRAZ REFERANS: '15 seconds' = TRADE_QUOTE_MAX_AGE_MS (server/tradeData.js).
+  -- Oradaki eşik değişirse bu fonksiyon da yeni bir migration ile güncellenmeli.
   if p_signal->>'status'<>'ready' or not p_realtime or p_quote_time<now()-interval '15 seconds' then return true; end if;
   expiration:=least((p_signal->>'expiresAt')::timestamptz,p_quote_time+interval '15 seconds',now()+interval '15 seconds');
   if expiration is null or expiration<=now() then return true; end if;

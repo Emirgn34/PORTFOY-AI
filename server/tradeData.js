@@ -3,6 +3,10 @@ import { buildTradeCandidate, isTradeCandidateFresh } from './tradeEngine.js';
 import { deliverNotifications, pushConfigured } from './pushNotifications.js';
 import { mapLimit } from './concurrency.js';
 
+// Tazelik eşiklerinin TEK TANIM YERİ burasıdır; arayüz bunları /api/trade
+// status alanından okur (TradePage live()). DİKKAT: SQL tarafındaki
+// trade_delivery_allowed (supabase/migrations/20261111_trade.sql) "15 saniye"
+// kuralını bağımsız uygular — buradaki değeri değiştirirsen SQL'i de güncelle.
 export const TRADE_QUOTE_MAX_AGE_MS = 15_000;
 export const TRADE_BAR_MAX_AGE_MS = 90_000;
 const symbolPattern = /^[A-Z][A-Z0-9.-]{0,14}$/;
