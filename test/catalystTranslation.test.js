@@ -36,12 +36,15 @@ test('haber ve push metni Türkçeleşir; özgün başlık ve olay kimliği/zama
   for(const key of ['id','detected_at','published_at','expires_at','url']) assert.equal(localized[key],event[key]);
 });
 
-test('çeviri kesintisinde Türkçe olay özeti kullanılır; mevcut Türkçe başlık tekrar çevrilmez',async()=>{
+test('çeviri kesintisinde sayfa Türkçe özet, push ise bilgi taşıyan özgün başlığı kullanır',async()=>{
   const event=catalystEvent(article);
   const fallback=await localizeCatalystEvent(event,{translate:async()=>{throw new Error('timeout');}});
   assert.equal(fallback.data.translationStatus,'pending');assert.match(fallback.body,/Gelir \/ kâr tahmini yükseldi/);
   assert.notEqual(fallback.body,article.title);
-  assert.equal(notificationBody(event),fallback.body); // Henüz güncellenmemiş eski haber de İngilizce push göndermez.
+  // Push başlığı (SYMB · tür etiketi) zaten Türkçedir; jenerik gövde başlığı
+  // tekrarlamaktan başka bilgi taşımıyordu. Çeviri gelene dek gövde, karar
+  // vermeye yarayan ÖZGÜN başlığı taşır (11 Kas 2026, hızlı haber isteği).
+  assert.equal(notificationBody(fallback),article.title);
   const cached=await localizeCatalystEvent(event,{titleTr:turkish,translate:async()=>assert.fail('Tekrar çevrilmemeli')});
   assert.equal(cached.body,turkish);
 });

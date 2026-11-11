@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import NotificationSettings from './NotificationSettings.jsx';
 import { automationRequest } from '../services/automation.js';
 export default function CatalystNewsPanel() {
   const [data, setData] = useState(null), [error, setError] = useState('');
+  // Bildirimden gelen ?event=<id> parametresi: ilgili kart vurgulanır ve
+  // görünüme kaydırılır — kullanıcı bildirimdeki habere saniyeler içinde iner.
+  const [params] = useSearchParams();
+  const focusedEvent = params.get('event');
   useEffect(() => {
     let active = true, loading = false;
     async function load() {
@@ -13,6 +18,10 @@ export default function CatalystNewsPanel() {
     load(); const timer = setInterval(load, 15000);
     return () => { active = false; clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    if (!focusedEvent || !data?.events?.length) return;
+    document.getElementById(focusedEvent)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusedEvent, data]);
   const status = data?.status;
   const lastSuccess = status?.data?.mode === 'rss' ? status.data.lastSuccessfulCheckAt || status.updated_at : status?.updated_at;
   const ageMs = Date.now() - Date.parse(lastSuccess);
@@ -25,7 +34,7 @@ export default function CatalystNewsPanel() {
   return <div className="space-y-4">
     <div className="rounded-xl border border-navy-700 bg-navy-900 p-5">
       <h2 className="text-xl font-semibold text-ink">Hızlı Şirket Haberleri</h2>
-      <p className="mt-2 text-sm text-slate-400">Gelir tahmini artışı, beklenti üstü bilanço, onay ve büyük sözleşme haberleri. ABD hisseleri; piyasa öncesi ve sonrası dahil.</p>
+      <p className="mt-2 text-sm text-slate-400">Gelir tahmini artışı, beklenti üstü bilanço, onay, büyük sözleşme ve satın alma/birleşme haberleri. ABD hisseleri; piyasa öncesi ve sonrası dahil.</p>
       <p className={`mt-3 text-xs ${live ? 'text-gain' : 'text-amber-400'}`}>{live ? 'Canlı haber bağlantısı etkin' : status?.data?.mode === 'rss' && !status.data.connected ? 'Ücretsiz haber kaynaklarına bağlantı kurulamadı' : stale ? 'Haber kontrolü gecikti · son başarılı bağlantı güncel değil' : partial ? 'Bazı haber kaynaklarına ulaşılamadı · diğer kaynaklar izleniyor' : status?.data?.mode === 'rss' ? 'Ücretsiz basın açıklamaları · aralıklı kontrol' : status?.data?.mode === 'scheduled' ? 'Zamanlanmış haber kontrolü · gerçek zamanlı bağlantı kapalı' : 'Haber bağlantısı kurulumu bekleniyor'}</p>
       {status && <p className="mt-1 text-xs text-slate-500">Son kontrol: {new Date(status.updated_at).toLocaleString('tr-TR')}. {status.data.note}</p>}
       {status?.data?.mode === 'rss' && <p className="mt-1 text-xs text-slate-500">
@@ -38,11 +47,14 @@ export default function CatalystNewsPanel() {
     </div>
     <NotificationSettings />
     {error && <p role="alert" className="text-sm text-loss">{error}</p>}
-    {!data ? <p className="text-sm text-slate-400">Haber akışı yükleniyor…</p> : !data.events.length ? <p className="rounded-xl border border-dashed border-navy-700 p-8 text-center text-sm text-slate-400">Henüz bu koşullarda kaydedilmiş bir haber yok.</p> : data.events.map((event) => <article id={event.id} key={event.id} className="rounded-xl border border-navy-700 bg-navy-900 p-5">
+    {!data ? <p className="text-sm text-slate-400">Haber akışı yükleniyor…</p> : !data.events.length ? <p className="rounded-xl border border-dashed border-navy-700 p-8 text-center text-sm text-slate-400">Henüz bu koşullarda kaydedilmiş bir haber yok.</p> : data.events.map((event) => <article id={event.id} key={event.id} className={`rounded-xl border bg-navy-900 p-5 ${event.id === focusedEvent ? 'border-accent ring-2 ring-accent/30' : 'border-navy-700'}`}>
       <div className="flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-accent/10 px-2 py-1 text-accent">{event.data.label}</span><span className="text-slate-500">{event.data.symbols.join(', ')} {event.data.timing && `· ${event.data.timing}`}</span></div>
       <h3 className="mt-3 font-semibold text-ink">{event.body}</h3><p className="mt-2 text-xs text-slate-500">{event.data.source} · Yayın: {new Date(event.published_at).toLocaleString('tr-TR')} · Algılama gecikmesi: {event.data.latencySeconds} sn</p>
       {event.data.originalTitle && event.data.originalTitle !== event.body && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">{event.data.translationStatus === 'pending' ? 'Türkçe olay özeti · özgün başlığı göster' : 'Otomatik çeviri · özgün başlığı göster'}</summary><p className="mt-2 text-slate-400">{event.data.originalTitle}</p></details>}
-      <a href={event.data.sourceUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-sm text-accent">Kaynak haberi aç ↗</a>
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        <a href={event.data.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-accent">Kaynak haberi aç ↗</a>
+        {event.data.symbols.map((symbol) => <a key={symbol} href={`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`} target="_blank" rel="noopener noreferrer" className="text-sm text-slate-400 underline-offset-2 hover:text-accent hover:underline">{symbol} grafiği ↗</a>)}
+      </div>
     </article>)}
   </div>;
 }

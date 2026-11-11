@@ -9,6 +9,9 @@ export const FREE_NEWS_FEEDS = [
   {provider:'PR Newswire',url:'https://www.prnewswire.com/rss/financial-services-latest-news/earnings-forecasts-projections-list.rss'},
   {provider:'GlobeNewswire',label:'GlobeNewswire · Bilanço',url:'https://rss.globenewswire.com/en/RssFeed/subjectcode/13-Earnings%20Releases%20and%20Operating%20Results/feedTitle/GlobeNewswire%20-%20Earnings%20Releases%20and%20Operating%20Results'},
   {provider:'GlobeNewswire',label:'GlobeNewswire · Sözleşme',url:'https://rss.globenewswire.com/en/RssFeed/subjectcode/7-Business%20Contracts/feedTitle/GlobeNewswire%20-%20Business%20Contracts'},
+  // Satın alma/birleşme duyuruları en sert fiyat hareketini yapan bülten türüdür;
+  // kod 5 = Mergers and Acquisitions (11 Kas 2026'da HTTP 200 + geçerli RSS doğrulandı).
+  {provider:'GlobeNewswire',label:'GlobeNewswire · Birleşme/Satın alma',url:'https://rss.globenewswire.com/en/RssFeed/subjectcode/5-Mergers%20and%20Acquisitions/feedTitle/GlobeNewswire%20-%20Mergers%20and%20Acquisitions'},
 ];
 
 export async function scanFreeNews(sb, { intervalSeconds = 300, runner = 'github', fetchImpl = fetch,

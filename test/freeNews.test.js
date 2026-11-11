@@ -127,7 +127,7 @@ test('beş resmi kaynak en fazla dört eşzamanlı istekle okunur ve uygulama ki
   const db = memoryDb();
   let active = 0, maximum = 0, release;
   const gate = new Promise((resolve) => { release = resolve; });
-  assert.equal(feedCount, 5);
+  assert.equal(feedCount, 6);
   const result = await scanFreeNews(db, { now, fetchImpl: async (_, options) => {
     assert.equal(options.headers['User-Agent'], 'PortfoyAI/1.0 (RSS reader)');
     active++; maximum = Math.max(maximum, active);
@@ -135,7 +135,7 @@ test('beş resmi kaynak en fazla dört eşzamanlı istekle okunur ve uygulama ki
     await gate; active--;
     return fetchOk();
   }, ingest: async () => ({ matches: 0, inserted: 0 }), send: async () => {} });
-  assert.equal(maximum, 4); assert.equal(result.feeds.length, 5);
+  assert.equal(maximum, 4); assert.equal(result.feeds.length, 6);
   assert.ok(result.feedChecks.every((feed) => feed.httpStatus === 200));
   const globe = FREE_NEWS_FEEDS.filter((feed) => feed.provider === 'GlobeNewswire');
   assert.ok(globe.every((feed) => new URL(feed.url).hostname === 'rss.globenewswire.com'));
@@ -148,7 +148,7 @@ test('GlobeNewswire 403 tanısı akış adıyla saklanır ve diğer kaynaklar s�
   const result = await scanFreeNews(db, { now, fetchImpl: async (url) =>
     url.includes('subjectcode/7-') ? new Response('', { status: 403 }) : fetchOk(),
     ingest: async () => ({ matches: 0, inserted: 0 }), send: async () => {} });
-  assert.equal(result.feeds.length, 4);
+  assert.equal(result.feeds.length, 5);
   assert.deepEqual(result.errors, ['GlobeNewswire · Sözleşme: HTTP 403']);
   assert.equal(result.feedChecks.find((feed) => !feed.ok).httpStatus, 403);
 });

@@ -7,7 +7,10 @@ export function pushConfigured() {
 }
 export function notificationBody(event) {
   if(event.topic!=='catalyst') return event.body;
-  return event.data?.titleTr || `${event.data?.symbols?.join(', ') || 'Şirket'}: ${event.data?.label || 'Yeni şirket gelişmesi'}. Ayrıntılar kaynak haberde.`;
+  // Çeviri genellikle sonraya ertelenir; jenerik metin yerine ÖZGÜN başlık
+  // gönderilir — bildirimle hızlı karar için başlık çok daha fazla bilgi taşır.
+  return event.data?.titleTr || event.data?.originalTitle
+    || `${event.data?.symbols?.join(', ') || 'Şirket'}: ${event.data?.label || 'Yeni şirket gelişmesi'}. Ayrıntılar kaynak haberde.`;
 }
 export function validatePushSubscription(subscription) {
   let url;

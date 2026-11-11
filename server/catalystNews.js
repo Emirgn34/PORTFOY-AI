@@ -10,6 +10,7 @@ const RULES = [
   ['earnings-beat', 'Beklenti üstü sonuç', /\b(?:earnings|revenue|sales|eps)\b.{0,50}\b(?:beats?|tops?|exceeds?|above)\b.{0,30}\b(?:estimates?|expectations?|consensus)\b|beklentilerin üzerinde.{0,30}(?:gelir|kâr|kar)/i],
   ['approval', 'Düzenleyici onay', /\bFDA\b.{0,50}\b(?:approves?|approval|clears?)\b/i],
   ['contract', 'Yeni büyük sözleşme', /\b(?:wins?|secures?|awarded)\b.{0,70}\b(?:contract|order|deal)\b/i],
+  ['acquisition', 'Satın alma / birleşme', /\b(?:to acquire|acquires?|to be acquired|acquisition of|merger agreement|definitive (?:merger )?agreement|take[- ]private)\b/i],
 ];
 export function classifyCatalyst(title = '') {
   if (/\b(?:not|no|denies?|cuts?|lowers?|withdraws?|rumou?r|may|could|expected to|preview)\b|yalanla|düşürd|düşür|bekleniyor/i.test(title)) return null;
