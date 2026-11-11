@@ -6,6 +6,7 @@
  * Sonuç kanıt imzasıyla Supabase'de cache'lenir ve aynı olay tekrar ücretlenmez.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { finalizeConvictionScore } from '../src/utils/conviction.js';
 import {
   buildDecisionCacheKey,
   canSpendAi,
@@ -176,13 +177,12 @@ function strongestEvidence(candidate) {
 
 function applyDecision(candidate, decision, { cacheHit = false } = {}) {
   const certainty = clamp(Number(decision?.certainty) || 0);
-  const factor = 0.6 + 0.4 * (certainty / 100);
   const ruleScore = candidate.conviction.ruleScore ?? candidate.conviction.score;
   const contradiction = candidate.conviction.contradictions?.[0]?.text?.trim() || null;
   candidate.conviction = {
     ...candidate.conviction,
     ruleScore,
-    score: Math.round(ruleScore * factor),
+    score: finalizeConvictionScore({ ruleScore, aiCertainty: certainty }),
     aiCertainty: certainty,
     aiDecisive: certainty >= 70,
     aiReasonCode: REASON_CODES.includes(decision?.reason_code) ? decision.reason_code : 'WEAK_OR_GENERIC',

@@ -28,7 +28,7 @@
  */
 import { buildConviction } from './evidence.js';
 import { buildVolumeSignal } from './candidateBuilder.js';
-import { passesConvictionGate } from '../src/utils/conviction.js';
+import { finalizeConvictionScore, passesConvictionGate } from '../src/utils/conviction.js';
 import { confirmConviction, isConvictionAiEnabled } from './convictionAnalysis.js';
 import { mapLimit } from './concurrency.js';
 
@@ -180,8 +180,6 @@ export async function runEventWatch({ sb, quoteMap, getNewsForSymbol }) {
     });
 
     const previous = row.conv ?? { score: 0, evidence: [] };
-    const wasPassing = passesConvictionGate(previous);
-    const isPassing = passesConvictionGate(conviction);
 
     // Gerekçe cümlesi OLAYA aittir, skora değil: kanıt kümesi aynı kaldığı
     // sürece devralınır. Eşiğin sınırındaki bir aday gün içinde girip çıksa
@@ -189,8 +187,22 @@ export async function runEventWatch({ sb, quoteMap, getNewsForSymbol }) {
     if (evidenceSignature(conviction) === evidenceSignature(previous)) {
       conviction.verdict = previous.verdict ?? null;
       conviction.verdictRisk = previous.verdictRisk ?? null;
-      conviction.aiCertainty = previous.aiCertainty ?? null;
+      if (previous.aiCertainty != null) {
+        conviction.aiCertainty = previous.aiCertainty;
+        conviction.aiDecisive = previous.aiDecisive ?? null;
+        conviction.aiReasonCode = previous.aiReasonCode ?? null;
+        conviction.aiModel = previous.aiModel ?? null;
+        conviction.aiPromptVersion = previous.aiPromptVersion ?? null;
+        conviction.aiCacheHit = true;
+      }
     }
+
+    // Nihai puan TEK fonksiyondan hesaplanır: AI'ın 90→54'e indirdiği bir aday,
+    // yeni haber gelmeden nöbette ham 90'a GERİ DÖNEMEZ. Kapı kontrolü de bu
+    // nihai puanla, devralma adımından SONRA yapılır — ham puanla değil.
+    conviction.score = finalizeConvictionScore(conviction);
+    const wasPassing = passesConvictionGate(previous);
+    const isPassing = passesConvictionGate(conviction);
 
     // AI teyidi yalnızca YENİ bir kanıt vitrine çıktığında çalışır
     const willPromote =

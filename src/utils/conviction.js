@@ -227,6 +227,29 @@ export function passesConvictionGate(conviction) {
 }
 
 /**
+ * NİHAİ kesinlik puanı — TEK hesap noktası.
+ *
+ * Kural motoru (`buildConviction`) ham kanıt gücünü `ruleScore` olarak üretir;
+ * Claude teyidi buna `aiCertainty` (0-100) ekler. Nihai puan bu ikisinden HER
+ * ZAMAN burada hesaplanır: aday turu da olay nöbeti de bu fonksiyonu çağırır.
+ * Böylece "AI'ın düşürdüğü puan, nöbette ham kural puanına geri yükselir"
+ * hatası yapısal olarak tekrarlanamaz.
+ *
+ * AI teyidi yoksa nihai puan kural puanının kendisidir; varsa 0.6–1.0 arası
+ * bir çarpan uygulanır (certainty 0 → ×0.6, certainty 100 → ×1).
+ */
+export function finalizeConvictionScore(conviction) {
+  if (!conviction) return 0;
+  const ruleScore = Number(conviction.ruleScore ?? conviction.score ?? 0);
+  const certainty = conviction.aiCertainty;
+  if (certainty == null || !Number.isFinite(Number(certainty))) {
+    return Math.round(ruleScore);
+  }
+  const factor = 0.6 + 0.4 * (clamp(Number(certainty)) / 100);
+  return Math.round(ruleScore * factor);
+}
+
+/**
  * AI gerekçesi yokken (anahtar tanımsız veya çağrı atlandı) gösterilecek
  * özet cümle. Kanıtların kendi metinleri zaten tam cümle olduğu için burada
  * yalnızca "kaç farklı kanıt, hangi türden" bilgisi verilir.

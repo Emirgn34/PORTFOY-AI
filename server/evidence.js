@@ -311,6 +311,9 @@ export function buildConviction({ newsRows, metrics, tech, price, referenceMs, c
 
   return {
     score,
+    // Ham kural puanı AYRICA saklanır: AI çarpanı ve olay nöbeti nihai puanı
+    // her zaman bu alandan türetir (bkz. finalizeConvictionScore).
+    ruleScore: score,
     categories: result.categories,
     evidence: supporting,
     contradictions,
