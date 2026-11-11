@@ -4,7 +4,7 @@
  * bağlandığında bu dosya yerine bir servis katmanı (ör. src/services/newsService.js)
  * aynı veri şemasını döndürecek şekilde kullanılacaktır.
  */
-export const NEWS_TYPES = ['Anlaşma', 'Bilanço', 'Yatırım', 'Ortaklık', 'KAP', 'Genel Haber'];
+// NEWS_TYPES artık src/data/candidateEnums.js'te yaşar (gerçek sabit).
 
 export const MOCK_NEWS = [
   {

@@ -12,18 +12,9 @@
 /** Verilerin en son ne zaman üretildiği (mock). */
 export const LAST_UPDATED = '2026-06-12T09:45:00+03:00';
 
-export const RISK_LEVELS = ['Düşük', 'Orta', 'Yüksek'];
-export const LIQUIDITY_LEVELS = ['Düşük', 'Orta', 'Yüksek'];
-
-/** Sıralama için sinyal/enum ağırlıkları. */
-export const VOLUME_SIGNAL_ORDER = {
-  'Güçlü Hacim Artışı': 4,
-  'Hacim Artışı': 3,
-  'Normal Hacim': 2,
-  'Zayıf Hacim': 1,
-};
-
-export const RISK_ORDER = { 'Düşük': 1, 'Orta': 2, 'Yüksek': 3 };
+// RISK_LEVELS / LIQUIDITY_LEVELS / VOLUME_SIGNAL_ORDER / RISK_ORDER gibi
+// GERÇEK sabitler artık src/data/candidateEnums.js'te yaşar — üretim kodu
+// mock modülüne bağımlı olmasın diye (bkz. useMockModule).
 
 export const MOCK_SHORT_TERM_CANDIDATES = [
   {

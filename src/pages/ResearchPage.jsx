@@ -18,8 +18,7 @@ import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { MOCK_ENABLED } from '../config.js';
-import { MOCK_LONG_TERM_CANDIDATES } from '../data/mockLongTermCandidates.js';
-import { MOCK_SHORT_TERM_CANDIDATES } from '../data/mockShortTermCandidates.js';
+
 import { fetchLiveCandidates } from '../services/liveData.js';
 import {
   fetchInstitutionalManagers,
@@ -161,14 +160,22 @@ function ResearchContent({ stocks, watchlist }) {
   useEffect(() => {
     let active = true;
     fetchMacroCalendar({ days: 90 }).then((result) => active && setMacro(result));
-    Promise.all([fetchLiveCandidates('short'), fetchLiveCandidates('long')]).then(([short, long]) => {
+    Promise.all([fetchLiveCandidates('short'), fetchLiveCandidates('long')]).then(async ([short, long]) => {
       if (!active) return;
       const shortIsLive = Array.isArray(short?.candidates);
       const longIsLive = Array.isArray(long?.candidates);
       const usesMock = MOCK_ENABLED && (!shortIsLive || !longIsLive);
+      // Mock modülleri yalnızca gerektiğinde dinamik yüklenir (paket boyutu).
+      const [shortMocks, longMocks] = usesMock
+        ? await Promise.all([
+            import('../data/mockShortTermCandidates.js'),
+            import('../data/mockLongTermCandidates.js'),
+          ])
+        : [null, null];
+      if (!active) return;
       setCandidates({
-        short: short?.candidates ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []),
-        long: long?.candidates ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []),
+        short: short?.candidates ?? shortMocks?.MOCK_SHORT_TERM_CANDIDATES ?? [],
+        long: long?.candidates ?? longMocks?.MOCK_LONG_TERM_CANDIDATES ?? [],
         generatedAt: long?.generatedAt ?? short?.generatedAt ?? new Date().toISOString(),
         source: usesMock
           ? 'mock'

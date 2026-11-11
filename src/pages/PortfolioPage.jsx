@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Plus, PieChart as PieChartIcon, RefreshCw, WifiOff, Loader2, ListOrdered } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import useSyncedState from '../hooks/useSyncedState.js';
 import useLivePrices from '../hooks/useLivePrices.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
@@ -26,18 +25,9 @@ const STORAGE_KEY = 'portfoyai_stocks';
 // Sakin, finansa uygun kategorik palet (neon/AI tonları yerine yeşil–kum–nötr)
 const CHART_COLORS = ['#244c3a', '#3f7d5e', '#6aa07f', '#9ab8a3', '#a06a24', '#c79a5b', '#687069', '#b0b7ac'];
 
-function ChartTooltip({ active, payload }) {
-  if (!active || !payload?.length) return null;
-  const item = payload[0];
-  return (
-    <div className="shadow-pop rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-xs">
-      <p className="font-semibold text-ink">{item.name}</p>
-      <p className="text-slate-400">
-        {formatCurrency(item.value)} ({item.payload.percent.toFixed(1)}%)
-      </p>
-    </div>
-  );
-}
+// Recharts yalnızca donut grafik için gerekli; lazy() ile ayrı chunk'ta kalır
+// ve sayfanın ilk açılışını bekletmez (madde 11).
+const SectorDonutChart = lazy(() => import('../components/SectorDonutChart.jsx'));
 
 export default function PortfolioPage() {
   // Portföy artık kullanıcı hesabına bağlı (Supabase, çok cihaz senkron, RLS
@@ -277,24 +267,11 @@ function PortfolioContent({ stocks, setStocks, sync }) {
             </h3>
             <div className="flex flex-col items-center gap-4 sm:flex-row">
               <div className="h-48 w-48 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={sectorAllocation}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={50}
-                      outerRadius={75}
-                      paddingAngle={3}
-                      stroke="none"
-                    >
-                      {sectorAllocation.map((entry, i) => (
-                        <Cell key={entry.name} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<ChartTooltip />} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <Suspense
+                  fallback={<div className="h-full w-full animate-pulse rounded-full bg-navy-800" aria-hidden="true" />}
+                >
+                  <SectorDonutChart data={sectorAllocation} colors={CHART_COLORS} />
+                </Suspense>
               </div>
               <ul className="w-full space-y-2">
                 {sectorAllocation.map((sector, i) => (

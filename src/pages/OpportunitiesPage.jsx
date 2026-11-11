@@ -6,13 +6,8 @@ import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { getMarketCurrency } from '../utils/portfolioCalculations.js';
 import { getScoreColor } from '../utils/opportunityScoring.js';
-import {
-  MOCK_SHORT_TERM_CANDIDATES,
-  LAST_UPDATED,
-  VOLUME_SIGNAL_ORDER,
-  RISK_ORDER,
-} from '../data/mockShortTermCandidates.js';
-import { MOCK_LONG_TERM_CANDIDATES } from '../data/mockLongTermCandidates.js';
+import { VOLUME_SIGNAL_ORDER, RISK_ORDER } from '../data/candidateEnums.js';
+import useMockModule from '../hooks/useMockModule.js';
 import { scoreAndRankCandidates } from '../utils/opportunityScoring.js';
 import { fetchLiveCandidates } from '../services/liveData.js';
 import ShortTermFilters, { DEFAULT_FILTERS } from '../components/ShortTermFilters.jsx';
@@ -26,6 +21,10 @@ import {
   NEAR_MISS_THRESHOLD,
 } from '../utils/conviction.js';
 
+
+// Mock modülleri yalnızca MOCK_ENABLED iken dinamik yüklenir (paket boyutu).
+const loadShortMocks = () => import('../data/mockShortTermCandidates.js');
+const loadLongMocks = () => import('../data/mockLongTermCandidates.js');
 
 const HORIZON_TABS = [
   { value: 'short', label: 'Kısa Vade Fırsatlar' },
@@ -150,6 +149,10 @@ export default function OpportunitiesPage() {
     };
   }, []);
 
+  const shortMocks = useMockModule(loadShortMocks);
+  const longMocks = useMockModule(loadLongMocks);
+  const mockLastUpdated = shortMocks?.LAST_UPDATED ?? null;
+
   const activeLiveCandidates = horizon === 'short' ? liveShort : liveLong;
   const activeGeneratedAt = generatedAtByHorizon[horizon];
   const isLive = activeLiveCandidates !== null;
@@ -157,9 +160,9 @@ export default function OpportunitiesPage() {
   const dataUnavailable = !candidateLoading && !isLive && !MOCK_ENABLED;
   // Her vade kendi üretim zamanıyla değerlendirilir; diğer sekmenin daha yeni
   // zaman damgası bu sekmedeki bayat veriyi yanlışlıkla taze göstermez.
-  const shortReferenceDate = generatedAtByHorizon.short ?? (MOCK_ENABLED ? LAST_UPDATED : null);
-  const longReferenceDate = generatedAtByHorizon.long ?? (MOCK_ENABLED ? LAST_UPDATED : null);
-  const referenceDate = activeGeneratedAt ?? (isMock ? LAST_UPDATED : null);
+  const shortReferenceDate = generatedAtByHorizon.short ?? mockLastUpdated;
+  const longReferenceDate = generatedAtByHorizon.long ?? mockLastUpdated;
+  const referenceDate = activeGeneratedAt ?? (isMock ? mockLastUpdated : null);
 
   // Verinin yaşı (saat); bayatlık uyarısı için. Adaylar ~6 saatte bir üretilir.
   const dataAgeHours = activeGeneratedAt
@@ -170,20 +173,20 @@ export default function OpportunitiesPage() {
   const rankedShort = useMemo(
     () =>
       scoreAndRankCandidates(
-        candidateLoading ? [] : liveShort ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []),
+        candidateLoading ? [] : liveShort ?? shortMocks?.MOCK_SHORT_TERM_CANDIDATES ?? [],
         'short',
         shortReferenceDate
       ),
-    [candidateLoading, liveShort, shortReferenceDate]
+    [candidateLoading, liveShort, shortMocks, shortReferenceDate]
   );
   const rankedLong = useMemo(
     () =>
       scoreAndRankCandidates(
-        candidateLoading ? [] : liveLong ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []),
+        candidateLoading ? [] : liveLong ?? longMocks?.MOCK_LONG_TERM_CANDIDATES ?? [],
         'long',
         longReferenceDate
       ),
-    [candidateLoading, liveLong, longReferenceDate]
+    [candidateLoading, liveLong, longMocks, longReferenceDate]
   );
 
   const rankedCandidates = horizon === 'short' ? rankedShort : rankedLong;

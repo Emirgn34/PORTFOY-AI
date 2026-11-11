@@ -1,5 +1,5 @@
 import { Search } from 'lucide-react';
-import { RISK_LEVELS, LIQUIDITY_LEVELS } from '../data/mockShortTermCandidates.js';
+import { RISK_LEVELS, LIQUIDITY_LEVELS } from '../data/candidateEnums.js';
 
 export const SORT_OPTIONS = [
   { value: 'score', label: 'Skora göre' },

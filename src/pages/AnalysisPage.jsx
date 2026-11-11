@@ -4,12 +4,15 @@ import useSyncedState from '../hooks/useSyncedState.js';
 import { MOCK_ENABLED } from '../config.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
-import { MOCK_PORTFOLIO_ANALYSIS, getStockAnalysis } from '../data/mockAnalysis.js';
+import useMockModule from '../hooks/useMockModule.js';
 import { loadCachedAnalysis, runAnalysis } from '../services/analysis.js';
 import AnalysisCard from '../components/AnalysisCard.jsx';
 import ScoreBadge from '../components/ScoreBadge.jsx';
 import { getScoreColors, RISK_LEVEL_CONFIG } from '../utils/scoreColors.js';
 import { getStockMetrics, toTRY } from '../utils/portfolioCalculations.js';
+
+// Mock analiz yalnızca MOCK_ENABLED iken dinamik yüklenir (paket boyutu).
+const loadMockAnalysis = () => import('../data/mockAnalysis.js');
 
 const EMPTY_ANALYSIS = {
   overallScore: 0,
@@ -113,10 +116,12 @@ function AnalysisContent({ stocks }) {
   }
 
   // Production'da gerçek analiz yokken örnek skor gösterilmez.
+  const mockAnalysis = useMockModule(loadMockAnalysis);
   const isReal = Boolean(result);
-  const portfolio = result?.portfolio ?? (MOCK_ENABLED ? MOCK_PORTFOLIO_ANALYSIS : EMPTY_ANALYSIS);
+  const portfolio = result?.portfolio ?? mockAnalysis?.MOCK_PORTFOLIO_ANALYSIS ?? EMPTY_ANALYSIS;
   const getAnalysis = (ticker) =>
-    result?.stocks?.[ticker.toUpperCase()] ?? (MOCK_ENABLED ? getStockAnalysis(ticker) : null);
+    result?.stocks?.[ticker.toUpperCase()] ??
+    (mockAnalysis ? mockAnalysis.getStockAnalysis(ticker) : null);
 
   // Her hissenin TRY bazlı portföy ağırlığı
   const weights = useMemo(() => {

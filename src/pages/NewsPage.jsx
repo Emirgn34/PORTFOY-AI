@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, SearchX, Radio, X, Flame } from 'lucide-react';
-import { MOCK_NEWS, NEWS_TYPES } from '../data/mockNews.js';
+import { NEWS_TYPES } from '../data/candidateEnums.js';
+import useMockModule from '../hooks/useMockModule.js';
 import useSyncedState from '../hooks/useSyncedState.js';
-import { MOCK_ENABLED } from '../config.js';
 import { SEED_STOCKS } from '../data/seedPortfolio.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { fetchLiveNews, fetchAllLiveNews, mapLiveArticleToNews, searchSymbols } from '../services/liveData.js';
@@ -42,6 +42,9 @@ const NEWS_TABS = [
 
 const selectClass =
   'rounded-lg border border-navy-700 bg-navy-900 px-3 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-accent';
+
+// Mock haberler yalnızca MOCK_ENABLED iken dinamik yüklenir (paket boyutu).
+const loadNewsMocks = () => import('../data/mockNews.js');
 
 export default function NewsPage() {
   const [params, setParams] = useSearchParams();
@@ -150,9 +153,10 @@ function AllNews() {
   // Canlı haber geldiyse yalnızca gerçek haberler gösterilir; hiç canlı haber
   // yoksa örnek (mock) haberlerle dolu bir akış sunulur (boş ekran yerine).
   // Her habere bileşik "önem skoru" ve portföy/izleme ilgisi eklenir.
+  const newsMocks = useMockModule(loadNewsMocks);
   const allNews = useMemo(
     () =>
-      [...liveNews, ...(liveNews.length || !MOCK_ENABLED ? [] : MOCK_NEWS)].map((n) =>
+      [...liveNews, ...(liveNews.length ? [] : newsMocks?.MOCK_NEWS ?? [])].map((n) =>
         withNewsImportance(
           {
             ...n,
@@ -162,7 +166,7 @@ function AllNews() {
           { portfolioTickers, watchlistTickers }
         )
       ),
-    [liveNews, marketByTicker, portfolioTickers, watchlistTickers]
+    [liveNews, newsMocks, marketByTicker, portfolioTickers, watchlistTickers]
   );
 
   // Hisse kodu yazdıkça canlı sembol önerisi (300ms debounce)

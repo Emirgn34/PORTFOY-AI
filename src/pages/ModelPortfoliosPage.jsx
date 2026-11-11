@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays,
   Check,
@@ -12,8 +12,7 @@ import {
 import useSyncedState from '../hooks/useSyncedState.js';
 import { SEED_WATCHLIST } from '../data/seedWatchlist.js';
 import { MOCK_ENABLED } from '../config.js';
-import { LAST_UPDATED, MOCK_SHORT_TERM_CANDIDATES } from '../data/mockShortTermCandidates.js';
-import { MOCK_LONG_TERM_CANDIDATES } from '../data/mockLongTermCandidates.js';
+
 import {
   fetchLiveCandidates,
   fetchLiveModelPortfolios,
@@ -21,7 +20,11 @@ import {
 } from '../services/liveData.js';
 import { buildModelPortfolios } from '../utils/modelPortfolioCore.js';
 import { formatCurrency, formatPercent } from '../utils/portfolioCalculations.js';
-import ModelPortfolioPerformanceChart from '../components/model-portfolios/ModelPortfolioPerformanceChart.jsx';
+// Recharts'lı NAV grafiği lazy yüklenir: ~113 kB gzip'lik grafik kütüphanesi
+// sayfanın ilk boyamasını bekletmesin (madde 11).
+const ModelPortfolioPerformanceChart = lazy(
+  () => import('../components/model-portfolios/ModelPortfolioPerformanceChart.jsx')
+);
 
 const RISK_STYLES = {
   1: 'border-gain/30 bg-gain/10 text-gain',
@@ -98,12 +101,20 @@ export default function ModelPortfoliosPage() {
       const longIsLive = Array.isArray(long?.candidates);
       const usesMock = MOCK_ENABLED && (!shortIsLive || !longIsLive);
       const hasCompleteLiveSet = shortIsLive && longIsLive;
+      // Mock modülleri yalnızca gerektiğinde dinamik yüklenir (paket boyutu).
+      const [shortMocks, longMocks] = usesMock
+        ? await Promise.all([
+            import('../data/mockShortTermCandidates.js'),
+            import('../data/mockLongTermCandidates.js'),
+          ])
+        : [null, null];
+      if (!active) return;
       const generatedAt = usesMock
-        ? LAST_UPDATED
+        ? shortMocks?.LAST_UPDATED ?? new Date().toISOString()
         : long?.generatedAt ?? short?.generatedAt ?? new Date().toISOString();
       const fallback = buildModelPortfolios({
-        shortCandidates: short?.candidates ?? (MOCK_ENABLED ? MOCK_SHORT_TERM_CANDIDATES : []),
-        longCandidates: long?.candidates ?? (MOCK_ENABLED ? MOCK_LONG_TERM_CANDIDATES : []),
+        shortCandidates: short?.candidates ?? shortMocks?.MOCK_SHORT_TERM_CANDIDATES ?? [],
+        longCandidates: long?.candidates ?? longMocks?.MOCK_LONG_TERM_CANDIDATES ?? [],
         generatedAt,
         sourceGeneration: long?.generation ?? short?.generation ?? Date.parse(generatedAt),
       });
@@ -363,15 +374,21 @@ function ModelPortfoliosContent({
         </div>
       )}
 
-      <ModelPortfolioPerformanceChart
-        portfolios={portfolios}
-        versions={tracking?.versions ?? []}
-        navRows={tracking?.navRows ?? []}
-        activeSlug={active.slug}
-        trackingStarted={source === 'tracked'}
-        trackingLoading={trackingLoading}
-        trackingError={trackingError}
-      />
+      <Suspense
+        fallback={
+          <div className="h-64 animate-pulse rounded-xl border border-navy-700 bg-navy-900" aria-hidden="true" />
+        }
+      >
+        <ModelPortfolioPerformanceChart
+          portfolios={portfolios}
+          versions={tracking?.versions ?? []}
+          navRows={tracking?.navRows ?? []}
+          activeSlug={active.slug}
+          trackingStarted={source === 'tracked'}
+          trackingLoading={trackingLoading}
+          trackingError={trackingError}
+        />
+      </Suspense>
 
       <section className="rounded-xl border border-navy-700 bg-navy-900">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-navy-700 p-5">
