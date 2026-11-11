@@ -3,22 +3,25 @@
  * Portföy sayfasındaki "dönem K/Z" kartı bunu kullanır.
  */
 import YahooFinance from 'yahoo-finance2';
-import { computePeriodChanges } from '../server/marketData.js';
+import { computePeriodChanges, PERIOD_RANGES } from '../server/marketData.js';
+import { parseSymbols, setPublicCache } from '../server/apiGuards.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 export default async function handler(req, res) {
-  const symbols = String(req.query.symbols ?? '')
-    .split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+  const symbols = parseSymbols(req.query.symbols);
   const range = String(req.query.range ?? '1mo');
 
   if (symbols.length === 0) {
     return res.status(400).json({ error: 'symbols parametresi gerekli' });
   }
+  if (!PERIOD_RANGES[range]) {
+    return res.status(400).json({ error: 'geçersiz range parametresi' });
+  }
 
   try {
+    // Dönem yüzdesi dakikalar içinde anlamlı değişmez; CDN 5 dk taşısın.
+    setPublicCache(res, 300, 900);
     const changes = await computePeriodChanges(yahooFinance, symbols, range);
     res.status(200).json({ changes, range });
   } catch (err) {

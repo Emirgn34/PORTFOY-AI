@@ -5,14 +5,18 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { mapExchangeToMarket } from '../server/marketData.js';
+import { setPublicCache } from '../server/apiGuards.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 export default async function handler(req, res) {
-  const q = String(req.query.q ?? '').trim();
+  // Arama metni serbest biçimlidir ama uzunluk sınırlanır: Yahoo'ya
+  // keyfi uzunlukta sorgu iletmek proxy kötüye kullanımına açık olurdu.
+  const q = String(req.query.q ?? '').trim().slice(0, 40);
   if (q.length < 1) return res.status(200).json({ results: [] });
 
   try {
+    setPublicCache(res, 300, 3600);
     const result = await yahooFinance.search(q, { quotesCount: 10, newsCount: 0 });
     const results = (result.quotes ?? [])
       .filter((item) => item.symbol && (item.quoteType === 'EQUITY' || item.quoteType === 'ETF'))

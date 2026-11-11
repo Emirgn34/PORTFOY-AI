@@ -4,14 +4,18 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { mapExchangeToMarket, SECTOR_TR } from '../server/marketData.js';
+import { SYMBOL_PATTERN, setPublicCache } from '../server/apiGuards.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol ?? '').trim().toUpperCase();
-  if (!symbol) return res.status(400).json({ error: 'symbol parametresi gerekli' });
+  if (!SYMBOL_PATTERN.test(symbol)) {
+    return res.status(400).json({ error: 'symbol parametresi gerekli' });
+  }
 
   try {
+    setPublicCache(res, 60, 600);
     const q = await yahooFinance.quote(symbol);
     let sector = '';
     try {

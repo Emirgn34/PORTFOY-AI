@@ -3,11 +3,13 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { FX_SYMBOLS } from '../server/marketData.js';
+import { setPublicCache } from '../server/apiGuards.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 export default async function handler(_req, res) {
   try {
+    setPublicCache(res, 60, 300);
     const results = await yahooFinance.quote(FX_SYMBOLS);
     const list = Array.isArray(results) ? results : [results];
     const rates = {};

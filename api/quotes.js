@@ -3,19 +3,18 @@
  */
 import YahooFinance from 'yahoo-finance2';
 import { mapQuote } from '../server/marketData.js';
+import { parseSymbols, setPublicCache } from '../server/apiGuards.js';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 export default async function handler(req, res) {
-  const symbols = String(req.query.symbols ?? '')
-    .split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+  const symbols = parseSymbols(req.query.symbols);
   if (symbols.length === 0) {
     return res.status(400).json({ error: 'symbols parametresi gerekli' });
   }
 
   try {
+    setPublicCache(res, 30, 120);
     const results = await yahooFinance.quote(symbols);
     const list = (Array.isArray(results) ? results : [results]).map((q) => ({
       ...mapQuote(q),

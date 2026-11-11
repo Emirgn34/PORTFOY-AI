@@ -133,7 +133,9 @@ async function fetchNewsForSymbol(symbol, { force = false } = {}) {
 // ---- HTTP API ---------------------------------------------------------------
 
 const app = express();
-app.use(cors());
+// Yerel sunucuya yalnızca Vite geliştirme origin'i erişir; service_role ile
+// çalışan accountHandler da bu sunucuya bağlı olduğundan CORS geniş bırakılmaz.
+app.use(cors({ origin: process.env.DEV_CLIENT_ORIGIN || 'http://localhost:5173' }));
 const regularJson = express.json({limit:'64kb'}), tradeJson = express.json({limit:'4mb'});
 app.use((req,res,next) => (req.path === '/api/trade/ingest' || (req.path === '/api/account' && req.query.feature === 'trade' && req.query.action === 'ingest') ? tradeJson : regularJson)(req,res,next));
 app.all('/api/account', accountHandler);
