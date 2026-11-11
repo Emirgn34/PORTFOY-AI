@@ -38,7 +38,7 @@ export default async function handler(req, res) {
         status: checked(await sb.from('monitor_status').select('*').eq('id','news').maybeSingle()) });
     }
     if (req.method === 'GET' && action === 'push') return res.json({ configured: pushConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY ?? null,
-      allowedTopics: ['catalyst','source-portfolios','trade',...(userId === process.env.HEDGE_RADAR_USER_ID ? ['hedge-radar'] : [])],
+      allowedTopics: ['catalyst','source-portfolios','trade','pattern',...(userId === process.env.HEDGE_RADAR_USER_ID ? ['hedge-radar'] : [])],
       subscriptions:checked(await sb.from('push_subscriptions').select('endpoint,topics').eq('user_id',userId)) });
     if (req.method === 'POST' && action === 'push') {
       if (!pushConfigured()) return res.status(503).json({ error: 'Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.' });

@@ -76,7 +76,7 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
       {permission === 'denied' ? 'Bu cihazda bildirim izni kapalı' : enabled ? 'Bu cihazın bildirim aboneliği kayıtlı' : 'Bu cihazda bildirim bağlantısı etkin değil'}
     </p>}
     <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['trade', 'Trade sinyalleri'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>!['hedge-radar','trade'].includes(key)||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
+      {[['catalyst', 'Hızlı şirket haberleri'], ['source-portfolios', 'Kaynak portföy yenilemeleri'], ['trade', 'Trade sinyalleri'], ['pattern', 'Tekrarlayan düşüş uyarıları'], ['hedge-radar', 'Portföy Kalkanı']].filter(([key])=>!['hedge-radar','trade','pattern'].includes(key)||config?.allowedTopics?.includes(key)).map(([key, label]) => <label key={key} className="flex items-center gap-2">
         <input type="checkbox" disabled={busy || !config} checked={topics.includes(key)} onChange={(e) => setTopics((current) => e.target.checked ? [...current, key] : current.filter((t) => t !== key))} />{label}
       </label>)}
     </div>

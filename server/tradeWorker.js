@@ -7,14 +7,19 @@ import { deliverNotifications } from './pushNotifications.js';
 import { mapLimit } from './concurrency.js';
 import { getMacroCalendar } from './macroCalendar.js';
 import { getMarketIntelligence } from './marketIntelligence.js';
+import { buildDipAlertEvent, collectDipPatterns } from './patternStats.js';
 
 export async function tradeUniverse(sb) {
   const [tracked,candidates]=await Promise.all([
     sb.from('tracked_symbol_queue').select('symbol').order('symbol').limit(100),
     sb.from('candidates').select('symbol,market').eq('horizon','short').order('updated_at',{ascending:false}).limit(100),
   ]);
+  // ABD sembolleri ÖNCE gelir: 50 sembollik tavana takıldığında kesilenler
+  // BIST tarafı olur (kullanıcı tercihi: trade sekmesi ABD ağırlıklı).
   return [...new Set([...(checked(tracked) ?? []).map((row)=>row.symbol),...(checked(candidates) ?? []).map(candidateTradeSymbol)])]
-    .filter((symbol)=>/^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol)).slice(0,50);
+    .filter((symbol)=>/^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol))
+    .sort((a,b)=>(a.endsWith('.IS')?1:0)-(b.endsWith('.IS')?1:0))
+    .slice(0,50);
 }
 
 export async function readTradeFeed(urlValue, token, symbols, {fetcher=fetch,signal} = {}) {
@@ -56,16 +61,36 @@ export async function researchTradeBatch(yahoo,symbols,{now=Date.now()}={}) {
   return {items:items.filter(Boolean)};
 }
 
-export async function refreshTradeContext(sb,yahoo,symbols,{macro=getMacroCalendar,intelligence=getMarketIntelligence,signal}={}) {
+export async function refreshTradeContext(sb,yahoo,symbols,{macro=getMacroCalendar,intelligence=getMarketIntelligence,patterns=collectDipPatterns,signal,now=()=>Date.now()}={}) {
   if (!symbols.length || signal?.aborted) return;
   const [calendar,research]=await Promise.all([macro({days:7}),intelligence(yahoo,symbols,{includeOptions:false})]);
   // Slow calendar/company calls may complete after the worker was stopped.
   if (signal?.aborted) return;
+  // Tekrarlayan düşüş istatistiği (ücretsiz günlük bar; sembol başına 6 saatte
+  // bir yenilenir, aradaki turlar süreç içi önbellekten gelir). İsteğe bağlı
+  // araştırma bağlamıdır: hatası bağlam yazımını durdurmaz.
+  const dip=await patterns(yahoo,symbols,{now:now(),signal});
+  if (signal?.aborted) return;
   checked(await sb.from('trade_context').upsert(symbols.map((symbol)=>({symbol,updated_at:new Date().toISOString(),data:{
     macroEvents:calendar.events ?? [],macroCoverage:calendar.coverage ?? {},
     intelligence:research.items?.find((item)=>item.symbol===symbol) ?? null,
+    ...(dip.bySymbol.has(symbol)?{patternStats:dip.bySymbol.get(symbol)}:{}),
     note:'Makro ve şirket bilgileri araştırma bağlamıdır; lisanslı canlı fiyatın yerine geçmez.',
   }}))));
+  if (signal?.aborted) return;
+  // Taze + geçmişte işe yaramış düşüşler için bölüm başına TEK bildirim olayı.
+  // Kimlik sembol+kova+giriş gününden türediği için tekrar denemeler sessizce
+  // yok sayılır. 'pattern' konusu migration ile açılmamışsa ekleme reddedilir;
+  // bu, bağlam yenilemeyi düşürmemeli (yalnızca uyarı loglanır).
+  const alerts=[...dip.fresh].map((symbol)=>{
+    const summary=dip.bySymbol.get(symbol);
+    return buildDipAlertEvent({symbol,name:research.items?.find((item)=>item.symbol===symbol)?.name ?? symbol,
+      stats:summary?.stats,state:summary?.state,now:new Date(now())});
+  }).filter(Boolean);
+  if (alerts.length) {
+    try { checked(await sb.from('notification_events').upsert(alerts,{onConflict:'id',ignoreDuplicates:true})); }
+    catch { console.warn('[trade] Desen bildirimi kaydedilemedi; 20261112_pattern_alerts.sql migration kurulumunu kontrol edin.'); }
+  }
 }
 
 export async function runTradeWorker({sb=automationDb(),env=process.env,yahoo=new YahooFinance({suppressNotices:['yahooSurvey']}),

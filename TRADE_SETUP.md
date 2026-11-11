@@ -6,6 +6,22 @@ Yerel test veya üretim derlemesinin başarılı olması canlı veri, migration,
 
 **11 Kasım 2026 durumu:** Kullanıcı gerçek zamanlı veri sağlayıcısı bulunmadığını belirtti. İlk `20261111_trade.sql` dosyasını Supabase SQL Editor'da çalıştırıp başarılı sonuç aldığını bildirdi. `ee16861` sürümünün GitHub'a gönderildiği, CI ve Vercel yayınının başarılı olduğu doğrulandı. Gerçek telefon teslimi veya canlı trade performansı doğrulanmadı. Sonraki denetim düzeltmeleri için aşağıdaki ek migration ve güncel kod birlikte yayımlanmalıdır.
 
+## 12 Kasım 2026: tekrarlayan düşüş istatistiği ve 'pattern' bildirimleri
+
+`supabase/migrations/20261112_pattern_alerts.sql` dosyasını SQL Editor'da
+çalıştırın (notification_events konu kısıtına 'pattern' ekler). Trade worker
+(`npm run trade:worker`) bağlam turunda ABD sembolleri için ücretsiz Yahoo
+GÜNLÜK barlarından 50 günlük zirveye göre düşüş kovası (%15/20/25/30/40) ve
+geçmiş benzer düşüşlerin 1/5/10 işlem günü ileri getiri istatistiğini hesaplar
+(sembol başına en çok 6 saatte bir chart isteği). Taze (≤5 işlem günü) ve
+geçmişte işe yaramış (≥3 örnek, 5 gün medyanı ≥ +%2, ≥%60 pozitif) düşüşlerde
+bölüm başına TEK 'pattern' bildirimi üretilir; metin geçmiş istatistik olduğunu
+ve tahmin/canlı sinyal olmadığını açıkça söyler. Migration kurulmamışsa worker
+yalnızca uyarı loglar, başka hiçbir şey etkilenmez. Bildirim aboneliği
+Trade sayfasındaki bildirim ayarlarında "Tekrarlayan düşüş uyarıları" kutusuyla
+yönetilir. İstatistik TradePage detayında "Tekrarlayan düşüş istatistiği"
+bloğunda görünür. Bu özellik tradeEngine'in canlı veri kapılarına DOKUNMAZ.
+
 ## 1. Veritabanı ve kod yayını
 
 Önce mevcut `schema.sql`, kimlik ve `automation-schema.sql` kurulumunun tamamlandığını doğrulayın. `supabase/migrations/20261111_trade.sql` migration'ını Supabase SQL Editor'da uygulayıp aynı kod sürümünü mevcut Vercel projesine yayımlayın. `api/account.js` üzerinden `feature=trade` kullanılır; ayrı Vercel fonksiyonu gerektirmez. Trade tablolarına tarayıcıdan service-role anahtarıyla erişilmez.

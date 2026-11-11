@@ -229,6 +229,9 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
       convictionScore: context.candidate.conviction?.score ?? null, fundamentals: context.candidate.fundamentals ?? null,
       catalystTitle: context.candidate.strongestCatalystTitle ?? null, catalystDate: context.candidate.catalystDate ?? null,
     } : null,
-      intelligence: context.intelligence ?? null, macroEvents: events },
+      intelligence: context.intelligence ?? null,
+      // Tekrarlayan düşüş istatistiği: araştırma bağlamıdır, skora ve canlı
+      // sinyal kapılarına KATILMAZ (bkz. server/patternStats.js).
+      patternStats: context.patternStats ?? null, macroEvents: events },
   };
 }

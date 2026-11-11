@@ -53,6 +53,30 @@ function safeLink(value) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; }
 }
 
+/** Tekrarlayan düşüş istatistiği — 'pattern' bildiriminin sayfadaki açılımı. */
+function PatternStats({ pattern }) {
+  if (!pattern?.state) return null;
+  const { state, stats } = pattern;
+  const horizon = (key, label) => {
+    const h = stats?.horizons?.[key];
+    return h
+      ? `${label}: medyan ${h.medianPct > 0 ? '+' : ''}%${h.medianPct} · ${h.positiveCount}/${h.count} pozitif · en kötü %${h.worstPct}`
+      : null;
+  };
+  const lines = [horizon('h1', '1 işlem günü'), horizon('h5', '5 işlem günü'), horizon('h10', '10 işlem günü')].filter(Boolean);
+  return <div className="rounded-xl border border-navy-700 bg-navy-850/60 p-4">
+    <h4 className="text-xs font-semibold text-slate-400">Tekrarlayan düşüş istatistiği</h4>
+    {state.bucket ? <>
+      <p className="mt-2 text-sm text-ink">50 günlük zirveden %{Math.abs(state.drawdownPct).toFixed(1)} aşağıda (eşik %{state.bucket}; bölgeye giriş {state.crossedAt}).</p>
+      {lines.length ? <>
+        <p className="mt-2 text-xs text-slate-400">Geçmişte aynı eşiğin altına her inişten sonra ({stats.events} olay):</p>
+        <ul className="mt-1 space-y-1 text-xs text-slate-300">{lines.map((line) => <li key={line}>{line}</li>)}</ul>
+      </> : <p className="mt-2 text-xs text-slate-400">Bu eşik için yeterli geçmiş örnek yok (en az 3 gerekir).</p>}
+    </> : <p className="mt-2 text-sm text-slate-400">Şu an belirgin bir düşüş bölgesinde değil (50 günlük zirveye uzaklık %{Math.abs(state.drawdownPct).toFixed(1)}).</p>}
+    <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{pattern.method} Hesap: {date(pattern.updatedAt)}.</p>
+  </div>;
+}
+
 function TradeContext({ context = {} }) {
   const intelligence = context.intelligence;
   const fundamentals = intelligence?.fundamentals ?? context.candidate?.fundamentals;
@@ -68,6 +92,7 @@ function TradeContext({ context = {} }) {
       <div><dt className="text-slate-400">F/K · İleri F/K · PD/DD</dt><dd className="mt-1 text-ink">{fundamentals ? `${number(fundamentals.trailingPE ?? fundamentals.peRatio)} · ${number(fundamentals.forwardPE ?? fundamentals.forwardPeRatio)} · ${number(fundamentals.priceToBook)}` : 'Temel veri bağlamı bulunmuyor'}</dd></div>
       <div><dt className="text-slate-400">Araştırma kaynağı / zamanı</dt><dd className="mt-1 text-ink">{intelligence?.source || (context.candidate ? 'Mevcut fırsat analizi' : 'Doğrulanmamış')} · {date(intelligence?.fetchedAt ?? context.candidate?.updatedAt)}</dd></div>
     </dl>
+    <PatternStats pattern={context.patternStats} />
     <div><h4 className="mb-2 text-xs font-semibold text-slate-400">Yüksek etkili makro risk penceresi</h4>{(context.macroEvents ?? []).length > 0 ? <ul className="space-y-2 text-sm text-amber-400">{context.macroEvents.map((event, index) => <li key={index}>{event.title || event.name || event.label || 'Makro veri açıklaması'} · {date(event.time ?? event.date ?? event.startsAt)}</li>)}</ul> : <p className="text-xs text-slate-400">Bu analizde risk penceresine düşen kayıt bulunmuyor. Takvim kapsamı ayrıca doğrulanmalı.</p>}</div>
   </section>;
 }

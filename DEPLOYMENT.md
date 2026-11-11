@@ -1,5 +1,12 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 12 Kasım 2026: inceleme düzeltmeleri + desen bildirimleri
+
+Kod yayını ile birlikte `supabase/migrations/20261112_pattern_alerts.sql`
+uygulanmalıdır (ayrıntı: TRADE_SETUP.md, "tekrarlayan düşüş istatistiği").
+Migration uygulanana kadar desen bildirimi kaydı reddedilir ve worker yalnızca
+uyarı loglar; mevcut işleyiş bozulmaz.
+
 ## KALICI KISIT: Vercel Hobby planında en fazla 12 sunucu fonksiyonu
 
 `api/` altında şu an TAM 12 fonksiyon dosyası vardır (account, admin/users,
