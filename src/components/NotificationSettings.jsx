@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { automationRequest } from '../services/automation.js';
-import { decodePushKey, subscriptionNeedsRenewal } from '../services/pushSubscription.js';
+import { getOrCreatePushSubscription, subscriptionNeedsRenewal } from '../services/pushSubscription.js';
 
 export default function NotificationSettings({ suggestedTopics = [] }) {
   const [config, setConfig] = useState(null);
@@ -43,23 +43,18 @@ export default function NotificationSettings({ suggestedTopics = [] }) {
     setBusy(true); setMessage('');
     const submittedTopics=[...topics];
     try {
-      // İzin isteği doğrudan düğme tıklamasında; öncesinde ağ beklenmez (iOS).
-      const permission = await Notification.requestPermission();
-      setPermission(permission);
-      if (permission !== 'granted') throw new Error('Bildirim izni verilmedi. Telefonunuzun site bildirim ayarlarından açabilirsiniz.');
-      const registration = await navigator.serviceWorker.ready;
-      const applicationServerKey = decodePushKey(config.publicKey);
-      let existing = await registration.pushManager.getSubscription();
-      if (subscriptionNeedsRenewal(existing, config.publicKey)) {
-        await existing.unsubscribe();
-        existing = null;
-        setEnabled(false);
-      }
-      const subscription = existing ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+      // Ortak akış (pushSubscription.js): izin isteği doğrudan düğme
+      // tıklamasında senkron başlar (iOS), VAPID değiştiyse abonelik yenilenir.
+      const { subscription, created, renewed } = await getOrCreatePushSubscription(config.publicKey);
+      setPermission('granted');
+      if (renewed) setEnabled(false);
       try { await automationRequest('push', { method: 'POST', body: { subscription: subscription.toJSON(), topics:submittedTopics } }); }
-      catch (error) { if (!existing) await subscription.unsubscribe(); throw error; }
+      catch (error) { if (created) await subscription.unsubscribe(); throw error; }
       setEnabled(true); setSavedTopics(submittedTopics); setMessage('Bildirim tercihleri kaydedildi.');
-    } catch (error) { setMessage(error.message); }
+    } catch (error) {
+      if (typeof Notification !== 'undefined' && Notification.permission) setPermission(Notification.permission);
+      setMessage(error.message);
+    }
     finally { setBusy(false); }
   }
   async function unsubscribe() {

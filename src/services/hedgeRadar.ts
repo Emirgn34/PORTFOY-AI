@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient.js';
+import { getOrCreatePushSubscription } from './pushSubscription.js';
 
 export type Regime = 'SAFE' | 'SUPPORT_TEST' | 'TRAP_WARNING' | 'HEDGE_TRIGGER' | 'DEEP_VALUE_BUY';
 export interface RadarStock {
@@ -38,17 +39,11 @@ export async function hedgeRequest<T>(path = '', method = 'GET', body?: unknown)
 }
 
 export async function enableShieldNotifications(config: {publicKey: string; subscriptions: {endpoint:string;topics:string[]}[]}) {
-  // Permission must be requested synchronously from the button click on iOS.
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('Bildirim izni verilmedi. Site ayarlarından etkinleştirebilirsiniz.');
-  const registration = await navigator.serviceWorker.register('/sw.js');
-  await navigator.serviceWorker.ready;
-  const existing = await registration.pushManager.getSubscription();
-  const base64 = config.publicKey.replace(/-/g,'+').replace(/_/g,'/');
-  const key = Uint8Array.from(atob(base64.padEnd(Math.ceil(base64.length/4)*4,'=')), c=>c.charCodeAt(0));
-  const subscription = existing ?? await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+  // Ortak akış izin isteğini tıklama anında senkron başlatır (iOS şartı) ve
+  // VAPID anahtarı değiştiyse aboneliği yeniler — burada akış KOPYALANMAZ.
+  const { subscription, created } = await getOrCreatePushSubscription(config.publicKey);
   const stored = config.subscriptions.find(item=>item.endpoint===subscription.endpoint);
   const topics = [...new Set([...(stored?.topics ?? []),'hedge-radar'])];
   try { await hedgeRequest('/api/notifications/subscribe','POST',{subscription:subscription.toJSON(),topics}); }
-  catch (error) { if (!existing) await subscription.unsubscribe(); throw error; }
+  catch (error) { if (created) await subscription.unsubscribe(); throw error; }
 }
