@@ -125,7 +125,8 @@ export async function researchTradeBatch(yahoo,symbols,{now=Date.now(),signal,ti
  * Existing licensed publication ordering still decides which writes win.
  */
 export async function refreshResearchTradeItems(sb,{rows=[],items=[],now=Date.now(),env=process.env,
-  yahoo=new YahooFinance({suppressNotices:['yahooSurvey']}),limit=3}={}) {
+  yahoo=new YahooFinance({suppressNotices:['yahooSurvey']}),limit=3,monotonic=()=>performance.now()}={}) {
+  const requestStarted=monotonic();
   if(env.TRADE_LICENSED_SOURCE || env.TRADE_RESEARCH_FALLBACK==='false') return {items:[],refreshedCount:0,attemptedCount:0};
   if(researchRefreshes.has(sb)) return researchRefreshes.get(sb);
   const task=(async()=>{
@@ -146,7 +147,10 @@ export async function refreshResearchTradeItems(sb,{rows=[],items=[],now=Date.no
     const payload=await researchTradeBatch(yahoo,selected,{now});
     if(!payload.items.length) return {items:[],refreshedCount:0,attemptedCount:selected.length};
     const built=new Map();
-    const result=await processTradeBatch(sb,payload,{source:RESEARCH_SOURCE,licensed:false,now:()=>now,env,deliver:false,
+    // A fetch crossing a minute boundary cannot backdate a newly archived
+    // plan into a candle that had already started before the plan existed.
+    const decisionClock=()=>now+Math.max(0,Math.ceil(monotonic()-requestStarted));
+    const result=await processTradeBatch(sb,payload,{source:RESEARCH_SOURCE,licensed:false,now:decisionClock,env,deliver:false,
       build:(snapshot,options)=>{const candidate=buildResearchTradeCandidate(snapshot,options);built.set(candidate.symbol,candidate);return candidate;}});
     const published=result.items.filter((item)=>item.published).map((item)=>built.get(item.symbol));
     return {items:published,refreshedCount:published.length,attemptedCount:selected.length};

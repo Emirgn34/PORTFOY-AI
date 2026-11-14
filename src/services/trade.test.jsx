@@ -67,3 +67,14 @@ test('başarılı tercih isteği yetki ve gövdeyi taşır; zamanlayıcı ve ipt
   expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test('geçmiş filtreleri ayrı parametreler olarak kodlanır; action ve oturum değiştirilemez', async () => {
+  getSession.mockResolvedValue({ data: { session: { access_token: 'example-session' } } });
+  fetch.mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+  await tradeRequest('history', { query: { page: 2, symbol: 'AAPL&action=ingest', period: '30', action: 'ingest', token: 'bad' } });
+  const url = new URL(fetch.mock.calls[0][0], 'https://example.test');
+  expect(url.searchParams.get('action')).toBe('history');
+  expect(url.searchParams.get('symbol')).toBe('AAPL&action=ingest');
+  expect(url.searchParams.get('page')).toBe('2');
+  expect(url.searchParams.has('token')).toBe(false);
+});

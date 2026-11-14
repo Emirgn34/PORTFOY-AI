@@ -5,10 +5,11 @@ import { translateStoredCatalysts } from './catalystNews.js';
 import { pushConfigured } from './pushNotifications.js';
 import { maybeRefreshHedge } from './hedgeJobs.js';
 import { scanCloudPatterns } from './patternCloud.js';
+import { scanCloudTradeHistory } from './tradeHistoryCloud.js';
 
 export function createNewsScannerHandler({ getDb = automationDb, scan = scanFreeNews,
   translate = translateStoredCatalysts, refreshHedge = maybeRefreshHedge,
-  scanPatterns = scanCloudPatterns, env = process.env } = {}) {
+  scanPatterns = scanCloudPatterns, scanTradeHistory = scanCloudTradeHistory, env = process.env } = {}) {
   return async function newsScannerHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).json({ error: 'Yöntem desteklenmiyor.' });
@@ -26,6 +27,10 @@ export function createNewsScannerHandler({ getDb = automationDb, scan = scanFree
       }
       // Sources and rules come only from server code, never the request body.
       const result = await scan(sb, { intervalSeconds: 60, runner: 'supabase-cron' });
+      // Start the bounded history replay before optional translation/daily
+      // research. Slow auxiliary providers must not starve forward tracking.
+      const historyTask = Promise.resolve().then(() => scanTradeHistory(sb, { env }))
+        .catch(() => console.warn('[news-scan] Trade geçmişi bu turda güncellenemedi; sonraki turda yeniden denenecek.'));
       // Each subsystem keeps its own status and lease. An analysis dispatch
       // failure must not turn a successful news scan into a source failure.
       try { await refreshHedge(sb,{env}); }
@@ -41,6 +46,7 @@ export function createNewsScannerHandler({ getDb = automationDb, scan = scanFree
       // bir, tur başına en çok 4 chart isteği). Hatası haber taramasını düşürmez.
       try { await scanPatterns(sb); }
       catch { console.warn('[news-scan] Desen taraması bu turda tamamlanamadı; sonraki turda yeniden denenecek.'); }
+      await historyTask;
       const ok = Boolean(result.skipped || result.feeds.length);
       return res.status(ok ? 200 : 503).json({ ok, ...result });
     } catch {

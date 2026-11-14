@@ -1,5 +1,54 @@
 # Trade önerileri kurulumu
 
+## 14 Kasım 2026: geçmiş tradeler ve ileriye dönük sonuç takibi
+
+Trade içinde **Güncel Fırsatlar / Geçmiş Tradeler** sekmeleri bulunur. Yeni
+planların giriş, hedef ve stop seviyeleri değişmeden arşivlenir; sonraki kapanmış
+mumlarla giriş, hedef, stop, süre sonu ve belirsiz sonuçları kaydedilir. Tarih,
+hisse, strateji, veri türü ve sonuç filtreleri; performans özeti ve zaman çizelgesi
+geçmiş sekmesindedir. Sonuçlar model gözlemidir, gerçek aracı kurum işlemi değildir.
+
+**Kurulum:** Önce mevcut Trade migration'larından sonra
+`supabase/migrations/20261114_trade_history.sql` dosyasını Supabase SQL Editor'da
+çalıştırın; ardından güncel kodu yayımlayın. Migration mevcut portföy, sinyal veya
+kullanıcı verilerini silmez; tekrar çalıştırılabilir. Kurulmamışsa geçmiş ekranı
+kurulum beklediğini açıkça gösterir; mevcut Trade ve haber akışı çalışmaya devam eder.
+
+Sayfa kapalıyken araştırma takibi, mevcut **dakikalık haber cron'una** bağlanır.
+Her tur en fazla beş araştırma sembolünü döndürerek kontrol eder; sonradan gelen
+dakikalık mumlar yalnızca daha önce kaydedilmiş planların sonuçlarını tamamlar.
+Tek sembolün kontrol aralığı evren büyüklüğüne, kaynağa ve cron'un çalışmasına
+bağlıdır; bu akış canlı fiyat veya saniyelik bildirim değildir. Bulut cron'u kurulu
+değilse `NEWS_SCAN_SETUP.md` kurulumunu tamamlayın. Sürekli trade worker/ingest ve
+sayfa açıkken araştırma yenilemesi de aynı günlüğe yazar. Ayrı API anahtarı gerekmez.
+
+İlk sürümde gün içi ana plan hisse/kaynak/veri türü/seans başına bir kez,
+video stratejileri ise aynı teyitli pivot yapısı ve yön başına bir kez kaydedilir.
+Her dakika değişen kart kimliği yeni işlem sayılmaz. Araştırma ve video planlarında
+yayımdan sonraki tam mumlarda sabit giriş referansına (bölge orta noktası) temas için
+30 dakika beklenir. Hazır canlı ana planın referans alış fiyatı varsayımsal giriş
+olarak kullanılır; ilk kısmi mumun sırası bilinmiyorsa sonuç belirsiz kalır.
+
+Hedefler ayrı değerlendirilir; genel hedef/stop oranı ilk hedef üzerinden her planı
+bir kez sayar. Giriş oluşmayan, süresi dolan ve belirsiz/verisi eksik sonuçlar bu
+orana katılmaz. Ortalama model net getirisi, fiyatla doğrulanmış süre sonu çıkışlarını
+da kapsar; böylece süresi dolan zararlı modeller ortalamadan kaybolmaz. Maliyet
+varsayımı planla birlikte sabitlenir. Tamamlanmış sonuçlar ve ilk seviyeler sonradan
+değiştirilemez. Önceki analizlerin üstüne yazılan seviyelerden eski başarı üretilmez.
+
+Salt okunur kurulum kontrolü:
+
+```sql
+select to_regclass('public.trade_history') is not null as history_ready,
+       to_regprocedure('public.save_trade_history(jsonb,integer)') is not null as writer_ready,
+       to_regprocedure('public.read_trade_history(timestamptz,text,text,text,text,integer,integer)') is not null as reader_ready;
+select updated_at, data->>'lastCycleAt' as last_cycle,
+       data->>'checkedCount' as checked_count, data->>'failedCount' as failed_count
+from public.monitor_status where id='trade-history';
+```
+
+Ayrıntılı davranış ve yerel doğrulama: `reports/2026-11-14-trade-gecmisi.md`.
+
 ## 14 Kasım 2026: buluttan gün içi araştırma ve video stratejileri
 
 Trade sayfası açıkken, lisanslı kaynak tanımlı değilse, mevcut `/api/account?feature=trade&action=state`

@@ -3,6 +3,7 @@ import { Activity, ArrowUpRight, Bell, Clock3, Info, Loader2, RefreshCw, ShieldA
 import { tradeRequest } from '../services/trade.js';
 import NotificationSettings from '../components/NotificationSettings.jsx';
 import TradeStrategyPanel from '../components/TradeStrategyPanel.jsx';
+import TradeHistoryPanel from '../components/TradeHistoryPanel.jsx';
 import { currentVideoStrategies } from '../utils/tradeStrategies.js';
 
 const PHONE_TOPICS = ['trade'];
@@ -182,6 +183,7 @@ function TradeDetail({ candidate, now, status, onClose }) {
 }
 
 export default function TradePage() {
+  const [tab, setTab] = useState('current');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
@@ -197,6 +199,7 @@ export default function TradePage() {
   const [preferenceMessage, setPreferenceMessage] = useState('');
   const closeDetail = useRef(() => setSelectedSymbol(null)).current;
   useEffect(() => {
+    if (tab !== 'current') return;
     let active = true, timer, request, loading = false;
     async function load() {
       if (!active || loading || document.visibilityState === 'hidden') return;
@@ -242,13 +245,20 @@ export default function TradePage() {
       ? clockAnchor.current.server + Math.max(0, performance.now() - clockAnchor.current.monotonic) : Number.POSITIVE_INFINITY), 1000);
     document.addEventListener('visibilitychange', visibility);
     return () => { active = false; clearTimeout(timer); clearInterval(clock); request?.abort(); document.removeEventListener('visibilitychange', visibility); };
-  }, [reload]);
+  }, [reload, tab]);
   const items = (data?.items ?? []).map((item)=>({...item,videoStrategies:currentVideoStrategies(item.videoStrategies,now)}));
   const selected = items.find((item) => item.symbol === selectedSymbol);
   const readyCount = items.filter((item) => live(item, now, data?.status)).length;
   const status = data?.status;
   const running = !error && status?.running && now - Date.parse(status.lastHeartbeatAt) <= (status.heartbeatMaxAgeMs ?? 30000)
     && Date.parse(status.lastHeartbeatAt) <= now + 2000;
+  function selectTab(next) {
+    if (next === tab) return;
+    clockAnchor.current = null;
+    setNow(Number.POSITIVE_INFINITY);
+    setSelectedSymbol(null);
+    setTab(next);
+  }
   async function savePreference(enabled) {
     setPreferenceBusy(true); setPreferenceMessage('');
     try {
@@ -261,9 +271,19 @@ export default function TradePage() {
   }
   return <div className="space-y-5">
     <section className={`${panel} space-y-4`}>
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent"><Activity size={15} /> Gün içi radar</p><h2 className="text-2xl font-semibold tracking-tight text-ink">Trade Önerileri</h2><p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">Gün içi fiyat, hacim ve haber koşullarını birlikte değerlendir. Her kartta işlem gerekçesi, tahmini süre ve zarar kes içeren hedef senaryolarını incele.</p></div><div className="rounded-xl border border-navy-700 bg-navy-850 px-4 py-3"><p className="text-2xl font-semibold tabular-nums text-ink">{readyCount}<span className="ml-2 text-sm font-normal text-slate-400">uygun sinyal</span></p><p className="mt-1 text-xs text-slate-500">{items.length} hisse izleniyor</p></div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent"><Activity size={15} /> Gün içi radar</p><h2 className="text-2xl font-semibold tracking-tight text-ink">Trade Önerileri</h2><p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">Gün içi fiyat, hacim ve haber koşullarını birlikte değerlendir. Her kartta işlem gerekçesi, tahmini süre ve zarar kes içeren hedef senaryolarını incele.</p></div><div hidden={tab !== 'current'} className="rounded-xl border border-navy-700 bg-navy-850 px-4 py-3"><p className="text-2xl font-semibold tabular-nums text-ink">{readyCount}<span className="ml-2 text-sm font-normal text-slate-400">uygun sinyal</span></p><p className="mt-1 text-xs text-slate-500">{items.length} hisse izleniyor</p></div></div>
       <p className="flex items-start gap-2 text-xs leading-relaxed text-slate-500"><Info size={15} className="mt-0.5 shrink-0" /> Süreler oynaklığa dayalı yaklaşık işlem penceresidir; doğrulanmış süre tahmini değildir. Eski veya doğrulanmamış veriyle canlı işlem sinyali üretilmez. Bu ekran otomatik alım satım yapmaz.</p>
     </section>
+    <div role="tablist" aria-label="Trade görünümü" className="flex gap-2 rounded-xl border border-navy-700 bg-navy-900 p-1.5">
+      {[['current', 'Güncel Fırsatlar'], ['history', 'Geçmiş Tradeler']].map(([key, label]) => <button key={key} id={`trade-tab-${key}`} type="button" role="tab" aria-selected={tab === key} aria-controls={`trade-panel-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => selectTab(key)} onKeyDown={(event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 'current' : event.key === 'End' ? 'history' : tab === 'current' ? 'history' : 'current';
+        selectTab(next);
+        document.getElementById(`trade-tab-${next}`)?.focus();
+      }} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:flex-none sm:px-5 ${tab === key ? 'bg-accent/10 text-accent' : 'text-slate-400 hover:bg-navy-800 hover:text-ink'}`}>{label}</button>)}
+    </div>
+    {tab === 'history' ? <section id="trade-panel-history" role="tabpanel" aria-labelledby="trade-tab-history"><TradeHistoryPanel /></section> : <section id="trade-panel-current" role="tabpanel" aria-labelledby="trade-tab-current" className="space-y-5">
     {error && <p role="alert" className="rounded-xl border border-loss/30 bg-loss/5 p-4 text-sm text-loss">{error}{data ? ' Son alınan veriler gösteriliyor; geçerlilik sürelerini kontrol edin.' : ''}</p>}
     {!data && !error && <p role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-slate-400"><Loader2 size={18} className="animate-spin" /> Trade verileri yükleniyor…</p>}
     {status && <section aria-label="Trade veri bağlantısı" className={`${panel} space-y-3`}>
@@ -296,5 +316,6 @@ export default function TradePage() {
     <section className={`${panel} space-y-4`} aria-label="Trade uyarı tercihleri"><h3 className="flex items-center gap-2 font-semibold text-ink"><Bell size={17} /> Trade uyarıları</h3><label className="flex items-start gap-3 text-sm text-slate-300"><input type="checkbox" className="mt-1" checked={Boolean(data?.preferences?.enabled)} disabled={!data || preferenceBusy} onChange={(event) => savePreference(event.target.checked)} /><span>Hesabım için trade uyarılarını aç<span className="mt-1 block text-xs leading-relaxed text-slate-400">Yalnızca güncel veriyle koşulları karşılayan sinyaller bildirilir. Telefona teslim için bu cihazda “Trade sinyalleri” konusunu da kaydet.</span></span></label>{preferenceMessage && <p role="status" className="text-xs text-amber-400">{preferenceMessage}</p>}<NotificationSettings suggestedTopics={PHONE_TOPICS} /></section>
     {(data?.requirements ?? []).length > 0 && <details className={panel}><summary className="cursor-pointer font-semibold text-ink">Trade için gerekenler ve veri durumu</summary><ul className="mt-4 space-y-4">{data.requirements.map((requirement) => <li key={requirement.id || requirement.label} className="border-t border-navy-700 pt-3"><div className="flex items-center justify-between gap-3"><h4 className="text-sm font-medium text-ink">{requirement.label}</h4><span className={`shrink-0 text-xs ${requirement.status === 'available' ? 'text-gain' : 'text-amber-400'}`}>{REQUIREMENT_LABELS[requirement.status] || requirement.status}</span></div>{requirement.detail && <p className="mt-1 text-xs leading-relaxed text-slate-400">{requirement.detail}</p>}</li>)}</ul></details>}
     {selected && <TradeDetail candidate={selected} now={now} status={status} onClose={closeDetail} />}
+    </section>}
   </div>;
 }

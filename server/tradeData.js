@@ -4,6 +4,7 @@ import { deliverNotifications, pushConfigured } from './pushNotifications.js';
 import { mapLimit } from './concurrency.js';
 import { evaluateVideoStrategies } from './videoStrategies.js';
 import { currentVideoStrategies } from '../src/utils/tradeStrategies.js';
+import { syncTradeHistory } from './tradeHistory.js';
 
 // Tazelik eşiklerinin TEK TANIM YERİ burasıdır; arayüz bunları /api/trade
 // status alanından okur (TradePage live()). DİKKAT: SQL tarafındaki
@@ -106,7 +107,7 @@ export async function loadTradeContexts(sb, symbols) {
 }
 
 export async function processTradeBatch(sb, payload, { source, licensed = false, now = () => Date.now(),
-  build, deliver = (db) => deliverNotifications(db,{topics:['trade']}), env = process.env } = {}) {
+  build, history = syncTradeHistory, deliver = (db) => deliverNotifications(db,{topics:['trade']}), env = process.env } = {}) {
   const started = now();
   const items = normalizeTradeBatch(payload,{source,licensed,now:started});
   const contexts = await loadTradeContexts(sb,items.map((item) => item.symbol));
@@ -119,13 +120,19 @@ export async function processTradeBatch(sb, payload, { source, licensed = false,
     // one transaction; a failed notification insert cannot silently lose it.
     const published = checked(await sb.rpc('publish_trade_signal', { p_signal:candidate,
       p_quote_time:item.quote.marketTime, p_realtime:item.quote.realtime, p_source:source }));
-    return {symbol:item.symbol,status:candidate.status,published:Boolean(published)};
+    // History is optional during rollout. Its failure must never undo a valid
+    // signal/outbox commit, and an out-of-order publication cannot add a plan.
+    let tracking;
+    try { tracking = history === false ? { disabled:true } : await history(sb,candidate,item,{now:now(),createPlans:Boolean(published)}); }
+    catch { tracking = {available:false,error:true}; }
+    return {symbol:item.symbol,status:candidate.status,published:Boolean(published),history:tracking};
   });
   const durationMs = Math.max(0,now()-started);
   await recordMonitor(sb,'trade',{ok:true,mode:licensed?'licensed-http':'delayed-research',source,
     running:true,heartbeatMaxAgeMs:licensed?30_000:90_000,lastCycleAt:new Date(now()).toISOString(),latencyMs:durationMs,checkedCount:items.length,
     readyCount:results.filter((item) => item.status === 'ready').length,
     quoteMaxAgeMs:TRADE_QUOTE_MAX_AGE_MS,barMaxAgeMs:TRADE_BAR_MAX_AGE_MS,
+    historyAvailable:results.every((item)=>item.history?.available===true),
     message:licensed?'Lisanslı adaptör verisi işleniyor. Telefon teslim süresi operatöre ve cihaza bağlıdır.':'Gecikmeli araştırma verisi: canlı trade ve trade bildirimi kapalı.'});
   // An accepted signal is already durable before the provider is contacted.
   const delivery = deliver===false ? {queued:true} : await deliver(sb).catch(() => ({configured:pushConfigured(),error:'Bildirim sonraki döngüde yeniden denenecek.'}));

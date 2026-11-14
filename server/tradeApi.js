@@ -3,8 +3,9 @@ import { validCronSecret } from './cronAuth.js';
 import { pushConfigured } from './pushNotifications.js';
 import { buildResearchTradeItem, candidateTradeSymbol, currentTradeItem, processTradeBatch, tradeRequirements, tradeMonitorState, TRADE_QUOTE_MAX_AGE_MS, TRADE_BAR_MAX_AGE_MS } from './tradeData.js';
 import { refreshResearchTradeItems } from './tradeWorker.js';
+import { readTradeHistory } from './tradeHistory.js';
 
-export function createTradeHandler({ getDb=automationDb, processBatch=processTradeBatch, refreshResearch=refreshResearchTradeItems, env=process.env, now=()=>Date.now() } = {}) {
+export function createTradeHandler({ getDb=automationDb, processBatch=processTradeBatch, refreshResearch=refreshResearchTradeItems, readHistory=readTradeHistory, env=process.env, now=()=>Date.now() } = {}) {
   return async function tradeHandler(req,res) {
     res.setHeader('Cache-Control','no-store');
     const action=req.query?.action ?? 'state';
@@ -23,7 +24,7 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
         return res.status(503).json({error:'Trade verisi kaydedilemedi; veri tabloları ve adaptör kontrol edilmeli.'});
       }
     }
-    if (!((req.method==='GET' && action==='state') || (req.method==='POST' && action==='preferences'))) return res.status(400).json({error:'Geçersiz işlem.'});
+    if (!((req.method==='GET' && ['state','history'].includes(action)) || (req.method==='POST' && action==='preferences'))) return res.status(400).json({error:'Geçersiz işlem.'});
     const token=/^Bearer (.+)$/.exec(String(req.headers?.authorization ?? ''))?.[1];
     if (!token) return res.status(401).json({error:'Oturum açmanız gerekiyor.'});
     let sb;
@@ -33,6 +34,10 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
     catch { return res.status(503).json({error:'Oturum doğrulama hizmetine şu an ulaşılamıyor.'}); }
     if (authError || !auth?.user) return res.status(401).json({error:'Oturum açmanız gerekiyor.'});
     const userId=auth.user.id;
+    if (action==='history') {
+      try { return res.json(await readHistory(sb,{...req.query,now:now()})); }
+      catch (error) { return res.status(error.statusCode===400?400:503).json({error:error.statusCode===400?error.message:'Geçmiş trade kayıtları şu an alınamıyor. Yeniden deneyin.'}); }
+    }
     try {
       if (action==='preferences') {
         if (typeof req.body?.enabled!=='boolean') return res.status(400).json({error:'Bildirim tercihi açık veya kapalı olmalı.'});

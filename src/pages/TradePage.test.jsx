@@ -30,6 +30,41 @@ function state(items = [candidate()]) {
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { vi.useRealTimers(); });
 
+test('geçmiş sekmesi seçilene kadar geçmiş isteği atılmaz; klavye ile sekmeler değişir', async () => {
+  tradeRequest.mockImplementation((action) => Promise.resolve(action === 'history'
+    ? { items: [], summary: { total: 0, resolved: 0 }, pagination: { page: 1, total: 0, hasMore: false } }
+    : state([])));
+  render(<TradePage />);
+  await screen.findByText('Şu an gösterilecek trade adayı yok');
+  expect(tradeRequest.mock.calls.map(([action]) => action)).toEqual(['state']);
+  const current = screen.getByRole('tab', { name: 'Güncel Fırsatlar' });
+  const past = screen.getByRole('tab', { name: 'Geçmiş Tradeler' });
+  current.focus();
+  fireEvent.keyDown(current, { key: 'ArrowRight' });
+  expect(past).toHaveFocus();
+  expect(past).toHaveAttribute('aria-selected', 'true');
+  await screen.findByText('Bu filtrelerde kayıtlı trade yok');
+  expect(tradeRequest).toHaveBeenCalledWith('history', expect.objectContaining({ query: expect.objectContaining({ mode: 'research' }) }));
+  expect(screen.queryByText('Şu an gösterilecek trade adayı yok')).not.toBeInTheDocument();
+  fireEvent.keyDown(past, { key: 'Home' });
+  expect(current).toHaveFocus();
+  expect(current).toHaveAttribute('aria-selected', 'true');
+  await screen.findByText('Şu an gösterilecek trade adayı yok');
+});
+
+test('geçmişten dönüldüğünde yeni yanıt gelene kadar önceki canlı sinyal uygun görünmez', async () => {
+  let stateCalls = 0;
+  tradeRequest.mockImplementation((action) => action === 'history' ? Promise.resolve({ items: [], summary: { total: 0 } })
+    : ++stateCalls === 1 ? Promise.resolve(state()) : new Promise(() => {}));
+  render(<TradePage />);
+  const card = await screen.findByRole('button', { name: 'AAPL trade detayını aç' });
+  expect(within(card).getByText('Koşullar uygun')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Geçmiş Tradeler' }));
+  await screen.findByText('Bu filtrelerde kayıtlı trade yok');
+  fireEvent.click(screen.getByRole('tab', { name: 'Güncel Fırsatlar' }));
+  expect(within(screen.getByRole('button', { name: 'AAPL trade detayını aç' })).getByText('Süresi doldu')).toBeInTheDocument();
+});
+
 test('kart gerekçeyi ve süreyi gösterir; ayrıntı hedef, zarar kes ve risk hesabını açar', async () => {
   tradeRequest.mockResolvedValue(state());
   render(<TradePage />);

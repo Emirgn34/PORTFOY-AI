@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient.js';
 
-export async function tradeRequest(action = 'state', { method = 'GET', body, signal } = {}) {
+export async function tradeRequest(action = 'state', { method = 'GET', body, signal, query } = {}) {
   const controller = new AbortController();
   const cancel = () => controller.abort(signal?.reason);
   if (signal?.aborted) cancel();
@@ -17,7 +17,11 @@ export async function tradeRequest(action = 'state', { method = 'GET', body, sig
       const session = supabase ? (await supabase.auth.getSession()).data.session : null;
       controller.signal.throwIfAborted();
       if (!session) throw new Error('Trade ekranı için hesabınıza giriş yapın.');
-      const response = await fetch(`/api/account?feature=trade&action=${encodeURIComponent(action)}`, {
+      const params = new URLSearchParams({ feature: 'trade', action });
+      for (const key of ['page', 'pageSize', 'period', 'mode', 'status', 'symbol', 'strategy']) {
+        if (query?.[key] != null && query[key] !== '') params.set(key, String(query[key]));
+      }
+      const response = await fetch(`/api/account?${params}`, {
         method,
         headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         ...(body ? { body: JSON.stringify(body) } : {}),
