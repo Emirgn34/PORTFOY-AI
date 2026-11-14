@@ -183,8 +183,9 @@ app.get('/api/fx', async (_req, res) => {
 });
 
 app.get('/api/news', async (req, res) => {
-  const symbols = parseSymbols(req);
-  if (symbols.length === 0) return res.status(400).json({ error: 'symbols parametresi gerekli' });
+  // An empty user portfolio must still get a real, broad normal-news feed.
+  const requested = parseSymbols(req);
+  const symbols = (requested.length ? requested : [...tracked].length ? [...tracked] : ['AAPL', 'MSFT', 'THYAO.IS']).slice(0, 25);
   trackSymbols(symbols);
   const perSymbol = await Promise.all(symbols.map((s) => fetchNewsForSymbol(s)));
   // Sembol bazlı listeler tek akışta birleştirilir, link bazında teklenir

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowUpRight, Bell, Clock3, Info, Loader2, ShieldAlert, X } from 'lucide-react';
+import { Activity, ArrowUpRight, Bell, Clock3, Info, Loader2, RefreshCw, ShieldAlert, X } from 'lucide-react';
 import { tradeRequest } from '../services/trade.js';
 import NotificationSettings from '../components/NotificationSettings.jsx';
+import TradeStrategyPanel from '../components/TradeStrategyPanel.jsx';
+import { currentVideoStrategies } from '../utils/tradeStrategies.js';
 
 const PHONE_TOPICS = ['trade'];
 const RISK_LABELS = { lower: 'Görece temkinli', medium: 'Dengeli', high: 'Agresif' };
@@ -103,6 +105,7 @@ function TradeDetail({ candidate, now, status, onClose }) {
   const [capital, setCapital] = useState('');
   const [riskBudget, setRiskBudget] = useState('0.5');
   const actionable = live(candidate, now, status);
+  const research = candidate.availability === 'delayed-research';
   const hasEntry=Number.isFinite(candidate.entry) && candidate.entry>0;
   const hasPlan=candidate.availability!=='research-only' && hasEntry && Number.isFinite(candidate.stopLoss)
     && candidate.stopLoss>0 && candidate.stopLoss<candidate.entry && (candidate.scenarios ?? []).length>0;
@@ -143,12 +146,14 @@ function TradeDetail({ candidate, now, status, onClose }) {
         <button ref={closeButton} onClick={onClose} aria-label="Trade detayını kapat" className="rounded-lg p-2 text-slate-400 hover:bg-navy-800"><X size={20} /></button>
       </div>
       <div className="space-y-5 p-5">
-        {!actionable && <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-400">{candidate.availability === 'research-only' ? 'Bu kart mevcut fırsat analizinden gelen araştırma adayıdır. Doğrulanmış canlı fiyat ve hacim bağlantısı kurulana kadar gün içi trade sinyali üretilmez.' : candidate.status === 'ready' ? 'Sinyalin süresi doldu. Yeni ve doğrulanmış veri gelene kadar işlem koşulları geçerli değil.' : 'Bu hisse şu an işlem için uygun değil. Aşağıdaki seviyeler inceleme senaryosudur.'}</p>}
+        {!actionable && <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-400">{research ? 'Gecikmeli / son seans araştırması. Fiyat ve mum zamanlarını kontrol et; bu seviyeler güncel emir fiyatı veya canlı sinyal değildir.' : candidate.availability === 'research-only' ? 'Bu kart mevcut fırsat analizinden gelen araştırma adayıdır. Doğrulanmış canlı fiyat ve hacim bağlantısı kurulana kadar gün içi trade sinyali üretilmez.' : candidate.status === 'ready' ? 'Sinyalin süresi doldu. Yeni ve doğrulanmış veri gelene kadar işlem koşulları geçerli değil.' : 'Bu hisse şu an işlem için uygun değil. Aşağıdaki seviyeler inceleme senaryosudur.'}</p>}
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-navy-850 p-4 text-sm sm:grid-cols-3">
-          <div><p className="text-slate-400">Referans giriş</p><p className="mt-1 font-semibold tabular-nums text-ink">{price(candidate.entry, candidate.currency)}</p></div>
+          <div><p className="text-slate-400">{research ? 'Araştırma referans fiyatı' : 'Referans giriş'}</p><p className="mt-1 font-semibold tabular-nums text-ink">{price(candidate.referencePrice ?? candidate.entry, candidate.currency)}</p></div>
           <div><p className="text-slate-400">Zarar kes</p><p className="mt-1 font-semibold tabular-nums text-loss">{price(candidate.stopLoss, candidate.currency)}</p></div>
-          <div><p className="text-slate-400">Geçerlilik sonu</p><p className="mt-1 text-ink">{hasPlan?date(candidate.expiresAt):'Canlı plan oluşmadı'}</p></div>
+          <div><p className="text-slate-400">{research ? 'Kaynak fiyat zamanı' : 'Geçerlilik sonu'}</p><p className="mt-1 text-ink">{research ? date(candidate.dataQuality?.quoteTime) : hasPlan?date(candidate.expiresAt):'Canlı plan oluşmadı'}</p></div>
         </div>
+        {research && <section className="rounded-xl border border-navy-700 bg-navy-850 p-4"><h3 className="font-semibold text-ink">Gün içi göstergeler</h3><dl className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">{[['VWAP',candidate.metrics?.vwap],['EMA 9',candidate.metrics?.ema9],['EMA 21',candidate.metrics?.ema21],['RSI 14',candidate.metrics?.rsi ?? candidate.metrics?.rsi14]].map(([label,value])=><div key={label}><dt className="text-slate-400">{label}</dt><dd className="mt-1 tabular-nums text-ink">{number(value)}</dd></div>)}</dl><p className="mt-3 text-xs text-slate-400">Son kapanmış mum: {date(candidate.dataQuality?.barTime)}. Seans dışındaki değerler son işlem seansına aittir.</p></section>}
+        <TradeStrategyPanel strategies={candidate.videoStrategies} currency={candidate.currency} liveVerified={actionable} />
         <section><h3 className="mb-3 font-semibold text-ink">Hedef ve risk senaryoları</h3>
           <p className="mb-4 text-xs leading-relaxed text-slate-400">Risk etiketleri hedefe ulaşma belirsizliğini karşılaştırır. Daha yakın hedef düşük sermaye kaybı riski garantisi vermez. Süreler oynaklığa dayalı yaklaşık işlem penceresidir; doğrulanmış süre tahmini değildir. Hedefler gerçekleşmeyebilir. Emir gönderilmez.</p>
           {(candidate.scenarios ?? []).length ? <div className="grid gap-3 sm:grid-cols-3">{candidate.scenarios.map((scenario) => <article key={scenario.id || scenario.targetPercent} className={`rounded-xl border p-4 ${scenario.eligible && actionable ? 'border-accent/40 bg-accent/5' : 'border-navy-700 bg-navy-850'}`}>
@@ -156,7 +161,7 @@ function TradeDetail({ candidate, now, status, onClose }) {
             <h4 className="mt-2 text-lg font-semibold tabular-nums text-gain">+%{number(scenario.targetPercent)} hedef</h4>
             <p className="mt-1 text-sm font-medium text-ink">{price(scenario.targetPrice, candidate.currency)} seviyesinde çıkış</p>
             <dl className="mt-4 space-y-2 text-xs"><div className="flex justify-between gap-2"><dt className="text-slate-400">Zarar kes</dt><dd className="text-loss">{price(scenario.stopLoss ?? candidate.stopLoss, candidate.currency)}</dd></div><div className="flex justify-between gap-2"><dt className="text-slate-400">Net getiri / risk</dt><dd className="text-ink">{number(scenario.netRewardRisk)}×</dd></div><div><dt className="text-slate-400">Tahmini süre</dt><dd className="mt-1 text-ink">{duration(scenario.estimatedHours)}</dd></div></dl>
-            <p className={`mt-4 text-xs ${scenario.eligible && actionable ? 'text-gain' : 'text-amber-400'}`}>{scenario.eligible && actionable ? 'Veri ve risk koşulları uygun' : 'İşlem koşulları sağlanmıyor'}</p>
+            <p className={`mt-4 text-xs ${scenario.eligible && actionable ? 'text-gain' : 'text-amber-400'}`}>{research ? 'Araştırma hedefi · canlı teyit gerekir' : scenario.eligible && actionable ? 'Veri ve risk koşulları uygun' : 'İşlem koşulları sağlanmıyor'}</p>
           </article>)}</div> : <p className="text-sm text-slate-400">Hedef üretebilmek için doğrulanmış gün içi fiyat, hacim ve oynaklık verisi gerekiyor.</p>}
           <p className="mt-3 text-xs text-slate-500">Gidiş dönüş komisyon / kayma varsayımı: {number(costBps)} baz puan. {Number.isFinite(costPerShare)?<>Spread: {number(candidate.metrics?.spreadBps)} baz puan; hesapta toplam tahmini maliyet {price(costPerShare, candidate.currency)} / adet. Gerçek maliyet farklı olabilir.</>:'Giriş fiyatı ve alış/satış verisi olmadan hisse başına toplam maliyet hesaplanamaz.'}</p>
         </section>
@@ -180,6 +185,8 @@ export default function TradePage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [reload, setReload] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState(() => {
     const symbol = new URLSearchParams(window.location.search).get('symbol')?.toUpperCase();
     return symbol && /^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol) ? symbol : null;
@@ -195,6 +202,7 @@ export default function TradePage() {
       if (!active || loading || document.visibilityState === 'hidden') return;
       clearTimeout(timer);
       loading = true;
+      setRefreshing(true);
       request = new AbortController();
       const requestStarted = performance.now();
       const requestedPreferenceRevision = preferenceRevision.current;
@@ -218,6 +226,7 @@ export default function TradePage() {
       } }
       finally {
         loading = false;
+        if (active) setRefreshing(false);
         if (active && document.visibilityState !== 'hidden') timer = setTimeout(load, 5000);
       }
     }
@@ -233,8 +242,8 @@ export default function TradePage() {
       ? clockAnchor.current.server + Math.max(0, performance.now() - clockAnchor.current.monotonic) : Number.POSITIVE_INFINITY), 1000);
     document.addEventListener('visibilitychange', visibility);
     return () => { active = false; clearTimeout(timer); clearInterval(clock); request?.abort(); document.removeEventListener('visibilitychange', visibility); };
-  }, []);
-  const items = data?.items ?? [];
+  }, [reload]);
+  const items = (data?.items ?? []).map((item)=>({...item,videoStrategies:currentVideoStrategies(item.videoStrategies,now)}));
   const selected = items.find((item) => item.symbol === selectedSymbol);
   const readyCount = items.filter((item) => live(item, now, data?.status)).length;
   const status = data?.status;
@@ -258,22 +267,25 @@ export default function TradePage() {
     {error && <p role="alert" className="rounded-xl border border-loss/30 bg-loss/5 p-4 text-sm text-loss">{error}{data ? ' Son alınan veriler gösteriliyor; geçerlilik sürelerini kontrol edin.' : ''}</p>}
     {!data && !error && <p role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-slate-400"><Loader2 size={18} className="animate-spin" /> Trade verileri yükleniyor…</p>}
     {status && <section aria-label="Trade veri bağlantısı" className={`${panel} space-y-3`}>
-      <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold text-ink"><span className={`h-2 w-2 rounded-full ${running && status.mode === 'licensed-http' ? 'bg-gain' : 'bg-amber-400'}`} />{running ? 'Trade çalışanı bağlı' : 'Canlı bağlantı bekleniyor'}</h3><span className="text-xs text-slate-500">Ekran açıkken 5 saniyede bir kontrol</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold text-ink"><span className={`h-2 w-2 rounded-full ${running && status.mode === 'licensed-http' ? 'bg-gain' : 'bg-amber-400'}`} />{status.mode==='delayed-research' ? status.researchAvailable ? 'Araştırma fiyatları hazır' : 'Araştırma verisi kontrol ediliyor' : running ? 'Trade çalışanı bağlı' : 'Canlı bağlantı bekleniyor'}</h3><button type="button" onClick={()=>setReload((value)=>value+1)} disabled={refreshing} className="flex items-center gap-2 rounded-lg border border-navy-700 px-3 py-2 text-xs text-slate-300 hover:border-accent/50 disabled:opacity-50"><RefreshCw size={14} className={refreshing?'animate-spin':''} />Verileri kontrol et</button></div>
       {status.message && <p className="text-sm text-slate-400">{status.message}</p>}
       <div className="grid gap-x-6 gap-y-2 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-4"><p>Kaynak: <span className="text-ink">{status.source || 'Tanımlanmamış'}</span></p><p>Son analiz: <span className="text-ink">{date(status.lastCycleAt)}</span></p><p>Son çalışan sinyali: <span className="text-ink">{date(status.lastHeartbeatAt)}</span></p><p>Ölçülen analiz gecikmesi: <span className="text-ink">{number(status.latencyMs, 0)} ms</span></p></div>
-      <p className="text-xs text-slate-500">Kaynak fiyat yaşı sınırı: {number((status.quoteMaxAgeMs ?? 15000) / 1000, 0)} sn. Telefonun ağ ve işletim sistemi nedeniyle bildirim teslim süresi garanti edilemez.</p>
+      <p className="text-xs text-slate-500">{status.mode==='delayed-research' ? 'Ekran 5 saniyede bir kontrol edilir; araştırma verisi önbellekle ve küçük gruplar halinde yenilenir. Seans dışında son seans fiyatı gösterilir.' : `Kaynak fiyat yaşı sınırı: ${number((status.quoteMaxAgeMs ?? 15000) / 1000, 0)} sn. Telefonun ağ ve işletim sistemi nedeniyle bildirim teslim süresi garanti edilemez.`}</p>
     </section>}
     <section aria-label="Trade hisse kartları" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {items.map((candidate) => {
         const actionable = live(candidate, now, status);
         const expired = candidate.status === 'ready' && !actionable;
         const researchOnly = candidate.availability === 'research-only';
+        const research = candidate.availability === 'delayed-research';
         return <button key={candidate.symbol} onClick={() => setSelectedSymbol(candidate.symbol)} aria-label={`${candidate.symbol} trade detayını aç`} className="group flex h-full flex-col rounded-xl border border-navy-700 bg-navy-900 p-5 text-left transition-colors hover:border-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
           <div className="mb-4 flex w-full items-start justify-between gap-3"><div><h3 className="text-lg font-semibold text-ink">{candidate.symbol}</h3><p className="mt-1 text-xs text-slate-400">{candidate.name || candidate.market}</p></div><ArrowUpRight size={20} className="shrink-0 text-slate-500 group-hover:text-accent" /></div>
-          <span className={`mb-4 inline-flex self-start rounded-full px-2.5 py-1 text-xs font-medium ${actionable ? 'bg-gain/10 text-gain' : 'bg-amber-400/10 text-amber-400'}`}>{researchOnly ? 'Canlı veri bağlantısı bekleniyor' : expired ? 'Süresi doldu' : STATUS_LABELS[candidate.status] || 'İzlemede'}</span>
-          <p className="text-xl font-semibold tabular-nums text-ink">{researchOnly && candidate.entry == null ? 'Gün içi fiyat bekleniyor' : price(candidate.entry, candidate.currency)}</p>
+          <span className={`mb-4 inline-flex self-start rounded-full px-2.5 py-1 text-xs font-medium ${actionable ? 'bg-gain/10 text-gain' : 'bg-amber-400/10 text-amber-400'}`}>{research ? 'Gecikmeli / son seans araştırması' : researchOnly ? 'Fiyat verisi henüz alınamadı' : expired ? 'Süresi doldu' : STATUS_LABELS[candidate.status] || 'İzlemede'}</span>
+          <p className="text-xl font-semibold tabular-nums text-ink">{researchOnly && candidate.entry == null ? 'Fiyat kaynağı kontrol ediliyor' : price(candidate.referencePrice ?? candidate.entry, candidate.currency)}</p>
+          {research && <p className="mt-1 text-xs text-slate-500">Fiyat zamanı: {date(candidate.dataQuality?.quoteTime)}</p>}
           <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-accent"><Clock3 size={14} />{duration(candidate.estimatedHours)}</p>
-          {researchOnly && <p className="mt-3 text-xs leading-relaxed text-slate-400">Mevcut fırsat analizinden araştırma adayı. Gün içi işlem planı için bu hisseye ait doğrulanmış canlı fiyat ve hacim akışı gerekli.</p>}
+          {researchOnly && <p className="mt-3 text-xs leading-relaxed text-slate-400">Bu hisseye ait fiyat ve kapanmış dakikalık mumlar sırayla kontrol edilir. Eksik veriyle giriş ve hedef üretilmez.</p>}
+          {(candidate.videoStrategies ?? []).some((strategy)=>['zone','confirmed'].includes(strategy.state) || (strategy.setups ?? []).some((setup)=>['zone','confirmed'].includes(setup.state))) && <p className="mt-3 text-xs font-medium text-accent">Kanal / Fibonacci deseni · detayda incele</p>}
           <div className="mt-4 w-full border-t border-navy-700 pt-4"><p className="mb-2 text-xs font-semibold text-slate-400">Neden bu hisse?</p><ul className="space-y-2 text-sm leading-relaxed text-slate-300">{reasons(candidate, 'reasons').slice(0, 3).map((reason, index) => <li key={index}>{reason}</li>)}</ul>{!reasons(candidate, 'reasons').length && <p className="text-sm text-slate-400">İşlem gerekçesi için veri toplanıyor.</p>}</div>
           {reasons(candidate, 'blockers')[0] && <p className="mt-4 text-xs leading-relaxed text-amber-400">{reasons(candidate, 'blockers')[0]}</p>}
           <p className="mt-auto pt-4 text-[11px] text-slate-500">Oluşturulma: {date(candidate.createdAt)}</p>

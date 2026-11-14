@@ -1,7 +1,9 @@
 import { checked, recordMonitor } from './automationDb.js';
-import { buildTradeCandidate, isTradeCandidateFresh } from './tradeEngine.js';
+import { buildResearchTradeCandidate, buildTradeCandidate, isTradeCandidateFresh } from './tradeEngine.js';
 import { deliverNotifications, pushConfigured } from './pushNotifications.js';
 import { mapLimit } from './concurrency.js';
+import { evaluateVideoStrategies } from './videoStrategies.js';
+import { currentVideoStrategies } from '../src/utils/tradeStrategies.js';
 
 // Tazelik eşiklerinin TEK TANIM YERİ burasıdır; arayüz bunları /api/trade
 // status alanından okur (TradePage live()). DİKKAT: SQL tarafındaki
@@ -66,6 +68,7 @@ export function normalizeTradeBatch(payload, { source, licensed = false, now = D
       price: q.price, bid: finite(q.bid) && q.bid > 0 ? q.bid : null, ask: finite(q.ask) && q.ask > 0 ? q.ask : null,
       currency: ['TRY','USD','EUR','GBP'].includes(q.currency) ? q.currency : null,
       name: String(q.name ?? symbol).slice(0,200), marketTime: new Date(q.marketTime).toISOString(), receivedAt: new Date(now).toISOString(),
+      priceBasis: q.priceBasis === 'completed-bar-close' ? 'completed-bar-close' : 'regular-market-quote',
       source, realtime: licensed && q.realtime === true,
       sessionVerified: licensed && q.sessionVerified === true,
       sessionStartsAt: timestamp(q.sessionStartsAt) ? new Date(q.sessionStartsAt).toISOString() : null,
@@ -103,14 +106,15 @@ export async function loadTradeContexts(sb, symbols) {
 }
 
 export async function processTradeBatch(sb, payload, { source, licensed = false, now = () => Date.now(),
-  build = buildTradeCandidate, deliver = (db) => deliverNotifications(db,{topics:['trade']}), env = process.env } = {}) {
+  build, deliver = (db) => deliverNotifications(db,{topics:['trade']}), env = process.env } = {}) {
   const started = now();
   const items = normalizeTradeBatch(payload,{source,licensed,now:started});
   const contexts = await loadTradeContexts(sb,items.map((item) => item.symbol));
   const results = await mapLimit(items,4,async(item)=>{
-    const candidate = build({...item,context:contexts.get(item.symbol)}, { now:now(),
+    const candidate = (build ?? (licensed ? buildTradeCandidate : buildResearchTradeCandidate))({...item,context:contexts.get(item.symbol)}, { now:now(),
       maxQuoteAgeMs:TRADE_QUOTE_MAX_AGE_MS,maxBarAgeMs:TRADE_BAR_MAX_AGE_MS,
       roundTripCostBps:Number(env.TRADE_ROUND_TRIP_COST_BPS || 20) });
+    candidate.videoStrategies = evaluateVideoStrategies(item,{now:now()});
     // The DB rejects out-of-order publications and commits the signal/outbox in
     // one transaction; a failed notification insert cannot silently lose it.
     const published = checked(await sb.rpc('publish_trade_signal', { p_signal:candidate,
@@ -129,6 +133,7 @@ export async function processTradeBatch(sb, payload, { source, licensed = false,
 }
 
 export function currentTradeItem(candidate, now = Date.now()) {
+  if (Array.isArray(candidate.videoStrategies)) candidate = { ...candidate, videoStrategies: currentVideoStrategies(candidate.videoStrategies, now) };
   if (candidate.status !== 'ready' || isTradeCandidateFresh(candidate,now)) return candidate;
   return {...candidate,status:'blocked',blockers:[...(candidate.blockers ?? []),'Canlı sinyalin geçerlilik süresi doldu; yeni fiyat bekleniyor.'],
     scenarios:(candidate.scenarios ?? []).map((scenario) => ({...scenario,eligible:false}))};

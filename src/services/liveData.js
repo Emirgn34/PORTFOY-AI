@@ -10,6 +10,8 @@
  */
 
 import { supabase, HAS_SUPABASE, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabaseClient.js';
+import { newsRequest } from './news.js';
+import { safeNewsUrl } from '../utils/newsUrls.js';
 
 /**
  * Supabase REST istekleri için başlıklar. RLS artık yalnızca giriş yapmış
@@ -182,8 +184,17 @@ export async function fetchLiveNews(stocks, { limit = 300 } = {}) {
   if (!stocks?.length) return null;
   const symbols = [...new Set(stocks.map(toYahooSymbol))];
 
+  // The deployed app has no standalone /api/news function. Reuse account's
+  // authenticated news handler; keep the local server as a second source.
+  try {
+    // Every followed symbol gets a chance when the collector archive is empty;
+    // the API's per-request upstream cap must not silently hide symbol 5+.
+    const results = await Promise.allSettled(chunked(symbols, 4).map((batch) => newsRequest('feed', { symbols: batch, limit })));
+    const articles = results.flatMap((result) => result.status === 'fulfilled' ? result.value.articles ?? [] : []);
+    if (articles.length) return articles;
+  } catch { /* The local server / cloud archive may still be available. */ }
   const data = await getJson(`/api/news?symbols=${encodeURIComponent(symbols.join(','))}`);
-  if (data?.articles) return data.articles;
+  if (data?.articles?.length) return data.articles;
 
   // Tutulan/izlenen semboller toplayıcıya kaydedilir; sonraki turda haberleri birikmeye başlar
   // (özellikle yeni eklenen portföy hisseleri için "ne olursa olsun haber gelsin" güvencesi).
@@ -335,6 +346,12 @@ export async function fetchLiveModelPortfolioTracking() {
  * Dönüş: makale dizisi veya veri yoksa null.
  */
 export async function fetchAllLiveNews({ limit = 400 } = {}) {
+  try {
+    const result = await newsRequest('feed', { limit });
+    if (Array.isArray(result?.articles) && result.articles.length) return result.articles;
+  } catch { /* Keep the authenticated REST archive as a fallback. */ }
+  const local = await getJson('/api/news');
+  if (local?.articles?.length) return local.articles;
   const rows = await sbGet(
     `news?select=*&order=published_at.desc.nullslast&limit=${limit}`
   );
@@ -396,16 +413,17 @@ export function estimatePublisherReliability(publisher = '') {
  * varsa gösterilir, yenilerinde üretilmez.
  */
 export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
-  const ticker = fromYahooSymbol(article.symbol);
+  const symbol = String(article.symbol ?? 'SEKTÖR');
+  const ticker = fromYahooSymbol(symbol);
   const isTranslated = Boolean(article.titleTr);
   const hasAiSummary = Boolean(article.aiSummaryTr); // yalnızca eski arşiv kayıtlarında
   return {
-    id: `live-${article.id}`,
+    id: `live-${article.id ?? article.link ?? `${symbol}-${article.title}`}`,
     ticker,
     company: companyByTicker.get(ticker) ?? ticker,
     title: article.titleTr ?? article.title,
     originalTitle: isTranslated ? article.title : null,
-    market: article.symbol.endsWith('.IS') ? 'BIST' : 'ABD',
+    market: symbol === 'SEKTÖR' ? null : symbol.endsWith('.IS') ? 'BIST' : 'ABD',
     summary:
       article.aiSummaryTr ??
       `${article.publisher} kaynağından canlı haber. Detay için habere tıklayın.`,
@@ -415,7 +433,7 @@ export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
         ? `Özet: ${article.aiSummaryTr}\n\nTam metin için habere tıklayın.`
         : 'Bu haber canlı kaynaktan otomatik çekildi; tam metin için habere tıklayın.'),
     type: 'Genel Haber',
-    date: article.publishedAt ?? new Date().toISOString(),
+    date: Number.isFinite(Date.parse(article.publishedAt)) ? article.publishedAt : null,
     source: article.publisher,
     sentiment: article.sentiment ?? 'neutral',
     reliability: article.reliability ?? estimatePublisherReliability(article.publisher),
@@ -427,6 +445,6 @@ export function mapLiveArticleToNews(article, companyByTicker = new Map()) {
       : 'Duygu, başlıktaki olay ve ton kalıplarından belirlenir; kararsız başlıklar nötr sayılır.',
     confirmedSources: [article.publisher],
     isLive: true,
-    link: article.link,
+    link: safeNewsUrl(article.link),
   };
 }

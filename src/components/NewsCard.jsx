@@ -42,9 +42,8 @@ const DEFAULT_TYPE_BADGE = 'bg-navy-800 text-slate-500';
 
 export default function NewsCard({ news, onClick }) {
   const reliabilityColors = getReliabilityColors(news.reliability);
-  const formattedDate = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(
-    new Date(news.date)
-  );
+  const formattedDate = news.date && Number.isFinite(Date.parse(news.date))
+    ? new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeZone: 'Europe/Istanbul' }).format(new Date(news.date)) : 'Tarih doğrulanamadı';
 
   const isHighImpact = news.importanceLevel === 'high';
 
@@ -58,6 +57,10 @@ export default function NewsCard({ news, onClick }) {
   return (
     <article
       onClick={() => onClick(news)}
+      role="button"
+      tabIndex={0}
+      aria-label={`${news.ticker} haber detayını aç: ${news.title}`}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(news); } }}
       className={`group flex cursor-pointer flex-col rounded-xl border bg-navy-900 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-pop ${borderClass}`}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -102,7 +105,7 @@ export default function NewsCard({ news, onClick }) {
         )}
         {news.isLive && (
           <span className="rounded bg-gain/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-gain">
-            CANLI
+            KAYNAK HABER
           </span>
         )}
         <span className="truncate text-xs text-slate-500">{news.company}</span>

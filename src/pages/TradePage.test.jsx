@@ -197,9 +197,9 @@ test('canlı veri olmayan araştırma kartı eksik para birimi hatası gibi sunu
     scenarios: [], estimatedHours: null, blockers: ['Bu hisse için doğrulanmış canlı trade verisi henüz alınmadı.'] })]));
   render(<TradePage />);
   const card = await screen.findByRole('button', { name: 'AAPL trade detayını aç' });
-  expect(within(card).getByText('Canlı veri bağlantısı bekleniyor')).toBeInTheDocument();
-  expect(within(card).getByText('Gün içi fiyat bekleniyor')).toBeInTheDocument();
-  expect(within(card).getByText(/Mevcut fırsat analizinden araştırma adayı/)).toBeInTheDocument();
+  expect(within(card).getByText('Fiyat verisi henüz alınamadı')).toBeInTheDocument();
+  expect(within(card).getByText('Fiyat kaynağı kontrol ediliyor')).toBeInTheDocument();
+  expect(within(card).getByText(/kapanmış dakikalık mumlar sırayla/)).toBeInTheDocument();
   fireEvent.click(card);
   const detail=within(screen.getByRole('dialog'));
   expect(detail.getByRole('status')).toHaveTextContent('araştırma adayıdır');
@@ -211,12 +211,52 @@ test('canlı veri olmayan araştırma kartı eksik para birimi hatası gibi sunu
   expect(detail.getByText(/İşlem büyüklüğü hesabı için giriş/)).toBeInTheDocument();
 });
 
-test('araştırma çalışanı bağlantı durumu sunucunun 90 saniyelik eşiğini kullanır', async () => {
+test('araştırma bağlantısı sürekli canlı çalışan gibi etiketlenmez', async () => {
   const response = state([]);
   response.status = { mode: 'delayed-research', running: true, heartbeatMaxAgeMs: 90000,
     lastHeartbeatAt: new Date(Date.now() - 60000).toISOString() };
   tradeRequest.mockResolvedValue(response);
   render(<TradePage />);
-  expect(await screen.findByText('Trade çalışanı bağlı')).toBeInTheDocument();
-  expect(screen.getByText('Trade çalışanı bağlı').querySelector('span')).not.toHaveClass('bg-gain');
+  expect(await screen.findByText('Araştırma verisi kontrol ediliyor')).toBeInTheDocument();
+  expect(screen.getByText('Araştırma verisi kontrol ediliyor').querySelector('span')).not.toHaveClass('bg-gain');
+});
+
+test('gecikmeli araştırma fiyatı zamanıyla ve iki video stratejisiyle görünür; canlı sinyal sayılmaz', async () => {
+  const item=candidate({availability:'delayed-research',status:'watch',referencePrice:123.45,entry:123.45,
+    dataQuality:{realtime:false,quoteTime:'2026-11-13T21:00:00Z',barTime:'2026-11-13T20:59:00Z'},
+    videoStrategies:[{id:'choch-fib-pullback',title:'CHoCH + Fibonacci dönüşü',sourceUrl:'https://x.com/nanaT3__7717/status/2120810656308113711',direction:'long',state:'zone',lastBarTime:new Date(Date.now()-60000).toISOString(),
+      reasons:['Kırılım sonrası dönüş bölgesinde.'],assumptions:['1 dakikalık kapanmış mumlar.'],levels:{entryLow:122,entryHigh:124,stopLoss:121,targetPrice:130,rewardRisk:2.33}},
+    {id:'parallel-channel-reversal',title:'Paralel kanal dönüşü',state:'watch',lastBarTime:new Date(Date.now()-60000).toISOString(),reasons:['Üst kanal izleniyor.'],assumptions:['Onaylanmış dip ve tepeler.'],setups:[{direction:'short',state:'watch',levels:{entryLow:129,entryHigh:131,stopLoss:132,targetPrice:123,rewardRisk:2.33}}]}]});
+  const response=state([item]);response.status.mode='delayed-research';response.status.researchAvailable=true;
+  tradeRequest.mockResolvedValue(response);render(<TradePage />);
+  const card=await screen.findByRole('button',{name:'AAPL trade detayını aç'});
+  expect(within(card).getByText('123,45 USD')).toBeInTheDocument();
+  expect(within(card).getByText(/Fiyat zamanı/)).toBeInTheDocument();
+  expect(screen.getByText('Araştırma fiyatları hazır')).toBeInTheDocument();
+  expect(screen.queryByText('Koşullar uygun')).not.toBeInTheDocument();
+  fireEvent.click(card);const detail=within(screen.getByRole('dialog'));
+  expect(detail.getByRole('status')).toHaveTextContent('son seans araştırması');
+  expect(detail.getByRole('region',{name:'Video stratejileri'})).toBeInTheDocument();
+  expect(detail.getByText('CHoCH + Fibonacci dönüşü')).toBeInTheDocument();
+  expect(detail.getByText('Short / düşüş')).toBeInTheDocument();
+  expect(detail.getByRole('link',{name:'Kaynak video'})).toHaveAttribute('href',item.videoStrategies[0].sourceUrl);
+  fireEvent.click(screen.getByRole('button',{name:'Trade detayını kapat'}));
+  fireEvent.click(screen.getByRole('button',{name:'Verileri kontrol et'}));
+  await waitFor(()=>expect(tradeRequest).toHaveBeenCalledTimes(2));
+});
+
+test('yenileme kesilince açık detay ve kart eski video teyidini güncel gibi göstermez', async () => {
+  vi.useFakeTimers();
+  const item=candidate({availability:'delayed-research',status:'blocked',videoStrategies:[{id:'channel',title:'Kanal analizi',state:'confirmed',lastBarTime:new Date(Date.now()-60000).toISOString(),reasons:[],assumptions:[]}]});
+  tradeRequest.mockResolvedValueOnce(state([item])).mockImplementation(()=>new Promise(()=>{}));render(<TradePage />);
+  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+  const card=screen.getByRole('button',{name:'AAPL trade detayını aç'});
+  expect(within(card).getByText(/Kanal \/ Fibonacci deseni/)).toBeInTheDocument();
+  fireEvent.click(card);
+  const detail=within(screen.getByRole('dialog'));
+  expect(detail.getByText('Mum teyidi görüldü')).toBeInTheDocument();
+  await act(async()=>{await vi.advanceTimersByTimeAsync(301000);});
+  expect(within(card).queryByText(/Kanal \/ Fibonacci deseni/)).not.toBeInTheDocument();
+  expect(detail.queryByText('Mum teyidi görüldü')).not.toBeInTheDocument();
+  expect(detail.getByText(/gösterilen seviyeler geçmiş araştırma/)).toBeInTheDocument();
 });

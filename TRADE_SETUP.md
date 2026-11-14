@@ -1,5 +1,30 @@
 # Trade önerileri kurulumu
 
+## 14 Kasım 2026: buluttan gün içi araştırma ve video stratejileri
+
+Trade sayfası açıkken, lisanslı kaynak tanımlı değilse, mevcut `/api/account?feature=trade&action=state`
+ucu en fazla üç hissenin Yahoo fiyatını ve kapanmış dakikalık mumlarını yeniler.
+Bilgisayarda ayrıca `trade:worker` çalışması gerekmez. Hisse başına 60 saniyelik
+yenileme denemesi `trade_context` içinde tutulur; kaynak hataları da sırayı ilerletir.
+Bu işlem sayfa kapalıyken sürekli fiyat taraması yapmaz. Var olan bulut düşüş deseni
+taraması ve onun bildirimleri devam eder.
+
+Kartlarda kaynak fiyat zamanı, son kapanmış mum, göstergeler ve koşullu stop/hedef
+seviyeleri gösterilir. Seans dışında son seans verisi korunur ve açıkça etiketlenir.
+Yahoo kapanışındaki sıfır hacimli son kayıt yeni bir normal seans mumu sayılmaz.
+Gecikmeli veri `ready` olamaz ve Trade bildirimi üretmez. Lisanslı kaynak tanımlıysa
+bu araştırma yolu onu değiştirmez; canlı sinyal kurulumu aşağıda açıklanmıştır.
+
+İki kaynak videonun CHoCH/Fibonacci ve paralel kanal long/short yorumları Trade
+detayında kaynak bağlantıları, giriş bölgesi, stop, hedef ve mum grafiğiyle görünür.
+Videolarda verilmeyen parametreler uygulama varsayımı olarak yazılır. Beş dakikadan
+eski strateji teyitleri hem API hem ekranda kaldırılır; seviyeler geçmiş araştırma
+bağlamı olarak kalır. Ayrıntılar: `reports/2026-11-14-video-stratejileri.md`.
+
+Mevcut Trade tabloları/migration'ları kuruluysa bu değişiklik için yeni SQL, API
+anahtarı veya Vercel fonksiyonu gerekmez. `TRADE_RESEARCH_FALLBACK=false` araştırma
+yenilemesini kapatır. Yeni kodun mevcut GitHub/Vercel projesine yayımlanması gerekir.
+
 Bu özellik mevcut Vercel + Supabase uygulamasına eklenir. Yeni Sites projesi veya aracı kurum emir bağlantısı kurmaz. Kaynak araştırması ve mevcut veri envanteri: [trade gereksinimleri raporu](reports/2026-11-11-trade-gereksinimleri.md).
 
 Yerel test veya üretim derlemesinin başarılı olması canlı veri, migration, ücretli abonelik veya gerçek telefon tesliminin doğrulandığı anlamına gelmez. Gecikmeli Yahoo verileri canlı trade sinyali ve trade bildirimi üretmek için kullanılamaz.

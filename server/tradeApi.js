@@ -2,8 +2,9 @@ import { automationDb, checked } from './automationDb.js';
 import { validCronSecret } from './cronAuth.js';
 import { pushConfigured } from './pushNotifications.js';
 import { buildResearchTradeItem, candidateTradeSymbol, currentTradeItem, processTradeBatch, tradeRequirements, tradeMonitorState, TRADE_QUOTE_MAX_AGE_MS, TRADE_BAR_MAX_AGE_MS } from './tradeData.js';
+import { refreshResearchTradeItems } from './tradeWorker.js';
 
-export function createTradeHandler({ getDb=automationDb, processBatch=processTradeBatch, env=process.env, now=()=>Date.now() } = {}) {
+export function createTradeHandler({ getDb=automationDb, processBatch=processTradeBatch, refreshResearch=refreshResearchTradeItems, env=process.env, now=()=>Date.now() } = {}) {
   return async function tradeHandler(req,res) {
     res.setHeader('Cache-Control','no-store');
     const action=req.query?.action ?? 'state';
@@ -38,20 +39,44 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
         checked(await sb.from('trade_preferences').upsert({user_id:userId,enabled:req.body.enabled,updated_at:new Date(now()).toISOString()}));
         return res.json({preferences:{enabled:req.body.enabled}});
       }
-      const [signals,monitor,prefs,candidatesResult]=await Promise.all([
+      const [signals,monitor,prefs,candidatesResult,trackedResult]=await Promise.all([
         sb.from('trade_signals').select('data,updated_at').order('updated_at',{ascending:false}).limit(100),
         sb.from('monitor_status').select('updated_at,data').eq('id','trade').maybeSingle(),
         sb.from('trade_preferences').select('enabled').eq('user_id',userId).maybeSingle(),
         sb.from('candidates').select('symbol,market,data,updated_at').eq('horizon','short').order('updated_at',{ascending:false}).limit(50),
+        sb.from('tracked_symbol_queue').select('symbol').order('symbol').limit(100),
       ]);
       let items=(checked(signals) ?? []).map((row)=>currentTradeItem(row.data,now()));
       const statusRow=checked(monitor), preferences=checked(prefs) ?? {enabled:false};
+      const rows=checked(candidatesResult) ?? [];
+      const covered=new Set([...items.map((item)=>item.symbol),...rows.map(candidateTradeSymbol)]);
+      // Tracked companies remain visible even before the next candidate job.
+      // Missing optional queue data must not hide existing candidate cards.
+      for (const row of trackedResult?.data ?? []) {
+        const symbol=String(row.symbol ?? '').toUpperCase();
+        if (covered.size>=50) break;
+        if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol) || covered.has(symbol)) continue;
+        rows.push({symbol,market:symbol.endsWith('.IS')?'BIST':'US',data:{companyName:symbol}});
+        covered.add(symbol);
+      }
       // Genuine existing candidates still explain missing live prerequisites in
       // a new installation; no demo stock is presented as a current trade.
       const seen=new Set(items.map((item)=>item.symbol));
-      for (const row of checked(candidatesResult) ?? []) {
+      for (const row of rows) {
         const symbol=candidateTradeSymbol(row);
         if (!seen.has(symbol)) { items.push(buildResearchTradeItem(row,{now:now(),feedConfigured:Boolean(env.TRADE_LICENSED_SOURCE)}));seen.add(symbol); }
+      }
+      let research={items:[],refreshedCount:0};
+      if (!env.TRADE_LICENSED_SOURCE && env.TRADE_RESEARCH_FALLBACK!=='false') {
+        try {
+          // A bounded, durable refresh works on Vercel with the PC switched off.
+          // This path never certifies a live feed or sends trade notifications.
+          research=await refreshResearch(sb,{rows,items,env,now:now(),limit:3});
+          const updates=new Map((research.items ?? []).map((item)=>[item.symbol,currentTradeItem(item,now())]));
+          items=items.map((item)=>updates.get(item.symbol) ?? item);
+        } catch {
+          research={items:[],refreshedCount:0,error:'Gün içi araştırma verisi yenilenemedi; son kayıtlar korunuyor.'};
+        }
       }
       const monitorState=tradeMonitorState(statusRow,now());
       if (!monitorState.running) items=items.map((item)=>item.status!=='ready'?item:{...item,status:'blocked',
@@ -63,6 +88,16 @@ export function createTradeHandler({ getDb=automationDb, processBatch=processTra
         message:monitorState.running?statusRow.data.message:!env.TRADE_LICENSED_SOURCE
           ? 'Canlı trade veri kaynağı henüz bağlanmadı. Araştırma kartları gösterilir; canlı sinyal ve trade bildirimi üretilmez.'
           : 'Canlı veri kaynağı tanımlı ancak güncel veri alınamıyor. Yeni canlı trade bildirimi üretilmez.'};
+      if (!env.TRADE_LICENSED_SOURCE && env.TRADE_RESEARCH_FALLBACK!=='false') {
+        status.mode='delayed-research';
+        status.source='Yahoo Finance · gün içi araştırma';
+        status.researchAvailable=items.some((item)=>item.availability==='delayed-research');
+        status.researchRefreshCount=research.refreshedCount ?? 0;
+        status.message=research.error || (status.researchAvailable
+          ? 'Fiyat ve kapanmış dakikalık mumlar buluttan alınır. Seviyeler zaman damgalı araştırma senaryolarıdır; canlı sinyal ve trade bildirimi değildir.'
+          : 'İzlenen hisselerin fiyat ve dakikalık verileri buluttan sırayla alınıyor. Kaynak veri vermezse eksik alanlar açıkça gösterilir.');
+        if (research.refreshedCount>0) status.lastCycleAt=new Date(now()).toISOString();
+      }
       return res.json({items,status,preferences,serverTime:new Date(now()).toISOString(),
         requirements:tradeRequirements({licensedSource:env.TRADE_LICENSED_SOURCE,monitor:statusRow,pushReady:pushConfigured(),now:now(),items,hasContext:items.some((item)=>item.context?.candidate || item.context?.news?.length || item.context?.intelligence || item.context?.macroEvents?.length)})});
     } catch {

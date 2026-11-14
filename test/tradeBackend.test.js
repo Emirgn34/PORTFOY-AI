@@ -4,10 +4,11 @@ import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 import {normalizeTradeBatch,currentTradeItem,processTradeBatch,candidateTradeSymbol,loadTradeContexts,tradeMonitorState,tradeRequirements} from '../server/tradeData.js';
 import {buildTradeCandidate} from '../server/tradeEngine.js';
-import {createTradeHandler} from '../server/tradeApi.js';
+import {createTradeHandler as createHandler} from '../server/tradeApi.js';
 import {readTradeFeed,tradeUniverse} from '../server/tradeWorker.js';
 
 const clock=Date.parse('2026-11-11T15:30:00Z');
+const createTradeHandler=(options={})=>createHandler({env:{},refreshResearch:async()=>({items:[],refreshedCount:0}),...options});
 const payload=()=>({items:[{symbol:'AAPL',barIntervalSeconds:60,quote:{price:100,bid:99.99,ask:100.01,currency:'USD',
   marketTime:new Date(clock-1000).toISOString(),sessionStartsAt:'2026-11-11T14:30:00Z',sessionEndsAt:'2026-11-11T21:00:00Z',
   marketState:'REGULAR',realtime:true,sessionVerified:true,halted:false},bars:[{time:'2026-11-11T15:29:00Z',open:100,high:101,low:99,close:100,volume:5000}]}]});
@@ -86,7 +87,38 @@ test('saved research coverage is completed with missing candidates without dupli
   const handler=createTradeHandler({getDb:()=>db,now:()=>clock});const res=response();
   await handler({method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},res);
   assert.equal(res.statusCode,200);assert.deepEqual(res.body.items.map((item)=>item.symbol),['AAPL','THYAO.IS']);
-  assert.equal(res.body.items[1].availability,'research-only');assert.equal(res.body.status.mode,'unconfigured');
+  assert.equal(res.body.items[1].availability,'research-only');assert.equal(res.body.status.mode,'delayed-research');
+});
+
+test('authenticated state refreshes research in the cloud and includes tracked companies before candidate generation',async()=>{
+  const db=resultDb({tracked_symbol_queue:[{symbol:'MSFT'},{symbol:'AAPL'}],candidates:[{symbol:'AAPL',horizon:'short',market:'NASDAQ',data:{}}]});
+  let calls=0;
+  const fresh={symbol:'MSFT',status:'watch',availability:'delayed-research',referencePrice:321,
+    dataQuality:{realtime:false,quoteTime:new Date(clock-900000).toISOString()},scenarios:[{eligible:false}]};
+  const handler=createTradeHandler({getDb:()=>db,now:()=>clock,refreshResearch:async(sb,options)=>{
+    calls++;assert.equal(sb,db);assert.equal(options.limit,3);assert.equal(options.now,clock);
+    assert.deepEqual(options.rows.map((row)=>row.symbol),['AAPL','MSFT']);
+    return {items:[fresh],refreshedCount:1};
+  }});
+  const request={method:'GET',query:{action:'state'},headers:{}};
+  await handler(request,response());assert.equal(calls,0,'No market-data requests before authentication');
+  const res=response();await handler({...request,headers:{authorization:'Bearer valid'}},res);
+  assert.equal(res.statusCode,200);assert.equal(calls,1);assert.equal(res.body.items.find((item)=>item.symbol==='MSFT').referencePrice,321);
+  assert.equal(res.body.status.mode,'delayed-research');assert.equal(res.body.status.researchAvailable,true);
+  assert.equal(res.body.status.researchRefreshCount,1);assert.equal(res.body.status.running,false,'On-demand research is not a continuously healthy live worker');
+  assert.equal(res.body.items.some((item)=>item.status==='ready'),false);
+});
+
+test('research refresh outage preserves saved cards and licensed mode never invokes Yahoo fallback',async()=>{
+  const saved={symbol:'AAPL',availability:'delayed-research',status:'watch',referencePrice:101};
+  const db=resultDb({trade_signals:[{data:saved}]});
+  const res=response();await createTradeHandler({getDb:()=>db,now:()=>clock,refreshResearch:async()=>{throw new Error('Source timeout');}})(
+    {method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},res);
+  assert.equal(res.statusCode,200);assert.equal(res.body.items[0].referencePrice,101);assert.match(res.body.status.message,/Son kayıtlar|son kayıtlar/);
+  const licensed=response();await createTradeHandler({getDb:()=>db,now:()=>clock,env:{TRADE_LICENSED_SOURCE:'Feed'},
+    refreshResearch:async()=>assert.fail('Licensed mode must not query research fallback')})(
+    {method:'GET',query:{action:'state'},headers:{authorization:'Bearer valid'}},licensed);
+  assert.equal(licensed.statusCode,200);assert.equal(licensed.body.status.mode,'awaiting-feed');
 });
 
 test('research heartbeat remains valid between minute polls, licensed heartbeat stays strict and future clocks fail closed',()=>{

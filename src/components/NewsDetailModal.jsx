@@ -1,6 +1,8 @@
 import { X, ShieldCheck, CheckCircle2, Info, AlertTriangle, ExternalLink } from 'lucide-react';
 import { getReliabilityColors, SENTIMENT_CONFIG } from '../utils/scoreColors.js';
 import { TYPE_BADGE_COLORS } from './NewsCard.jsx';
+import NewsTradingPanel from './NewsTradingPanel.jsx';
+import { safeNewsUrl } from '../utils/newsUrls.js';
 
 function Section({ title, icon: Icon, children }) {
   return (
@@ -18,10 +20,9 @@ export default function NewsDetailModal({ news, onClose }) {
   if (!news) return null;
 
   const reliabilityColors = getReliabilityColors(news.reliability);
-  const sentiment = SENTIMENT_CONFIG[news.sentiment];
-  const formattedDate = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'long' }).format(
-    new Date(news.date)
-  );
+  const sentiment = SENTIMENT_CONFIG[news.sentiment] ?? SENTIMENT_CONFIG.neutral;
+  const formattedDate = news.date && Number.isFinite(Date.parse(news.date))
+    ? new Intl.DateTimeFormat('tr-TR', { dateStyle: 'long', timeZone: 'Europe/Istanbul' }).format(new Date(news.date)) : 'Tarih doğrulanamadı';
 
   return (
     <div
@@ -29,6 +30,9 @@ export default function NewsDetailModal({ news, onClose }) {
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${news.ticker} haber detayı`}
         className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-navy-700 bg-navy-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -68,9 +72,9 @@ export default function NewsDetailModal({ news, onClose }) {
         <div className="space-y-5 px-5 py-5">
           <Section title="Haber Metni">
             <p className="text-sm leading-relaxed text-slate-300">{news.content}</p>
-            {news.link && (
+            {safeNewsUrl(news.link) && (
               <a
-                href={news.link}
+                href={safeNewsUrl(news.link)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent hover:text-on-accent"
@@ -80,6 +84,8 @@ export default function NewsDetailModal({ news, onClose }) {
               </a>
             )}
           </Section>
+
+          <NewsTradingPanel key={news.id} initialSymbol={news.ticker === 'SEKTÖR' ? '' : `${news.ticker}${news.market === 'BIST' ? '.IS' : ''}`} autoLoad={news.isLive === true} />
 
           <Section title="Güvenilirlik Değerlendirmesi" icon={ShieldCheck}>
             <div className="rounded-lg border border-navy-700/60 bg-navy-850 p-4">
@@ -115,9 +121,9 @@ export default function NewsDetailModal({ news, onClose }) {
             </div>
           </Section>
 
-          <Section title="Teyit Edilen Kaynaklar" icon={CheckCircle2}>
+          <Section title="Haber Kaynakları" icon={CheckCircle2}>
             <ul className="flex flex-wrap gap-2">
-              {news.confirmedSources.map((source) => (
+              {(news.confirmedSources ?? [news.source]).filter(Boolean).map((source) => (
                 <li
                   key={source}
                   className="flex items-center gap-1.5 rounded-lg border border-navy-700/60 bg-navy-850 px-2.5 py-1 text-xs text-slate-300"

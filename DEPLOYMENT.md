@@ -1,5 +1,19 @@
 # PortföyAI devreye alma ve kurulum kontrol listesi
 
+## 14 Kasım 2026: normal haberler, News to Trading ve Trade fiyatları
+
+Yalnızca mevcut uygulamanın kod yayını gerekir; ek SQL, ücretli haber servisi veya
+yeni Vercel fonksiyonu yoktur. Normal haber/yorum uçları mevcut `api/account.js`
+içindeki `feature=news` ile çalışır; fonksiyon sayısı 12'de kalır. Haber kapsamı ve
+hesaplama yöntemi `NEWS_TO_TRADING.md`, Trade araştırma yolu `TRADE_SETUP.md`,
+video kuralları `reports/2026-11-14-video-stratejileri.md` içinde açıklanmıştır.
+
+Yayın sonrası aynı hesapla Haberler → Tüm Haberler'de normal kartları ve şirket / sektör
+sorgusunu; Trade'de kaynak saatli fiyatları, detay seviyelerini ve iki video stratejisini
+kontrol edin. Araştırma fiyatları sayfa açıkken buluttan alınır. Kaynak gecikmeli veya
+seans kapalıysa canlı sinyal/bildirim beklenmez. Pazartesi gerçek seans doğrulaması,
+hafta sonu son seans verisiyle yapılan bağlantı testinden ayrı değerlendirilmelidir.
+
 ## 12 Kasım 2026: inceleme düzeltmeleri + desen bildirimleri
 
 Kod yayını ile birlikte `supabase/migrations/20261112_pattern_alerts.sql`

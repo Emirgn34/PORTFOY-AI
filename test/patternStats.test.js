@@ -102,7 +102,7 @@ test('bağlam turu: patternStats trade_context verisine girer, uygun düşüş b
   const summary = summarizeDipPattern(series, { now: new Date('2026-01-02T12:00:00Z') });
   const upserts = [];
   let failNotifications = false;
-  const sb = { from(table) { return { upsert(rows, options) {
+  const sb = { from(table) { return { select() { return this; }, in() { return Promise.resolve({ data: [], error: null }); }, upsert(rows, options) {
     if (table === 'notification_events' && failNotifications) return Promise.resolve({ data: null, error: { message: 'topic kısıtı' } });
     upserts.push({ table, rows, options });
     return Promise.resolve({ data: null, error: null });

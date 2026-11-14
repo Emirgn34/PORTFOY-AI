@@ -38,6 +38,20 @@ function validBar(bar) {
     && bar.low <= Math.min(bar.open, bar.close) && bar.high >= bar.low;
 }
 
+function intradayIndicators(usable, entry) {
+  const closes = usable.map((bar) => bar.close);
+  const volume = usable.reduce((sum, bar) => sum + bar.volume, 0);
+  const vwap = usable.reduce((sum, bar) => sum + (bar.high + bar.low + bar.close) / 3 * bar.volume, 0) / volume;
+  const ema9 = ema(closes, 9), ema21 = ema(closes, 21), strength = rsi(closes);
+  const tr = usable.slice(1).map((bar, i) => Math.max(bar.high - bar.low, Math.abs(bar.high - usable[i].close), Math.abs(bar.low - usable[i].close)));
+  const atr = average(tr.slice(-14)), atrPercent = atr / entry * 100;
+  const baseVolume = average(usable.slice(-33, -3).map((bar) => bar.volume));
+  const relativeVolume = baseVolume > 0 ? average(usable.slice(-3).map((bar) => bar.volume)) / baseVolume : 0;
+  const minuteNotional = average(usable.slice(-20).map((bar) => bar.close * bar.volume));
+  const momentumPercent = (closes.at(-1) / closes.at(-6) - 1) * 100;
+  return { closes, volume, vwap, ema9, ema21, strength, atr, atrPercent, relativeVolume, minuteNotional, momentumPercent };
+}
+
 /** Quote expiry is rechecked on reads and immediately before a notification. */
 export function isTradeCandidateFresh(candidate, now = Date.now()) {
   const clock = now instanceof Date ? now.getTime() : now;
@@ -118,17 +132,7 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
 
   let metrics = { spreadBps: spreadBps == null ? null : round(spreadBps, 2), roundTripCostBps }, scenarios = [], stopLoss = null, score = 0, riskLevelsValid=true;
   if (usable.length >= 40 && entry && positive(volume)) {
-    const closes = usable.map((bar) => bar.close);
-    const vwap = usable.reduce((sum, bar) => sum + (bar.high + bar.low + bar.close) / 3 * bar.volume, 0) / volume;
-    const ema9 = ema(closes, 9), ema21 = ema(closes, 21), strength = rsi(closes);
-    const tr = usable.slice(1).map((bar, i) => Math.max(bar.high - bar.low, Math.abs(bar.high - usable[i].close), Math.abs(bar.low - usable[i].close)));
-    const atr = average(tr.slice(-14));
-    const atrPercent = atr / entry * 100;
-    const recent = usable.slice(-3), baseline = usable.slice(-33, -3);
-    const baseVolume = average(baseline.map((bar) => bar.volume));
-    const relativeVolume = baseVolume > 0 ? average(recent.map((bar) => bar.volume)) / baseVolume : 0;
-    const minuteNotional = average(usable.slice(-20).map((bar) => bar.close * bar.volume));
-    const momentumPercent = (closes.at(-1) / closes.at(-6) - 1) * 100;
+    const { closes, vwap, ema9, ema21, strength, atr, atrPercent, relativeVolume, minuteNotional, momentumPercent } = intradayIndicators(usable, entry);
     const trend = ema9 > ema21 && closes.at(-1) > ema9;
     const aboveVwap = quote.price >= vwap;
     const notExtended = entry / vwap <= 1.03;
@@ -233,5 +237,80 @@ export function buildTradeCandidate({ symbol, quote = {}, bars = [], context = {
       // Tekrarlayan düşüş istatistiği: araştırma bağlamıdır, skora ve canlı
       // sinyal kapılarına KATILMAZ (bkz. server/patternStats.js).
       patternStats: context.patternStats ?? null, macroEvents: events },
+  };
+}
+
+/** Public delayed quotes are useful research, including the last closed session.
+ * They never become actionable signals or satisfy licensed-feed freshness gates.
+ */
+export function buildResearchTradeCandidate(snapshot = {}, options = {}) {
+  const now = options.now instanceof Date ? options.now.getTime() : options.now ?? Date.now();
+  const base = buildTradeCandidate(snapshot, { ...options, now });
+  const quote = snapshot.quote ?? {}, price = quote.price, qt = timestamp(quote.marketTime);
+  const priceValid = base.dataQuality.currencyVerified && positive(price) && Number.isFinite(qt) && qt <= now + 2000;
+  const completed = (Array.isArray(snapshot.bars) ? snapshot.bars : []).filter(validBar)
+    .filter((bar) => timestamp(bar.time) + MINUTE <= now).sort((a, b) => timestamp(a.time) - timestamp(b.time));
+  let start = completed.length - 1;
+  while (start > 0 && timestamp(completed[start].time) - timestamp(completed[start - 1].time) === MINUTE) start--;
+  const sessionStart = timestamp(quote.sessionStartsAt), sessionEnd = timestamp(quote.sessionEndsAt);
+  const usable = completed.slice(Math.max(0, start)).filter((bar) => !Number.isFinite(sessionStart) || timestamp(bar.time) >= sessionStart);
+  const lastClose = usable.length ? timestamp(usable.at(-1).time) + MINUTE : NaN;
+  const warnings = ['Gecikmeli gözlem: fiyat, hedef ve zarar kes son alınan veriden hesaplanan araştırma senaryosudur; canlı işlem sinyali değildir.',
+    ...base.blockers.filter((message) => /bilanço|makro veri/i.test(message)), ...base.warnings];
+  const blockers = ['Lisanslı, doğrulanmış canlı fiyat akışı olmadan işlem sinyali ve trade bildirimi üretilmez.'];
+  const reasons = [], roundTripCostBps = base.metrics.roundTripCostBps;
+  let entry = priceValid ? round(price) : null, stopLoss = null, scenarios = [], score = 0;
+  let metrics = { spreadBps: base.metrics.spreadBps, roundTripCostBps, barsUsed: usable.length };
+  if (!priceValid) blockers.push('Kaynak zaman damgalı fiyat veya doğru para birimi alınamadı.');
+  if (qt < now - 30 * MINUTE) warnings.push('Son fiyat güncel seans fiyatı olmayabilir; kaynak saatini kontrol edin.');
+  if (usable.length < 40) blockers.push('Gösterge ve hedef hesabı için aynı seansta en az 40 kesintisiz tamamlanmış dakikalık mum gerekli.');
+  const volume = usable.reduce((sum, bar) => sum + bar.volume, 0);
+  if (priceValid && usable.length >= 40 && positive(volume) && now - qt <= 7 * 86400000 && Math.abs(qt - lastClose) <= 30 * MINUTE) {
+    const data = intradayIndicators(usable, price);
+    const { closes, vwap, ema9, ema21, strength, atr, atrPercent, relativeVolume, minuteNotional, momentumPercent } = data;
+    const finiteMetrics = [vwap, ema9, ema21, strength, atr, atrPercent, relativeVolume, minuteNotional, momentumPercent].every(finite);
+    if (finiteMetrics && atr > 0) {
+      const trend = ema9 > ema21 && closes.at(-1) > ema9, aboveVwap = price >= vwap;
+      const liquid = minuteNotional >= (base.market === 'BIST' ? 1_000_000 : 100_000);
+      const spreadBps = base.metrics.spreadBps;
+      const estimatedCostPerShare = price * (roundTripCostBps + (spreadBps ?? 0)) / 10_000;
+      const stopDistance = Math.max(atr * 1.5, price - Math.min(...usable.slice(-5).map((bar) => bar.low)), price * 0.004);
+      const proposedStop = round(price - stopDistance), stopPercent = stopDistance / price * 100;
+      const riskValid = proposedStop > 0 && proposedStop < entry && finite(estimatedCostPerShare) && stopPercent <= 3;
+      score = (trend ? 25 : 0) + (aboveVwap && price / vwap <= 1.03 ? 20 : 0)
+        + (strength >= 45 && strength <= 75 ? 15 : 0) + (relativeVolume >= 1.2 ? 15 : relativeVolume >= 1 ? 8 : 0)
+        + (momentumPercent > 0 ? 10 : 0) + (liquid ? 10 : 0) + (spreadBps != null && spreadBps <= 15 ? 5 : 0);
+      reasons.push(`Son tamamlanmış seans penceresi: ${usable.length} dakikalık mum; RSI(14) ${round(strength, 1)}.`);
+      reasons.push(`EMA9 ${round(ema9)}, EMA21 ${round(ema21)}; kısa trend ${trend ? 'teyitli' : 'teyitsiz'}.`);
+      reasons.push(`Pencere VWAP ${round(vwap)}; son 3 dakikanın göreli hacmi ${round(relativeVolume, 2)}×.`);
+      if (spreadBps == null) warnings.push('Alış/satış farkı alınamadı; maliyet hesabı yalnız komisyon ve kayma varsayımını içerir.');
+      if (!liquid) warnings.push('Dakikalık işlem tutarı canlı motorun likidite eşiğinin altında.');
+      if (riskValid) {
+        stopLoss = proposedStop;
+        scenarios = [{ id: 'near', label: 'Görece temkinli hedef', risk: 'lower', multiple: 2, floor: 1 },
+          { id: 'balanced', label: 'Dengeli hedef', risk: 'medium', multiple: 3, floor: 2 },
+          { id: 'extended', label: 'Agresif hedef', risk: 'high', multiple: 4, floor: 3 }].map(({ id, label, risk, multiple, floor }) => {
+          const distance = Math.max(stopDistance * multiple, price * floor / 100, 1.6 * (stopDistance + estimatedCostPerShare) + estimatedCostPerShare);
+          const centralHours = (distance / atr) ** 2 / 60;
+          const minHours = Math.max(0.5, Math.floor(centralHours) / 2), maxHours = Math.max(minHours + 0.5, Math.ceil(centralHours * 3) / 2);
+          return { id, label, risk, targetPercent: round(distance / price * 100, 2), targetPrice: round(price + distance), stopLoss,
+            netRewardRisk: round((distance - estimatedCostPerShare) / (stopDistance + estimatedCostPerShare), 2),
+            estimatedHours: [minHours, maxHours], eligible: false, ineligibleReason: 'Gecikmeli araştırma senaryosu; canlı işlem için uygunluk doğrulanmadı.' };
+        }).filter((scenario) => scenario.targetPrice > entry && scenario.estimatedHours.every(finite));
+      } else blockers.push('Fiyat hassasiyeti veya %3 zarar kes sınırı nedeniyle hedef planı oluşturulamadı.');
+      metrics = { ...metrics, ema9: round(ema9), ema21: round(ema21), vwap: round(vwap), rsi14: round(strength, 1),
+        atr14: round(atr), atrPercent: round(atrPercent, 2), relativeVolume: round(relativeVolume, 2), minuteNotional: round(minuteNotional, 2),
+        momentumPercent: round(momentumPercent, 2), stopPercent: round(stopPercent, 2), estimatedCostPerShare: round(estimatedCostPerShare),
+        trendConfirmed: trend, aboveVwap, costAssumed: spreadBps == null, availableHours: Number.isFinite(sessionEnd) ? round(Math.max(0, sessionEnd - now) / 3600000, 2) : 0,
+        durationMethod: 'Son seans oynaklığıyla hesaplanan gözlem penceresi; güncel seansa ait gerçekleşme tahmini değildir.' };
+    } else blockers.push('Gösterge hesabında geçersiz hacim veya sayısal değer oluştu.');
+  } else if (priceValid && usable.length >= 40) blockers.push('Fiyat ve tamamlanmış mum zamanları aynı araştırma penceresinde değil.');
+  return { ...base, id: createHash('sha256').update(`${snapshot.symbol}|${iso(qt)}|research-v1`).digest('hex').slice(0, 24),
+    availability: 'delayed-research', status: 'blocked', score, referencePrice: entry, entry, stopLoss, scenarios,
+    estimatedHours: scenarios[0]?.estimatedHours ?? null, reasons: reasons.length ? reasons : ['Son kaynak fiyatı gösteriliyor; dakikalık araştırma kapsamı henüz yeterli değil.'],
+    blockers, warnings: unique(warnings), metrics, createdAt: iso(now), expiresAt: iso(now),
+    researchAssessment: { trendConfirmed: metrics.trendConfirmed === true, hasPlan: scenarios.length > 0 },
+    dataQuality: { ...base.dataQuality, realtime: false, sessionVerified: false, halted: null, marketState: quote.marketState ?? 'UNKNOWN', barTime: iso(lastClose), barAgeMs: Number.isFinite(lastClose) ? now - lastClose : null,
+      priceBasis: quote.priceBasis ?? 'regular-market-quote', observationOnly: true },
   };
 }

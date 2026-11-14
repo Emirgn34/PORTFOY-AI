@@ -8,6 +8,26 @@ import { mapLimit } from './concurrency.js';
 import { getMacroCalendar } from './macroCalendar.js';
 import { getMarketIntelligence } from './marketIntelligence.js';
 import { buildDipAlertEvent, collectDipPatterns } from './patternStats.js';
+import { buildResearchTradeCandidate } from './tradeEngine.js';
+
+const researchRefreshes = new WeakMap();
+const RESEARCH_REFRESH_MS = 60_000;
+const RESEARCH_SOURCE = 'Yahoo Finance · gecikmeli araştırma';
+
+function marketTime(value) {
+  if (value == null) return NaN;
+  const time = value instanceof Date ? value.getTime() : typeof value === 'number' ? (value < 1e12 ? value * 1000 : value) : Date.parse(value);
+  return Number.isFinite(time) ? time : NaN;
+}
+
+function boundedYahoo(promise, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException('Stopped', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
 
 export async function tradeUniverse(sb) {
   const [tracked,candidates]=await Promise.all([
@@ -42,23 +62,97 @@ export async function readTradeFeed(urlValue, token, symbols, {fetcher=fetch,sig
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-export async function researchTradeBatch(yahoo,symbols,{now=Date.now()}={}) {
+export async function researchTradeBatch(yahoo,symbols,{now=Date.now(),signal,timeoutMs=6500}={}) {
   if (!symbols.length) return {items:[]};
-  const raw=await yahoo.quote(symbols);
-  const quotes=Array.isArray(raw)?raw:[raw];
-  const items=await mapLimit(quotes,3,async (q)=>{
-    if (!q?.symbol || !(q.regularMarketPrice>0) || !q.regularMarketTime) return null;
-    let bars=[];
+  const timeout=AbortSignal.timeout(Math.max(100,Math.min(8000,timeoutMs)));
+  const requestSignal=signal?AbortSignal.any([signal,timeout]):timeout;
+  const moduleOptions={fetchOptions:{signal:requestSignal}};
+  // Quote and chart requests are independent: an unavailable bulk quote must
+  // not hide a perfectly usable, timestamped chart observation for every stock.
+  const quoteTask=boundedYahoo(Promise.resolve().then(()=>yahoo.quote(symbols,{},moduleOptions)),requestSignal).catch(()=>[]);
+  const chartTask=mapLimit(symbols,3,async(symbol)=>{
     try {
-      const chart=await yahoo.chart(q.symbol,{period1:new Date(now-3*86400000),interval:'1m'});
-      bars=(chart?.quotes ?? []).filter((bar)=>['open','high','low','close','volume'].every((key)=>typeof bar[key]==='number' && Number.isFinite(bar[key])) && new Date(bar.date).getTime()+60_000<=now)
-        .slice(-500).map((bar)=>({time:new Date(bar.date).toISOString(),open:bar.open,high:bar.high,low:bar.low,close:bar.close,volume:bar.volume}));
-    } catch { /* Missing research bars remain explicitly blocked. */ }
-    return {symbol:q.symbol,barIntervalSeconds:60,bars,quote:{price:q.regularMarketPrice,bid:q.bid ?? null,ask:q.ask ?? null,
-      currency:q.currency,name:q.shortName ?? q.longName,marketTime:new Date(q.regularMarketTime).toISOString(),
-      realtime:false,sessionVerified:false,halted:true,marketState:q.marketState ?? 'UNKNOWN'}};
+      return await boundedYahoo(Promise.resolve().then(()=>yahoo.chart(symbol,{period1:new Date(now-7*86400000),period2:new Date(now),interval:'1m',includePrePost:false},moduleOptions)),requestSignal);
+    } catch { return null; }
+  });
+  const [raw,charts]=await Promise.all([quoteTask,chartTask]);
+  if(signal?.aborted) return {items:[]};
+  const quotes=Array.isArray(raw)?raw:[raw];
+  const items=symbols.map((symbol,index)=>{
+    const q=quotes.find((row)=>row?.symbol===symbol) ?? {},chart=charts[index],meta=chart?.meta ?? {};
+    const seen=new Set();
+    let bars=(chart?.quotes ?? []).filter((bar)=>Number.isFinite(marketTime(bar.date)) && marketTime(bar.date)+60_000<=now
+      && ['open','high','low','close'].every((key)=>typeof bar[key]==='number' && Number.isFinite(bar[key]) && bar[key]>0)
+      && typeof bar.volume==='number' && Number.isFinite(bar.volume) && bar.volume>=0
+      && bar.high>=Math.max(bar.open,bar.close,bar.low) && bar.low<=Math.min(bar.open,bar.close,bar.high))
+      .sort((a,b)=>marketTime(a.date)-marketTime(b.date))
+      .filter((bar)=>{const time=marketTime(bar.date);if(seen.has(time)) return false;seen.add(time);return true;})
+      .slice(-500).map((bar)=>({time:new Date(marketTime(bar.date)).toISOString(),open:bar.open,high:bar.high,low:bar.low,close:bar.close,volume:bar.volume}));
+    const observations=[{price:q.regularMarketPrice,time:marketTime(q.regularMarketTime)},
+      {price:meta.regularMarketPrice,time:marketTime(meta.regularMarketTime)}]
+      .filter((item)=>Number.isFinite(item.price) && item.price>0 && Number.isFinite(item.time) && item.time<=now+2000)
+      .sort((a,b)=>b.time-a.time);
+    const observation=observations[0];
+    const periods=[meta.currentTradingPeriod?.regular,...[meta.tradingPeriods?.regular ?? meta.tradingPeriods ?? []].flat(4)]
+      .filter((item)=>Number.isFinite(marketTime(item?.start)) && Number.isFinite(marketTime(item?.end)) && marketTime(item.end)>marketTime(item.start))
+      .sort((a,b)=>marketTime(b.start)-marketTime(a.start));
+    const lastRawTime=bars.length?Date.parse(bars.at(-1).time):NaN;
+    // Yahoo can append a flat zero-volume row AT the session close. That row
+    // is a closing-price sentinel, not a regular one-minute candle. Quote
+    // timestamps can also land a second after the close; neither should make
+    // us lose the actual session boundaries or include the previous day.
+    const period=periods.find((item)=>observation && marketTime(item.start)<=observation.time && observation.time<=marketTime(item.end)+60_000)
+      ?? periods.find((item)=>marketTime(item.start)<=lastRawTime && lastRawTime<=marketTime(item.end));
+    if(period) bars=bars.filter((bar)=>Date.parse(bar.time)>=marketTime(period.start) && Date.parse(bar.time)<marketTime(period.end));
+    const latestBar=bars.at(-1),barTime=latestBar?Date.parse(latestBar.time):NaN;
+    // Keep the provider's real timestamp. A completed candle close is an
+    // explicitly labelled fallback, never a quote stamped with our fetch time.
+    const price=observation?.price ?? latestBar?.close;
+    const time=observation?.time ?? barTime+60_000;
+    if(!(price>0) || !Number.isFinite(time) || time>now+2000) return null;
+    return {symbol,barIntervalSeconds:60,bars,quote:{price,bid:q.bid ?? null,ask:q.ask ?? null,
+      currency:q.currency ?? meta.currency,name:q.shortName ?? q.longName ?? meta.shortName ?? meta.longName ?? symbol,
+      marketTime:new Date(time).toISOString(),priceBasis:observation?'regular-market-quote':'completed-bar-close',
+      realtime:false,sessionVerified:false,marketState:q.marketState ?? 'UNKNOWN',
+      sessionStartsAt:period?new Date(marketTime(period.start)).toISOString():null,
+      sessionEndsAt:period?new Date(marketTime(period.end)).toISOString():null}};
   });
   return {items:items.filter(Boolean)};
+}
+
+/** Bounded request-time research refresh for serverless installations. The
+ * durable attempt time rotates failed symbols too and survives cold starts.
+ * Existing licensed publication ordering still decides which writes win.
+ */
+export async function refreshResearchTradeItems(sb,{rows=[],items=[],now=Date.now(),env=process.env,
+  yahoo=new YahooFinance({suppressNotices:['yahooSurvey']}),limit=3}={}) {
+  if(env.TRADE_LICENSED_SOURCE || env.TRADE_RESEARCH_FALLBACK==='false') return {items:[],refreshedCount:0,attemptedCount:0};
+  if(researchRefreshes.has(sb)) return researchRefreshes.get(sb);
+  const task=(async()=>{
+    const symbols=[...new Set([...rows.map(candidateTradeSymbol),...items.map((item)=>item.symbol)])]
+      .filter((symbol)=>/^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol)).slice(0,50);
+    if(!symbols.length) return {items:[],refreshedCount:0,attemptedCount:0};
+    const contexts=checked(await sb.from('trade_context').select('symbol,data').in('symbol',symbols)) ?? [];
+    const byContext=new Map(contexts.map((row)=>[row.symbol,row.data ?? {}]));
+    const byItem=new Map(items.map((item)=>[item.symbol,item]));
+    const selected=symbols.map((symbol)=>({symbol,lastAttempt:Math.max(
+      Date.parse(byContext.get(symbol)?.researchAttemptedAt ?? '')||0,
+      byItem.get(symbol)?.availability==='delayed-research' ? Date.parse(byItem.get(symbol)?.createdAt ?? '')||0 : 0)}))
+      .filter(({lastAttempt})=>now-lastAttempt>=RESEARCH_REFRESH_MS).sort((a,b)=>a.lastAttempt-b.lastAttempt)
+      .slice(0,Math.max(1,Math.min(5,Number(limit)||3))).map(({symbol})=>symbol);
+    if(!selected.length) return {items:[],refreshedCount:0,attemptedCount:0};
+    checked(await sb.from('trade_context').upsert(selected.map((symbol)=>({symbol,updated_at:new Date(now).toISOString(),
+      data:{...byContext.get(symbol),researchAttemptedAt:new Date(now).toISOString()}}))));
+    const payload=await researchTradeBatch(yahoo,selected,{now});
+    if(!payload.items.length) return {items:[],refreshedCount:0,attemptedCount:selected.length};
+    const built=new Map();
+    const result=await processTradeBatch(sb,payload,{source:RESEARCH_SOURCE,licensed:false,now:()=>now,env,deliver:false,
+      build:(snapshot,options)=>{const candidate=buildResearchTradeCandidate(snapshot,options);built.set(candidate.symbol,candidate);return candidate;}});
+    const published=result.items.filter((item)=>item.published).map((item)=>built.get(item.symbol));
+    return {items:published,refreshedCount:published.length,attemptedCount:selected.length};
+  })();
+  researchRefreshes.set(sb,task);
+  try{return await task;}finally{researchRefreshes.delete(sb);}
 }
 
 export async function refreshTradeContext(sb,yahoo,symbols,{macro=getMacroCalendar,intelligence=getMarketIntelligence,patterns=collectDipPatterns,signal,now=()=>Date.now()}={}) {
@@ -71,7 +165,14 @@ export async function refreshTradeContext(sb,yahoo,symbols,{macro=getMacroCalend
   // araştırma bağlamıdır: hatası bağlam yazımını durdurmaz.
   const dip=await patterns(yahoo,symbols,{now:now(),signal});
   if (signal?.aborted) return;
-  checked(await sb.from('trade_context').upsert(symbols.map((symbol)=>({symbol,updated_at:new Date().toISOString(),data:{
+  // Read immediately before writing: cloud research stores its retry/rotation
+  // clock here too. A context refresh must preserve that clock and any other
+  // context fields it does not own, including an existing pattern on a miss.
+  const existing=checked(await sb.from('trade_context').select('symbol,data').in('symbol',symbols)) ?? [];
+  if (signal?.aborted) return;
+  const bySymbol=new Map(existing.map((row)=>[row.symbol,row.data ?? {}]));
+  checked(await sb.from('trade_context').upsert(symbols.map((symbol)=>({symbol,updated_at:new Date(now()).toISOString(),data:{
+    ...bySymbol.get(symbol),
     macroEvents:calendar.events ?? [],macroCoverage:calendar.coverage ?? {},
     intelligence:research.items?.find((item)=>item.symbol===symbol) ?? null,
     ...(dip.bySymbol.has(symbol)?{patternStats:dip.bySymbol.get(symbol)}:{}),
@@ -155,7 +256,7 @@ export async function runTradeWorker({sb=automationDb(),env=process.env,yahoo=ne
             if(researchCursor>=universe.length) researchCursor=0;
             const selected=universe.slice(researchCursor,researchCursor+20);
             researchCursor=researchCursor+20>=universe.length?0:researchCursor+20;
-            const payload=await collectResearch(yahoo,selected,{now:now()});
+            const payload=await collectResearch(yahoo,selected,{now:now(),signal:feedAbort.signal});
             if(stopped) break;
             if(payload.items.length) await processBatch(sb,payload,{source:'Yahoo Finance · gecikmeli araştırma',licensed:false,env,deliver:false,now});
           }

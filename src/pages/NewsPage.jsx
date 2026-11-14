@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, SearchX, Radio, X, Flame } from 'lucide-react';
+import { Search, SearchX, Radio, X, Flame, RefreshCw } from 'lucide-react';
 import { NEWS_TYPES } from '../data/candidateEnums.js';
 import useMockModule from '../hooks/useMockModule.js';
 import useSyncedState from '../hooks/useSyncedState.js';
@@ -12,6 +12,7 @@ import NewsCard from '../components/NewsCard.jsx';
 import NewsDetailModal from '../components/NewsDetailModal.jsx';
 import { useSearchParams } from 'react-router-dom';
 import CatalystNewsPanel from '../components/CatalystNewsPanel.jsx';
+import NewsTradingPanel from '../components/NewsTradingPanel.jsx';
 
 
 /** Haber kapsamı: hangi hisselerin haberleri gösterilsin? */
@@ -68,6 +69,9 @@ function AllNews() {
   const [activeTab, setActiveTab] = useState(0);
   const [onlyImportant, setOnlyImportant] = useState(false);
   const [liveNews, setLiveNews] = useState([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsError, setNewsError] = useState('');
+  const [refreshToken, setRefreshToken] = useState(0);
 
   // Hisse arama önerisi (haber filtresi için)
   const [tickerQuery, setTickerQuery] = useState('');
@@ -76,8 +80,8 @@ function AllNews() {
   const skipTickerSearchRef = useRef(false);
 
   // Canlı haberler portföy + izleme listesindeki tüm hisseler için çekilir.
-  // Veriler hesaba bağlı buluttan okunur (read-only); yüklenene kadar haber
-  // çekme beklenir ki kullanıcının GERÇEK sembolleri için haber gelsin.
+  // Genel akış bu hesap okumalarını beklemez; gerçek semboller hazır olunca
+  // kişisel haberler ikinci sorguyla eklenir.
   const [portfolioStocks, , portfolioState] = useSyncedState({
     table: 'portfolios',
     column: 'stocks',
@@ -93,34 +97,43 @@ function AllNews() {
     readOnly: true,
   });
   const stocksLoading = portfolioState.loading || watchState.loading;
+  const stockSignature = [...portfolioStocks, ...watchlistItems].map((s) => `${s.market}:${s.ticker}`).sort().join(',');
 
   useEffect(() => {
-    if (stocksLoading) return undefined; // kullanıcının gerçek sembolleri yüklensin
     let cancelled = false;
     const allStocks = [...portfolioStocks, ...watchlistItems];
     const companyByTicker = new Map(allStocks.map((s) => [s.ticker, s.company]));
 
     async function load() {
+      setNewsLoading(true);
+      setNewsError('');
       // İki sorgu paralel: (1) TÜM hisselerin haberleri (sembol filtresiz havuz) →
       // "Tüm Hisseler" kapsamında karışık gelir, (2) yalnızca portföy hisseleri için
       // ayrı sorgu → havuz limitine takılsa bile portföy haberleri kesin görünür.
+      try {
       const [poolAll, portfolioArticles] = await Promise.all([
         fetchAllLiveNews({ limit: 400 }),
-        portfolioStocks.length ? fetchLiveNews(portfolioStocks, { limit: 200 }) : Promise.resolve(null),
+        !stocksLoading && allStocks.length ? fetchLiveNews(allStocks, { limit: 300 }) : Promise.resolve(null),
       ]);
       if (cancelled) return;
 
       // Havuz boşsa (ör. lokal Supabase yok) izlenen sembollere düşülür
-      const base = poolAll ?? (await fetchLiveNews(allStocks, { limit: 300 }));
+      const base = poolAll?.length ? poolAll : portfolioArticles;
       if (cancelled) return;
 
       // Portföy haberleri önce; id bazında tekille (aynı haber iki sorgudan gelebilir)
       const seen = new Set();
-      const merged = [...(portfolioArticles ?? []), ...(base ?? [])].filter((a) =>
-        seen.has(a.id) ? false : (seen.add(a.id), true)
-      );
-      if (!merged.length) return;
-      setLiveNews(merged.map((a) => mapLiveArticleToNews(a, companyByTicker)));
+      const merged = [...(portfolioArticles ?? []), ...(base ?? [])].filter((a) => {
+        const id = a.id ?? a.link ?? `${a.symbol}-${a.title}`;
+        return seen.has(id) ? false : (seen.add(id), true);
+      });
+      if (merged.length) setLiveNews(merged.map((a) => mapLiveArticleToNews(a, companyByTicker)));
+      else setNewsError('Normal haber akışı şu an boş veya kaynağa erişilemiyor. Yenileyebilir ya da yukarıdan şirket/sektör haberlerini doğrudan sorgulayabilirsiniz.');
+      } catch {
+        if (!cancelled) setNewsError('Haber bağlantısı kurulamadı. Yeniden deneyin.');
+      } finally {
+        if (!cancelled) setNewsLoading(false);
+      }
     }
 
     load();
@@ -129,9 +142,18 @@ function AllNews() {
       cancelled = true;
       clearInterval(timer);
     };
-    // Stok listeleri yüklendikten sonra sayfa açıkken değişmez varsayılır.
+    // Sembol kümesi veya hesap yükleme durumu değiştiğinde kişisel akış yenilenir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stocksLoading]);
+  }, [stocksLoading, stockSignature, refreshToken]);
+
+  useEffect(() => { setActiveTab(0); }, [scope, tickerFilter, typeFilter, sentimentFilter, minReliability, searchQuery, onlyImportant]);
+
+  function addAnalyzedArticles(articles) {
+    const companyByTicker = new Map([...portfolioStocks, ...watchlistItems].map((s) => [s.ticker, s.company]));
+    const mapped = articles.map((article) => mapLiveArticleToNews(article, companyByTicker));
+    setLiveNews((previous) => [...new Map([...mapped, ...previous].map((news) => [news.id, news])).values()]);
+    if (mapped.length) setNewsError('');
+  }
 
   // Kapsam filtreleri için yardımcı kümeler
   const portfolioTickers = useMemo(
@@ -311,6 +333,12 @@ function AllNews() {
 
   return (
     <div className="space-y-5">
+      <NewsTradingPanel initialSymbol={tickerFilter === 'all' ? '' : `${tickerFilter}${marketByTicker.get(tickerFilter) === 'BIST' ? '.IS' : ''}`} onArticles={addAnalyzedArticles} />
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+        <span role="status">{newsLoading ? 'Normal haberler yükleniyor…' : newsError || `${liveNews.length} normal haber yüklendi.`}</span>
+        <button type="button" onClick={() => setRefreshToken((v) => v + 1)} disabled={newsLoading} className="flex items-center gap-1.5 rounded-lg border border-navy-700 px-3 py-2 disabled:opacity-50"><RefreshCw size={13} className={newsLoading ? 'animate-spin' : ''} />Haberleri yenile</button>
+      </div>
+      <p className="text-xs text-slate-500">Genel akışa portföy ve izleme listen eklenir. Şirket haberi yoksa başlangıç piyasa örneklemi (AAPL, MSFT, THYAO) gösterilir; hisse veya sektör seçerek kapsamı genişletebilirsin.</p>
       {/* Filtre alanı */}
       <div data-tour="news-filters" className="rounded-xl border border-navy-700/60 bg-navy-900 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -526,7 +554,7 @@ function AllNews() {
           <SearchX size={36} className="mb-3 text-slate-600" />
           <p className="font-medium text-slate-300">
             {filteredNews.length === 0
-              ? 'Filtrelere uyan haber bulunamadı'
+              ? newsLoading ? 'Haberler yükleniyor' : 'Filtrelere uyan haber bulunamadı'
               : 'Bu sekmede gösterilecek haber yok'}
           </p>
           <p className="mt-1 text-sm text-slate-500">
